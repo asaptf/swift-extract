@@ -1,0 +1,15 @@
+INVOICE #INV-2024-0042
+
+Vendor: Acme Supplies Co.
+Bill To: Contoso Ltd.
+Due Date: 2024-07-31
+
+Line Items:
+- Widget Pro          qty 2    $500.00
+- Support Plan        qty 1    $250.00
+
+Subtotal: $1,250.00
+Tax: $0.00
+Total: $1,250.00
+
+Thank you for your business.
