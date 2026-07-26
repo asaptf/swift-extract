@@ -128,11 +128,35 @@ enum SampleFixture: String, CaseIterable, Identifiable {
     }
 
     var url: URL? {
-        Bundle.module.url(
-            forResource: resourceName,
-            withExtension: resourceExtension,
-            subdirectory: "Fixtures"
-        )
-            ?? Bundle.module.url(forResource: resourceName, withExtension: resourceExtension)
+        // SPM executable uses Bundle.module; the Xcode app target uses Bundle.main.
+        let bundles: [Bundle] = {
+            #if SWIFT_PACKAGE
+                return [Bundle.module, .main]
+            #else
+                return [.main]
+            #endif
+        }()
+        for bundle in bundles {
+            if let url = bundle.url(
+                forResource: resourceName,
+                withExtension: resourceExtension,
+                subdirectory: "Fixtures"
+            ) {
+                return url
+            }
+            if let url = bundle.url(forResource: resourceName, withExtension: resourceExtension) {
+                return url
+            }
+            // XcodeGen folder resources may land under a nested path.
+            if let root = bundle.resourceURL?
+                .appendingPathComponent("Fixtures", isDirectory: true)
+                .appendingPathComponent("\(resourceName).\(resourceExtension)")
+            {
+                if FileManager.default.fileExists(atPath: root.path) {
+                    return root
+                }
+            }
+        }
+        return nil
     }
 }

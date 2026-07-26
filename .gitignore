@@ -3,8 +3,12 @@
 **/.build/
 /Packages
 Packages/
+# Ignore generated Xcode projects for the library; the demo app project is tracked.
 *.xcodeproj
-xcuserdata/
+!Examples/ReceiptScanner/ReceiptScanner.xcodeproj/
+!Examples/ReceiptScanner/ReceiptScanner.xcodeproj/**
+**/xcuserdata/
+**/xcshareddata/xcdebugger/
 DerivedData/
 .swiftpm/
 .netrc

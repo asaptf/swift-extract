@@ -128,9 +128,18 @@ Custom `init(from:)` generated in an extension (preserves memberwise init):
   when Vision is unavailable.
 - **No network** in automated tests.
 
+## License & package identity
+
+- **License:** Apache License 2.0 (with `NOTICE`). Chosen for patent grant clarity
+  and alignment with AnyLanguageModel / SwiftSyntax licensing norms.
+- **Package name:** `swift-extract` (library product `Extract`). Checked 2026-07
+  against GitHub search and Swift Package Index — no published SPM package of the
+  same name for structured LLM document extraction. Import remains `import Extract`.
+
 ## Deviations from the brief
 
 1. **Swift tools 6.1** instead of 6.0 (traits + AnyLanguageModel).
+1b. **License Apache-2.0** instead of MIT (user request; better patent grant).
 2. **CLI does not JIT-compile** arbitrary `.swift` schema files; it matches
    embedded types to the example schema sources.
 3. **Generation path is plain `String` respond.** AnyLanguageModel’s

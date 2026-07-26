@@ -1,0 +1,416 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1973D828F0B09F6714D4907F /* ModelSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAC51E37BC480C3AE1698BD8 /* ModelSettingsStore.swift */; };
+		1DE8BD5D71B10E3AC3C55CFF /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AA807B19E166BCB7A4A9122 /* SettingsView.swift */; };
+		3225FBA78C3CCB60F8F0D1C2 /* ExtractingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F77985238D210666D7DAB2 /* ExtractingView.swift */; };
+		43A2E1E215B8337647A4515B /* PickView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD1880BFF5B1B629C94F5404 /* PickView.swift */; };
+		5871920E9C22E4B72F755D25 /* ResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11E710BB90121F2FF1739243 /* ResultView.swift */; };
+		6AFEFDFEA4DAF325FA2F3C13 /* ReceiptScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F3314AA1DFD182A20852E08 /* ReceiptScannerApp.swift */; };
+		7EE013237451A3FD231C2C68 /* Extract in Frameworks */ = {isa = PBXBuildFile; productRef = ACC0065432C350065425086B /* Extract */; };
+		81C6D514715D9205788AF474 /* ReceiptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AE246A6C693702FC44510C5 /* ReceiptModels.swift */; };
+		F2A02783D79D0DB9F6FC7899 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13433FE34D9DBE9F44C1C786 /* ContentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0DD2D05AF8660070BE20531E /* ReceiptScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ReceiptScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		11E710BB90121F2FF1739243 /* ResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultView.swift; sourceTree = "<group>"; };
+		13433FE34D9DBE9F44C1C786 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		3AA807B19E166BCB7A4A9122 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		3AE246A6C693702FC44510C5 /* ReceiptModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptModels.swift; sourceTree = "<group>"; };
+		9F3314AA1DFD182A20852E08 /* ReceiptScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptScannerApp.swift; sourceTree = "<group>"; };
+		D26B28DBBAC1B6264DD024D5 /* swift-extraction-lib */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "swift-extraction-lib"; path = ../..; sourceTree = SOURCE_ROOT; };
+		EAC51E37BC480C3AE1698BD8 /* ModelSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSettingsStore.swift; sourceTree = "<group>"; };
+		F8F77985238D210666D7DAB2 /* ExtractingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtractingView.swift; sourceTree = "<group>"; };
+		FD1880BFF5B1B629C94F5404 /* PickView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PickView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D7CA9168A404A40D5D77158A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7EE013237451A3FD231C2C68 /* Extract in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0EA5A5BD042A44A7E00773A6 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				D26B28DBBAC1B6264DD024D5 /* swift-extraction-lib */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		6668D9B73C2EB5DE7A2AD745 = {
+			isa = PBXGroup;
+			children = (
+				0EA5A5BD042A44A7E00773A6 /* Packages */,
+				E3BE6886D4A1EF1BE81C0894 /* Sources */,
+				835EB9C5D3FF8CAA18D7A3A8 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6DC41FD0AE23B421F37FD398 /* ReceiptScanner */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = ReceiptScanner;
+			sourceTree = "<group>";
+		};
+		835EB9C5D3FF8CAA18D7A3A8 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0DD2D05AF8660070BE20531E /* ReceiptScanner.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8C854CF8FBFF7B80DBFC491C /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				EAC51E37BC480C3AE1698BD8 /* ModelSettingsStore.swift */,
+				3AE246A6C693702FC44510C5 /* ReceiptModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		B8206D25C3B9688EFE9A44E5 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				13433FE34D9DBE9F44C1C786 /* ContentView.swift */,
+				F8F77985238D210666D7DAB2 /* ExtractingView.swift */,
+				FD1880BFF5B1B629C94F5404 /* PickView.swift */,
+				11E710BB90121F2FF1739243 /* ResultView.swift */,
+				3AA807B19E166BCB7A4A9122 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		E3BE6886D4A1EF1BE81C0894 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				8C854CF8FBFF7B80DBFC491C /* Models */,
+				6DC41FD0AE23B421F37FD398 /* ReceiptScanner */,
+				B8206D25C3B9688EFE9A44E5 /* Views */,
+				9F3314AA1DFD182A20852E08 /* ReceiptScannerApp.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E43FADB7A4D46456C064BB2B /* ReceiptScanner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DEAA9FEEB1BB95EBCA6883DD /* Build configuration list for PBXNativeTarget "ReceiptScanner" */;
+			buildPhases = (
+				91101EE9E5C1978DE91953B5 /* Sources */,
+				D7CA9168A404A40D5D77158A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ReceiptScanner;
+			packageProductDependencies = (
+				ACC0065432C350065425086B /* Extract */,
+			);
+			productName = ReceiptScanner;
+			productReference = 0DD2D05AF8660070BE20531E /* ReceiptScanner.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F58F941AFC9693EFC8BCF60C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					E43FADB7A4D46456C064BB2B = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 6227B7B0C11184415B593F43 /* Build configuration list for PBXProject "ReceiptScanner" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 6668D9B73C2EB5DE7A2AD745;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4FCCC7F57FC60AFE84F37F05 /* XCLocalSwiftPackageReference "../.." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 835EB9C5D3FF8CAA18D7A3A8 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E43FADB7A4D46456C064BB2B /* ReceiptScanner */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		91101EE9E5C1978DE91953B5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F2A02783D79D0DB9F6FC7899 /* ContentView.swift in Sources */,
+				3225FBA78C3CCB60F8F0D1C2 /* ExtractingView.swift in Sources */,
+				1973D828F0B09F6714D4907F /* ModelSettingsStore.swift in Sources */,
+				43A2E1E215B8337647A4515B /* PickView.swift in Sources */,
+				81C6D514715D9205788AF474 /* ReceiptModels.swift in Sources */,
+				6AFEFDFEA4DAF325FA2F3C13 /* ReceiptScannerApp.swift in Sources */,
+				5871920E9C22E4B72F755D25 /* ResultView.swift in Sources */,
+				1DE8BD5D71B10E3AC3C55CFF /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		8A49EE0F14D968D39D0BAFED /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		8CA7F433151503049C1A6A50 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		B003074E8DA7C80E20AF8DB1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Receipt Scanner";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan receipts and documents for structured extraction.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Select receipt photos for structured extraction.";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swiftextract.ReceiptScanner;
+				PRODUCT_NAME = ReceiptScanner;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C4E88546DDBF21756B4CA954 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Receipt Scanner";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Scan receipts and documents for structured extraction.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Select receipt photos for structured extraction.";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swiftextract.ReceiptScanner;
+				PRODUCT_NAME = ReceiptScanner;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6227B7B0C11184415B593F43 /* Build configuration list for PBXProject "ReceiptScanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8A49EE0F14D968D39D0BAFED /* Debug */,
+				8CA7F433151503049C1A6A50 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DEAA9FEEB1BB95EBCA6883DD /* Build configuration list for PBXNativeTarget "ReceiptScanner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B003074E8DA7C80E20AF8DB1 /* Debug */,
+				C4E88546DDBF21756B4CA954 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4FCCC7F57FC60AFE84F37F05 /* XCLocalSwiftPackageReference "../.." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		ACC0065432C350065425086B /* Extract */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Extract;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = F58F941AFC9693EFC8BCF60C /* Project object */;
+}
