@@ -28,12 +28,17 @@ struct SettingsView: View {
                                         Text(
                                             modelStore.appleIntelligenceAvailable
                                                 ? "Available on this device"
-                                                : "Not available"
+                                                : "Not available on this device"
                                         )
                                         .font(.caption2)
                                         .foregroundStyle(
                                             modelStore.appleIntelligenceAvailable ? .green : .orange
                                         )
+                                    }
+                                    if kind == .mlx {
+                                        Text("Requires MLX package trait + Apple Silicon")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                                 Spacer()
@@ -63,10 +68,23 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("About") {
-                    Text("ReceiptScanner is a demo for the swift-extract library. Extraction always goes through the public Extract API — never hardcoded success paths.")
+                if modelStore.backend == .mlx {
+                    Section("MLX local model") {
+                        TextField("Model ID", text: $modelStore.mlxModelId)
+                        Text(
+                            "Example: mlx-community/Qwen2.5-3B-Instruct-4bit or mlx-community/Llama-3.2-3B-Instruct-4bit. Enable the MLX trait on the swift-extract package dependency."
+                        )
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("About") {
+                    Text(
+                        "ReceiptScanner is a demo for the swift-extract library. Extraction always goes through the public Extract API with a real configured model — never a hardcoded success path."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -78,7 +96,7 @@ struct SettingsView: View {
             }
         }
         #if os(macOS)
-            .frame(minWidth: 420, minHeight: 420)
+            .frame(minWidth: 420, minHeight: 480)
         #endif
     }
 }
@@ -86,7 +104,7 @@ struct SettingsView: View {
 struct SetupView: View {
     var message: String
     var onSettings: () -> Void
-    var onUseMock: () -> Void
+    var onDismiss: () -> Void
 
     var body: some View {
         VStack(spacing: 20) {
@@ -104,7 +122,7 @@ struct SetupView: View {
                 Button("Open Settings", action: onSettings)
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
-                Button("Use Demo mock", action: onUseMock)
+                Button("Back", action: onDismiss)
                     .buttonStyle(.bordered)
             }
         }

@@ -100,7 +100,8 @@ public enum Extract {
             partialJSONObjects: partials,
             locale: options.locale
         )
-        let temperature = options.temperature
+        let temperature = options.resolvedTemperature(session: session)
+        let schema = T.extractionSchema
         var lastError: Error = ExtractionError.mergeFailed("unknown")
         var lastRaw = ""
         let maxAttempts = max(1, options.maxRetries + 1)
@@ -118,7 +119,8 @@ public enum Extract {
                 let raw = try await session.generate(
                     system: PromptBuilder.systemInstructions,
                     user: user,
-                    temperature: temperature
+                    temperature: temperature,
+                    schema: schema
                 )
                 lastRaw = raw
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
@@ -150,7 +152,8 @@ public enum Extract {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
         let maxAttempts = max(1, options.maxRetries + 1)
-        let temperature = options.temperature
+        let temperature = options.resolvedTemperature(session: session)
+        let schema = T.extractionSchema
 
         for attempt in 0..<maxAttempts {
             let repair: PromptBuilder.RepairContext?
@@ -172,7 +175,8 @@ public enum Extract {
                 let raw = try await session.generate(
                     system: PromptBuilder.systemInstructions,
                     user: user,
-                    temperature: temperature
+                    temperature: temperature,
+                    schema: schema
                 )
                 lastRaw = raw
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)

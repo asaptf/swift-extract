@@ -9,27 +9,27 @@ import SwiftUI
 
 enum ModelBackendKind: String, CaseIterable, Identifiable, Sendable {
     case appleIntelligence
+    case mlx
     case openAI
     case anthropic
-    case mockDemo
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .appleIntelligence: return "Apple Intelligence"
+        case .mlx: return "MLX (local)"
         case .openAI: return "OpenAI"
         case .anthropic: return "Anthropic"
-        case .mockDemo: return "Demo mock (offline)"
         }
     }
 
     var detail: String {
         switch self {
         case .appleIntelligence: return "On-device Foundation Models (iOS/macOS 26+)"
+        case .mlx: return "Local Apple Silicon model via MLX (requires MLX package trait)"
         case .openAI: return "Cloud API — paste your key"
         case .anthropic: return "Claude Messages API — paste your key"
-        case .mockDemo: return "Deterministic offline responses for UI demos"
         }
     }
 }
@@ -47,41 +47,33 @@ final class ModelSettingsStore: ObservableObject {
     }
     @Published var openAIModel: String = "gpt-4o-mini"
     @Published var anthropicModel: String = "claude-sonnet-4-5-20250929"
+    @Published var mlxModelId: String = "mlx-community/Qwen2.5-3B-Instruct-4bit" {
+        didSet { UserDefaults.standard.set(mlxModelId, forKey: "mlxModelId") }
+    }
 
     init() {
-        let raw = UserDefaults.standard.string(forKey: "backend") ?? ModelBackendKind.mockDemo.rawValue
-        self.backend = ModelBackendKind(rawValue: raw) ?? .mockDemo
         self.openAIKey = KeychainStore.get(account: "openai") ?? ""
         self.anthropicKey = KeychainStore.get(account: "anthropic") ?? ""
-    }
+        if let saved = UserDefaults.standard.string(forKey: "mlxModelId"), !saved.isEmpty {
+            self.mlxModelId = saved
+        }
 
-    var isConfigured: Bool {
-        switch backend {
-        case .appleIntelligence:
-            return appleIntelligenceAvailable
-        case .openAI:
-            return !openAIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .anthropic:
-            return !anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .mockDemo:
-            return true
+        // Prefer a configured backend; never default to a canned-success mock.
+        // Resolve Apple Intelligence availability without touching `self` early.
+        let appleAvailable = Self.isAppleIntelligenceAvailable()
+        if let raw = UserDefaults.standard.string(forKey: "backend"),
+            let kind = ModelBackendKind(rawValue: raw)
+        {
+            self.backend = kind
+        } else if appleAvailable {
+            self.backend = .appleIntelligence
+        } else {
+            // Unconfigured cloud backend → setup screen until the user adds a key.
+            self.backend = .openAI
         }
     }
 
-    var setupMessage: String {
-        switch backend {
-        case .appleIntelligence:
-            return "Apple Intelligence requires iOS 26 / macOS 26 with Apple Intelligence enabled. Choose another backend in Settings, or use Demo mock."
-        case .openAI:
-            return "Add your OpenAI API key in Settings to extract with gpt-4o-mini (or another model)."
-        case .anthropic:
-            return "Add your Anthropic API key in Settings to extract with Claude."
-        case .mockDemo:
-            return ""
-        }
-    }
-
-    var appleIntelligenceAvailable: Bool {
+    private static func isAppleIntelligenceAvailable() -> Bool {
         if #available(iOS 26, macOS 26, *) {
             #if canImport(AnyLanguageModel)
                 return SystemLanguageModel.default.isAvailable
@@ -92,14 +84,46 @@ final class ModelSettingsStore: ObservableObject {
         return false
     }
 
+    var isConfigured: Bool {
+        switch backend {
+        case .appleIntelligence:
+            return appleIntelligenceAvailable
+        case .mlx:
+            // Session construction reports concrete availability / trait errors.
+            return !mlxModelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .openAI:
+            return !openAIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .anthropic:
+            return !anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    var setupMessage: String {
+        switch backend {
+        case .appleIntelligence:
+            return """
+                Apple Intelligence requires iOS 26 / macOS 26 with Apple Intelligence enabled. \
+                Open Settings to choose OpenAI, Anthropic, or an MLX local model instead.
+                """
+        case .mlx:
+            return """
+                MLX local models require the MLX package trait and an Apple Silicon Mac. \
+                Set a model ID (e.g. mlx-community/Qwen2.5-3B-Instruct-4bit) in Settings. \
+                If the MLX trait is not enabled in Package.swift, enable it and rebuild.
+                """
+        case .openAI:
+            return "Add your OpenAI API key in Settings to extract with a cloud model. Keys stay in the Keychain."
+        case .anthropic:
+            return "Add your Anthropic API key in Settings to extract with Claude. Keys stay in the Keychain."
+        }
+    }
+
+    var appleIntelligenceAvailable: Bool {
+        Self.isAppleIntelligenceAvailable()
+    }
+
     func makeSession() throws -> ExtractionSession {
         switch backend {
-        case .mockDemo:
-            return .mock(
-                MockLanguageModel { _, user, _ in
-                    Self.mockJSON(forPrompt: user)
-                }
-            )
         case .openAI:
             let key = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty else {
@@ -133,56 +157,39 @@ final class ModelSettingsStore: ObservableObject {
                 #endif
             }
             throw ExtractionError.modelUnavailable(setupMessage)
+        case .mlx:
+            let modelId = mlxModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !modelId.isEmpty else {
+                throw ExtractionError.modelUnavailable(setupMessage)
+            }
+            // MLXLanguageModel is only available when the MLX package trait is enabled.
+            // Attempt dynamic construction via type lookup would be fragile; use compile-time
+            // availability through a thin helper that fails clearly without the trait.
+            return try MLXSessionFactory.makeSession(modelId: modelId)
         }
     }
+}
 
-    nonisolated static func mockJSON(forPrompt user: String) -> String {
-        if user.localizedCaseInsensitiveContains("Acme")
-            || user.localizedCaseInsensitiveContains("Widget Pro")
-            || user.localizedCaseInsensitiveContains("INV-2024")
-        {
-            return """
-                {
-                  "merchant": "Acme Supplies Co.",
-                  "date": "2024-07-31",
-                  "total": 1250.00,
-                  "currency": "USD",
-                  "items": [
-                    {"name": "Widget Pro", "price": 500.00, "quantity": 2},
-                    {"name": "Support Plan", "price": 250.00, "quantity": 1}
-                  ]
-                }
+// MARK: - MLX factory (clear error when trait disabled)
+
+enum MLXSessionFactory {
+    static func makeSession(modelId: String) throws -> ExtractionSession {
+        #if MLX
+            #if canImport(AnyLanguageModel)
+                let model = MLXLanguageModel(modelId: modelId)
+                return ExtractionSession(model: model)
+            #else
+                throw ExtractionError.modelUnavailable("AnyLanguageModel is not linked.")
+            #endif
+        #else
+            throw ExtractionError.modelUnavailable(
                 """
-        }
-        if user.localizedCaseInsensitiveContains("Shop Example")
-            || user.localizedCaseInsensitiveContains("88421")
-            || user.localizedCaseInsensitiveContains("Wireless Mouse")
-        {
-            return """
-                {
-                  "merchant": "Shop Example",
-                  "date": "2024-05-02",
-                  "total": 89.99,
-                  "currency": "USD",
-                  "items": [
-                    {"name": "Wireless Mouse", "price": 29.99, "quantity": 1},
-                    {"name": "USB-C Hub", "price": 59.99, "quantity": 1}
-                  ]
-                }
+                MLX backend is not compiled into this build. Enable the MLX package trait \
+                on swift-extract (and declare mlx-swift-lm per the README SPM workaround), \
+                then rebuild ReceiptScanner.
                 """
-        }
-        return """
-            {
-              "merchant": "Cafe Example",
-              "date": "2024-06-15",
-              "total": 12.50,
-              "currency": "USD",
-              "items": [
-                {"name": "Latte", "price": 4.50, "quantity": 1},
-                {"name": "Croissant", "price": 3.00, "quantity": 2}
-              ]
-            }
-            """
+            )
+        #endif
     }
 }
 

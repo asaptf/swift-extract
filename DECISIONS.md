@@ -133,9 +133,15 @@ Custom `init(from:)` generated in an extension (preserves memberwise init):
 1. **Swift tools 6.1** instead of 6.0 (traits + AnyLanguageModel).
 2. **CLI does not JIT-compile** arbitrary `.swift` schema files; it matches
    embedded types to the example schema sources.
-3. **Constrained decoding** is best-effort via prompt + schema; we do not yet
-   wire every backend’s guided-generation API to `Extractable` types (would
-   require dual `@Generable` conformance or a schema bridge). Roadmap item.
+3. **Constrained generation** maps `ExtractionSchema` → AnyLanguageModel
+   `DynamicGenerationSchema` / `GenerationSchema` and calls
+   `LanguageModelSession.respond(to:schema:)` when conversion succeeds; plain
+   string generation is the fallback if the constrained path throws. Schema is
+   also always embedded in the prompt for backends without guided decoding.
+4. **Temperature**: `ExtractionOptions.temperature` is `Double?` (`nil` by
+   default). Resolved as `options.temperature ?? session.temperature` so
+   `ExtractionSession(model:temperature:)` is honored unless the call site
+   overrides.
 4. Demo is an SPM multiplatform executable/library target rather than a full
    `.xcodeproj` when possible; if Xcode project files are needed for iOS device
    camera flows, they live only under `Examples/`.

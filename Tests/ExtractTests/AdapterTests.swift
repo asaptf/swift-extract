@@ -70,15 +70,17 @@ struct AdapterTests {
         // Render a simple bitmap with text via Core Graphics, then OCR.
         let width = 400
         let height = 120
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else {
             Issue.record("Could not create CGContext")
             return
         }
@@ -198,7 +200,6 @@ private enum FontCompat {
 
 private struct UIGraphicsPDFRendererCompat {
     let bounds: CGRect
-    init(bounds: CGRect) { self.bounds = bounds }
     func writePDF(to url: URL, withActions: (PDFContextCompat) -> Void) throws {
         // no-op path — real write is writePDFKit
     }

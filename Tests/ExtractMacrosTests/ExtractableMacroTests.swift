@@ -257,4 +257,57 @@ final class ExtractableMacroTests: XCTestCase {
             macros: macros
         )
     }
+
+    func testUnsupportedUUIDDiagnoses() {
+        assertMacroExpansion(
+            """
+            @Extractable
+            struct WithUUID {
+                let id: UUID
+                let name: String
+            }
+            """,
+            expandedSource: """
+                struct WithUUID {
+                    let id: UUID
+                    let name: String
+
+                    public enum CodingKeys: String, CodingKey {
+                        case name
+                    }
+
+                    public nonisolated static var extractionSchema: ExtractionSchema {
+                        .object(
+                            title: "WithUUID",
+                            properties: [
+                                "name": .string()
+                            ],
+                            required: ["name"],
+                            propertyOrder: ["name"]
+                        )
+                    }
+                }
+
+                extension WithUUID: Extractable, Codable, Sendable {
+                    public init(from decoder: Decoder) throws {
+                        let container = try decoder.container(keyedBy: CodingKeys.self)
+                        self.name = try container.decodeLenientString(forKey: .name)
+                    }
+                    public func encode(to encoder: Encoder) throws {
+                        var container = encoder.container(keyedBy: CodingKeys.self)
+                        try container.encode(self.name, forKey: .name)
+                    }
+                }
+                """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message:
+                        "@Extractable does not support property `id` of type `UUID`. Supported: String, Bool, integer/float types, Decimal, Date, URL, Optional, Array, nested @Extractable types, and String-backed enums providing extractionSchema.",
+                    line: 3,
+                    column: 13
+                )
+            ],
+            macros: macros
+        )
+    }
 }

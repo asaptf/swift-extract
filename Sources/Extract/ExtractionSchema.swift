@@ -170,7 +170,6 @@ public struct ExtractionSchema: Sendable, Equatable, Codable {
         return copy
     }
 
-
     // MARK: - Rendering
 
     /// Pretty-printed JSON Schema document suitable for prompts.

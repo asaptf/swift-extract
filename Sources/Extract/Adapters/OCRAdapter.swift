@@ -18,15 +18,17 @@ enum OCRAdapter {
             let height = Int(bounds.height * scale)
             guard width > 0, height > 0 else { continue }
 
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else { continue }
+            guard
+                let context = CGContext(
+                    data: nil,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                )
+            else { continue }
 
             context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: width, height: height))
@@ -43,7 +45,9 @@ enum OCRAdapter {
         return blocks
     }
 
-    private static func recognizeWithVision(cgImage: CGImage, pageIndex: Int?) throws
+    private static func recognizeWithVision(
+        cgImage: CGImage, pageIndex: Int?
+    ) throws
         -> [ExtractedDocument.Block]
     {
         // Prefer newer document recognition when available (iOS 18 / macOS 15+ API surface).
@@ -55,7 +59,9 @@ enum OCRAdapter {
         return try recognizeTextRequest(cgImage: cgImage, pageIndex: pageIndex)
     }
 
-    private static func recognizeTextRequest(cgImage: CGImage, pageIndex: Int?) throws
+    private static func recognizeTextRequest(
+        cgImage: CGImage, pageIndex: Int?
+    ) throws
         -> [ExtractedDocument.Block]
     {
         let request = VNRecognizeTextRequest()
@@ -95,7 +101,9 @@ enum OCRAdapter {
     }
 
     @available(iOS 18.0, macOS 15.0, *)
-    private static func recognizeDocuments(cgImage: CGImage, pageIndex: Int?) throws
+    private static func recognizeDocuments(
+        cgImage: CGImage, pageIndex: Int?
+    ) throws
         -> [ExtractedDocument.Block]
     {
         // RecognizeDocumentsRequest is available in newer Vision; fall back if the

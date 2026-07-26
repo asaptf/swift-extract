@@ -10,6 +10,8 @@ public struct ExtractionSession: Sendable {
     }
 
     let backend: any ExtractionGenerating
+    /// Default sampling temperature for this session (used when
+    /// ``ExtractionOptions/temperature`` is `nil`).
     public let temperature: Double
 
     /// Create a session from any AnyLanguageModel-compatible model.
@@ -24,8 +26,18 @@ public struct ExtractionSession: Sendable {
         self.temperature = temperature
     }
 
-    func generate(system: String, user: String, temperature: Double) async throws -> String {
-        try await backend.generate(system: system, user: user, temperature: temperature)
+    func generate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) async throws -> String {
+        try await backend.generate(
+            system: system,
+            user: user,
+            temperature: temperature,
+            schema: schema
+        )
     }
 }
 
@@ -34,13 +46,23 @@ public struct ExtractionSession: Sendable {
 /// Package-visible generation protocol so tests can inject deterministic models
 /// without re-implementing the full AnyLanguageModel stack.
 package protocol ExtractionGenerating: Sendable {
-    func generate(system: String, user: String, temperature: Double) async throws -> String
+    func generate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) async throws -> String
 }
 
 private struct LanguageModelBackend: ExtractionGenerating {
     let model: any LanguageModel
 
-    func generate(system: String, user: String, temperature: Double) async throws -> String {
+    func generate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) async throws -> String {
         if !model.isAvailable {
             throw ExtractionError.modelUnavailable(
                 """
@@ -52,8 +74,34 @@ private struct LanguageModelBackend: ExtractionGenerating {
         }
         let session = LanguageModelSession(model: model, instructions: system)
         let options = GenerationOptions(temperature: temperature)
+
+        // Prefer schema-constrained generation when we can build a GenerationSchema.
+        // Backends that support guided generation (Apple FM, MLX, many cloud APIs)
+        // honor this path; others still receive the schema in the prompt via
+        // includeSchemaInPrompt / our prompt builder.
+        if let schema, let generationSchema = try? schema.toGenerationSchema(name: schema.title ?? "Root") {
+            do {
+                let response = try await session.respond(
+                    to: user,
+                    schema: generationSchema,
+                    includeSchemaInPrompt: true,
+                    options: options
+                )
+                return text(from: response)
+            } catch {
+                // Fall back to plain generation if constrained path fails for this backend.
+            }
+        }
+
         let response = try await session.respond(to: user, options: options)
         return response.content
+    }
+
+    private func text(from response: LanguageModelSession.Response<GeneratedContent>) -> String {
+        if case .string(let s) = response.rawContent.kind {
+            return s
+        }
+        return response.rawContent.jsonString
     }
 }
 
@@ -72,7 +120,12 @@ private enum DefaultSessionResolver {
 }
 
 private struct UnavailableGenerator: ExtractionGenerating {
-    func generate(system: String, user: String, temperature: Double) async throws -> String {
+    func generate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) async throws -> String {
         throw ExtractionError.modelUnavailable(
             """
             No language model is configured. ExtractionSession.default requires Apple Intelligence \
@@ -90,6 +143,9 @@ private struct UnavailableGenerator: ExtractionGenerating {
 // MARK: - Mock model (public for tests & CLI offline mode)
 
 /// Deterministic language model for tests and offline CLI runs.
+///
+/// Not used by the demo app success path — only tests, CLI `--mock`, and explicit
+/// ``ExtractionSession/mock(_:temperature:)`` callers.
 public struct MockLanguageModel: ExtractionGenerating, Sendable {
     public typealias Responder = @Sendable (_ system: String, _ user: String, _ callIndex: Int) async throws -> String
 
@@ -112,7 +168,13 @@ public struct MockLanguageModel: ExtractionGenerating, Sendable {
         self.responder = responder
     }
 
-    public func generate(system: String, user: String, temperature: Double) async throws -> String {
+    public func generate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) async throws -> String {
+        _ = schema
         let index = await counter.next()
         return try await responder(system, user, index)
     }
@@ -127,7 +189,7 @@ private actor CallCounter {
 }
 
 extension ExtractionSession {
-    /// Convenience for tests and the offline CLI.
+    /// Convenience for tests and the offline CLI (`--mock`).
     public static func mock(_ model: MockLanguageModel, temperature: Double = 0) -> ExtractionSession {
         ExtractionSession(generator: model, temperature: temperature)
     }

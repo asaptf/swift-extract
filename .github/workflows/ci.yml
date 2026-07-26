@@ -24,7 +24,6 @@ jobs:
 
       - name: Test (offline)
         env:
-          # Ensure no accidental network model calls
           OPENAI_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           EXTRACT_USE_MOCK: "1"
@@ -38,14 +37,27 @@ jobs:
           swift run extract-cli fixtures/invoice.pdf --schema Examples/schemas/Invoice.swift --mock | tee /tmp/cli2.json
           python3 -c "import json; a=json.load(open('/tmp/cli1.json')); b=json.load(open('/tmp/cli2.json')); assert a==b; assert a['vendor']=='Acme Supplies Co.'"
 
-      - name: swift-format lint
+      - name: Install swift-format
         run: |
           if command -v swift-format >/dev/null 2>&1; then
-            swift-format lint --configuration .swift-format --recursive Sources Tests || true
-          elif command -v swift >/dev/null 2>&1 && swift format --help >/dev/null 2>&1; then
-            swift format lint --configuration .swift-format --recursive Sources Tests || true
+            echo "swift-format already installed: $(swift-format --version || true)"
+          elif swift format --help >/dev/null 2>&1; then
+            echo "using built-in: swift format"
           else
-            echo "swift-format not installed; skipping lint"
+            brew install swift-format
+          fi
+
+      - name: swift-format lint
+        run: |
+          set -euo pipefail
+          if command -v swift-format >/dev/null 2>&1; then
+            swift-format lint --strict --configuration .swift-format --recursive Sources Tests
+          elif swift format --help >/dev/null 2>&1; then
+            # Xcode-bundled formatter (Swift 6+)
+            swift format lint --configuration .swift-format --recursive Sources Tests
+          else
+            echo "error: swift-format is required for CI and is not available" >&2
+            exit 1
           fi
 
   demo-macos:

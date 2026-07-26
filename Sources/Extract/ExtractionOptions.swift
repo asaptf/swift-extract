@@ -20,21 +20,27 @@ public struct ExtractionOptions: Sendable, Equatable {
     public var locale: Locale?
     /// Soft character budget before automatic chunking kicks in.
     public var softContextCharacterBudget: Int
-    /// Generation temperature (default 0 for deterministic extraction).
-    public var temperature: Double
+    /// Generation temperature override. When `nil` (default), uses
+    /// ``ExtractionSession/temperature`` so session configuration is honored.
+    public var temperature: Double?
 
     public init(
         maxRetries: Int = 2,
         chunkingStrategy: ChunkingStrategy = .automatic,
         locale: Locale? = nil,
         softContextCharacterBudget: Int = 12_000,
-        temperature: Double = 0
+        temperature: Double? = nil
     ) {
         self.maxRetries = maxRetries
         self.chunkingStrategy = chunkingStrategy
         self.locale = locale
         self.softContextCharacterBudget = softContextCharacterBudget
         self.temperature = temperature
+    }
+
+    /// Resolve sampling temperature: explicit options override, else session.
+    public func resolvedTemperature(session: ExtractionSession) -> Double {
+        temperature ?? session.temperature
     }
 }
 

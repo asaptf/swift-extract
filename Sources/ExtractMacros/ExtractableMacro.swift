@@ -166,6 +166,29 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
         return (false, type)
     }
 
+    /// Leaf types the macro emits first-class schema nodes for.
+    private static let supportedPrimitives: Set<String> = [
+        "String", "Bool",
+        "Int", "Int8", "Int16", "Int32", "Int64",
+        "UInt", "UInt8", "UInt16", "UInt32", "UInt64",
+        "Float", "Double", "Decimal", "CGFloat",
+        "Date", "URL",
+    ]
+
+    /// Known Foundation / stdlib types that are *not* supported — must diagnose,
+    /// not silently expand to `Type.extractionSchema`.
+    private static let unsupportedKnownTypes: Set<String> = [
+        "UUID", "Data", "NSData", "NSString", "NSNumber", "NSDate",
+        "Set", "Dictionary", "NSDictionary", "NSArray", "NSSet",
+        "CGPoint", "CGRect", "CGSize", "CGVector", "CGAffineTransform",
+        "IndexPath", "IndexSet", "DateComponents", "DateInterval", "Calendar",
+        "TimeZone", "Locale", "Measurement", "URLComponents", "URLRequest",
+        "Any", "AnyObject", "AnyHashable", "Never", "Result", "Error",
+        "ClosedRange", "Range", "PartialRangeFrom", "PartialRangeThrough",
+        "Character", "Substring", "StaticString", "ObjectIdentifier",
+        "Mirror", "Selector", "NSObject",
+    ]
+
     private static func isSupportedType(_ type: TypeSyntax) -> Bool {
         if let array = type.as(ArrayTypeSyntax.self) {
             return isSupportedType(array.element)
@@ -186,10 +209,32 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
         if type.is(FunctionTypeSyntax.self) {
             return false
         }
-        if type.is(IdentifierTypeSyntax.self) || type.is(MemberTypeSyntax.self) {
+        if type.is(SomeOrAnyTypeSyntax.self) {
+            return false
+        }
+        if type.is(AttributedTypeSyntax.self) {
+            return false
+        }
+
+        let name = baseTypeName(type)
+        if supportedPrimitives.contains(name) {
             return true
         }
-        if type.is(ArrayTypeSyntax.self) {
+        if unsupportedKnownTypes.contains(name) {
+            return false
+        }
+        // Nested @Extractable types / user string enums: simple or member identifiers
+        // only (e.g. `Item`, `Receipt.Item`, `Status`). Not generic specializations
+        // of unknown system types.
+        if let ident = type.as(IdentifierTypeSyntax.self) {
+            // Bare identifier without generics → nested extractable / enum.
+            if ident.genericArgumentClause == nil {
+                return true
+            }
+            // Generic user types are unsupported in v0.1 (except Array, handled above).
+            return false
+        }
+        if type.is(MemberTypeSyntax.self) {
             return true
         }
         return false
@@ -296,7 +341,9 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
             """
     }
 
-    private static func generateExtractionSchema(typeName: String, properties: [PropertyInfo])
+    private static func generateExtractionSchema(
+        typeName: String, properties: [PropertyInfo]
+    )
         -> DeclSyntax
     {
         var propertyEntries: [String] = []

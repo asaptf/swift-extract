@@ -36,6 +36,7 @@ struct ContentView: View {
                         PickView(
                             onFixture: { runFixture($0) },
                             onImport: { showImporter = true },
+                            onPhotoData: { runImageData($0) },
                             onSettings: { showSettings = true }
                         )
                     case .extracting:
@@ -50,10 +51,7 @@ struct ContentView: View {
                         SetupView(
                             message: errorMessage ?? modelStore.setupMessage,
                             onSettings: { showSettings = true },
-                            onUseMock: {
-                                modelStore.backend = .mockDemo
-                                phase = .pick
-                            }
+                            onDismiss: { phase = .pick }
                         )
                     }
                 }
@@ -90,6 +88,12 @@ struct ContentView: View {
                     phase = .setup
                 }
             }
+            .onAppear {
+                // Surface setup immediately when no backend is ready (no fake happy path).
+                if !modelStore.isConfigured, phase == .pick {
+                    // Stay on pick so user can open Settings; fixtures will route to setup.
+                }
+            }
         }
     }
 
@@ -115,6 +119,26 @@ struct ContentView: View {
         runFile(url)
     }
 
+    private func runImageData(_ data: Data) {
+        guard modelStore.isConfigured else {
+            errorMessage = modelStore.setupMessage
+            phase = .setup
+            return
+        }
+        phase = .extracting
+        errorMessage = nil
+        extractionTask?.cancel()
+        extractionTask = Task {
+            do {
+                let session = try modelStore.makeSession()
+                let source = try ExtractionSource.image(data: data)
+                try await runExtraction(source: source, session: session)
+            } catch {
+                await presentError(error)
+            }
+        }
+    }
+
     private func runFile(_ url: URL) {
         guard modelStore.isConfigured else {
             errorMessage = modelStore.setupMessage
@@ -131,34 +155,39 @@ struct ContentView: View {
                 defer {
                     if accessing { url.stopAccessingSecurityScopedResource() }
                 }
-                let result: ExtractionResult<Receipt> = try await Extract.detailed(
-                    from: .fileURL(url),
-                    using: session
-                )
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                encoder.dateEncodingStrategy = .iso8601
-                let data = try encoder.encode(result.value)
-                let raw = String(data: data, encoding: .utf8) ?? result.rawModelOutput
-                await MainActor.run {
-                    draft = ReceiptDraft(from: result.value, rawJSON: raw)
-                    phase = .result
-                }
-            } catch let error as ExtractionError {
-                await MainActor.run {
-                    if case .modelUnavailable(let message) = error {
-                        errorMessage = message
-                    } else {
-                        errorMessage = error.localizedDescription
-                    }
-                    phase = .setup
-                }
+                try await runExtraction(source: .fileURL(url), session: session)
             } catch {
-                await MainActor.run {
-                    errorMessage = error.localizedDescription
-                    phase = .setup
-                }
+                await presentError(error)
             }
+        }
+    }
+
+    private func runExtraction(source: ExtractionSource, session: ExtractionSession) async throws {
+        let result: ExtractionResult<Receipt> = try await Extract.detailed(
+            from: source,
+            using: session
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(result.value)
+        let raw = String(data: data, encoding: .utf8) ?? result.rawModelOutput
+        await MainActor.run {
+            draft = ReceiptDraft(from: result.value, rawJSON: raw)
+            phase = .result
+        }
+    }
+
+    private func presentError(_ error: Error) async {
+        await MainActor.run {
+            if let extraction = error as? ExtractionError,
+                case .modelUnavailable(let message) = extraction
+            {
+                errorMessage = message
+            } else {
+                errorMessage = error.localizedDescription
+            }
+            phase = .setup
         }
     }
 }
