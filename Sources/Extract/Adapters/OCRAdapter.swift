@@ -12,37 +12,42 @@ enum OCRAdapter {
         var blocks: [ExtractedDocument.Block] = []
         for index in 0..<document.pageCount {
             guard let page = document.page(at: index) else { continue }
-            let bounds = page.bounds(for: .mediaBox)
-            let scale: CGFloat = 2.0
-            let width = Int(bounds.width * scale)
-            let height = Int(bounds.height * scale)
-            guard width > 0, height > 0 else { continue }
-
-            guard
-                let context = CGContext(
-                    data: nil,
-                    width: width,
-                    height: height,
-                    bitsPerComponent: 8,
-                    bytesPerRow: 0,
-                    space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-                )
-            else { continue }
-
-            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            context.saveGState()
-            context.translateBy(x: 0, y: CGFloat(height))
-            context.scaleBy(x: scale, y: -scale)
-            page.draw(with: .mediaBox, to: context)
-            context.restoreGState()
-
-            guard let image = context.makeImage() else { continue }
-            let pageBlocks = try recognize(cgImage: image, pageIndex: index)
-            blocks.append(contentsOf: pageBlocks)
+            blocks.append(contentsOf: try ocrPDFPage(page, pageIndex: index))
         }
         return blocks
+    }
+
+    static func ocrPDFPage(_ page: PDFPage, pageIndex: Int) throws -> [ExtractedDocument.Block] {
+        let bounds = page.bounds(for: .mediaBox)
+        let scale: CGFloat = 2.0
+        let width = Int(bounds.width * scale)
+        let height = Int(bounds.height * scale)
+        guard width > 0, height > 0 else { return [] }
+
+        guard
+            let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else {
+            return []
+        }
+
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.saveGState()
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        page.draw(with: .mediaBox, to: context)
+        context.restoreGState()
+
+        guard let image = context.makeImage() else { return [] }
+        return try recognize(cgImage: image, pageIndex: pageIndex)
     }
 
     private static func recognizeWithVision(

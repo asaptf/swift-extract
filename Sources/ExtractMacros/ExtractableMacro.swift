@@ -30,6 +30,9 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
         conformingTo protocols: [TypeSyntax],
         in context: some MacroExpansionContext
     ) throws -> [ExtensionDeclSyntax] {
+        guard declaration.is(StructDeclSyntax.self) else {
+            return []
+        }
         let properties = try extractProperties(from: declaration, in: context, diagnose: false)
         let initFrom = generateInitFrom(properties: properties)
         let encodeTo = generateEncodeTo(properties: properties)
@@ -63,9 +66,6 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
         if let s = declaration.as(StructDeclSyntax.self) {
             return s.name.text
         }
-        if let e = declaration.as(EnumDeclSyntax.self) {
-            return e.name.text
-        }
         throw MacroError.message("@Extractable can only be applied to a struct.")
     }
 
@@ -83,6 +83,19 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
                     continue
                 }
                 if binding.accessorBlock != nil { continue }
+                if varDecl.bindingSpecifier.tokenKind == .keyword(.let),
+                    binding.initializer != nil
+                {
+                    if diagnose {
+                        context.diagnose(
+                            Diagnostic(
+                                node: Syntax(binding),
+                                message: MacroDiagnostic.initializedLet(pattern.identifier.text)
+                            )
+                        )
+                    }
+                    continue
+                }
                 guard let typeAnnotation = binding.typeAnnotation?.type else {
                     if diagnose {
                         context.diagnose(
@@ -400,6 +413,11 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
             "public init(from decoder: Decoder) throws {",
             "    let container = try decoder.container(keyedBy: CodingKeys.self)",
         ]
+        if properties.contains(where: { baseTypeName($0.baseTypeSyntax) == "Decimal" }) {
+            lines.append(
+                "    let extractionLocale = decoder.userInfo[.swiftExtractLocale] as? Locale"
+            )
+        }
         for prop in properties {
             lines.append("    \(decodeLine(for: prop))")
         }
@@ -432,8 +450,8 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
                 : "self.\(name) = try container.decodeLenientString(forKey: \(key))"
         case "Decimal":
             return optional
-                ? "self.\(name) = try container.decodeLenientDecimalIfPresent(forKey: \(key))"
-                : "self.\(name) = try container.decodeLenientDecimal(forKey: \(key))"
+                ? "self.\(name) = try container.decodeLenientDecimalIfPresent(forKey: \(key), locale: extractionLocale)"
+                : "self.\(name) = try container.decodeLenientDecimal(forKey: \(key), locale: extractionLocale)"
         case "Date":
             return optional
                 ? "self.\(name) = try container.decodeLenientDateIfPresent(forKey: \(key))"
@@ -488,6 +506,7 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
 enum MacroDiagnostic: DiagnosticMessage {
     case unsupportedType(property: String, typeName: String)
     case missingType(String)
+    case initializedLet(String)
 
     var severity: DiagnosticSeverity { .error }
 
@@ -501,6 +520,9 @@ enum MacroDiagnostic: DiagnosticMessage {
                 """
         case .missingType(let name):
             return "Property `\(name)` must have an explicit type annotation for @Extractable."
+        case .initializedLet(let name):
+            return
+                "Property `\(name)` is a let constant with a default value and cannot be decoded. Remove the default value or change it to var."
         }
     }
 
@@ -508,6 +530,7 @@ enum MacroDiagnostic: DiagnosticMessage {
         switch self {
         case .unsupportedType: return MessageID(domain: "ExtractMacros", id: "unsupportedType")
         case .missingType: return MessageID(domain: "ExtractMacros", id: "missingType")
+        case .initializedLet: return MessageID(domain: "ExtractMacros", id: "initializedLet")
         }
     }
 }

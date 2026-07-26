@@ -50,7 +50,6 @@ struct ExtractCLI {
     static func run(arguments: [String]) async throws {
         var args = arguments
         var schemaName = "Invoice"
-        var schemaPath: String?
         var useMock = ProcessInfo.processInfo.environment["EXTRACT_USE_MOCK"] == "1"
         var mockJSON: String?
         var inputPath: String?
@@ -62,38 +61,34 @@ struct ExtractCLI {
                 print(usage)
                 return
             case "--schema":
-                schemaPath = args.first
-                if let path = schemaPath {
-                    args.removeFirst()
-                    schemaName = inferSchemaName(from: path)
-                }
+                let path = try takeValue(for: arg, from: &args)
+                schemaName = inferSchemaName(from: path)
             case "--as":
-                if let value = args.first {
-                    args.removeFirst()
-                    schemaName = inferSchemaName(from: value)
-                }
+                let value = try takeValue(for: arg, from: &args)
+                schemaName = inferSchemaName(from: value)
             case "--type":
-                if let value = args.first {
-                    args.removeFirst()
-                    schemaName = value
-                }
+                schemaName = try takeValue(for: arg, from: &args)
             case "--mock":
                 useMock = true
             case "--mock-json":
-                if let value = args.first {
-                    args.removeFirst()
-                    if let data = try? Data(contentsOf: URL(fileURLWithPath: value)),
-                        let text = String(data: data, encoding: .utf8)
-                    {
-                        mockJSON = text
-                        useMock = true
+                let value = try takeValue(for: arg, from: &args)
+                if let data = try? Data(contentsOf: URL(fileURLWithPath: value)),
+                    let text = String(data: data, encoding: .utf8)
+                {
+                    mockJSON = text
+                } else {
+                    mockJSON = value
+                }
+                useMock = true
+            case "--":
+                for value in args {
+                    if inputPath == nil {
+                        inputPath = value
                     } else {
-                        mockJSON = value
-                        useMock = true
+                        throw CLIError.unexpectedArgument(value)
                     }
                 }
-            case "--":
-                break
+                args.removeAll()
             default:
                 if arg.hasPrefix("-") {
                     throw CLIError.unknownOption(arg)
@@ -140,6 +135,14 @@ struct ExtractCLI {
         }
 
         print(json)
+    }
+
+    static func takeValue(for option: String, from arguments: inout [String]) throws -> String {
+        guard let value = arguments.first else {
+            throw CLIError.missingOptionValue(option)
+        }
+        arguments.removeFirst()
+        return value
     }
 
     static var usage: String {
@@ -222,6 +225,7 @@ struct ExtractCLI {
 
 enum CLIError: Error, LocalizedError {
     case missingInput
+    case missingOptionValue(String)
     case fileNotFound(String)
     case unknownOption(String)
     case unexpectedArgument(String)
@@ -230,6 +234,7 @@ enum CLIError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingInput: return "Missing input file path."
+        case .missingOptionValue(let option): return "Missing value for option \(option)."
         case .fileNotFound(let p): return "File not found: \(p)"
         case .unknownOption(let o): return "Unknown option: \(o)"
         case .unexpectedArgument(let a): return "Unexpected argument: \(a)"

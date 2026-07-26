@@ -3,16 +3,22 @@ import UniformTypeIdentifiers
 
 enum SourceIngester {
     static func ingest(_ source: ExtractionSource) async throws -> ExtractedDocument {
-        switch source {
-        case .text(let string):
-            return TextAdapter.ingest(string)
-        case .pdf(let url):
-            return try PDFAdapter.ingest(url: url)
-        case .image(let cgImage):
-            let blocks = try OCRAdapter.recognize(cgImage: cgImage)
-            return ExtractedDocument(blocks: blocks, sourceDescription: "image")
-        case .fileURL(let url):
-            return try ingestFile(url: url)
+        do {
+            switch source {
+            case .text(let string):
+                return TextAdapter.ingest(string)
+            case .pdf(let url):
+                return try PDFAdapter.ingest(url: url)
+            case .image(let cgImage):
+                let blocks = try OCRAdapter.recognize(cgImage: cgImage)
+                return ExtractedDocument(blocks: blocks, sourceDescription: "image")
+            case .fileURL(let url):
+                return try ingestFile(url: url)
+            }
+        } catch let error as ExtractionError {
+            throw error
+        } catch {
+            throw ExtractionError.unreadableSource(underlying: error)
         }
     }
 

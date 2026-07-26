@@ -65,6 +65,47 @@ struct AdapterTests {
         #expect(doc.title == "Report")
     }
 
+    @Test("PDF OCR fallback is applied per page")
+    func mixedPDFUsesOCRForScannedPage() async throws {
+        let url = try makeMixedPDFFixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let canned = """
+            {"title":"Mixed PDF","body":"Text and scanned pages"}
+            """
+        let session = ExtractionSession.mock(
+            MockLanguageModel { _, user, _ in
+                let prompt = user.uppercased()
+                #expect(prompt.contains("TEXT LAYER PAGE"))
+                #expect(prompt.contains("SCANNED PAGE"))
+                return canned
+            }
+        )
+
+        let doc: TinyDoc = try await Extract.from(.pdf(url), using: session)
+        #expect(doc.title == "Mixed PDF")
+    }
+
+    @Test("file read failures use ExtractionError")
+    func unreadableFileURL() async throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).txt")
+        let session = ExtractionSession.mock(MockLanguageModel(responses: ["{}"]))
+
+        do {
+            let _: TinyDoc = try await Extract.from(.fileURL(missing), using: session)
+            Issue.record("Expected unreadableSource")
+        } catch let error as ExtractionError {
+            guard case .unreadableSource(let underlying) = error else {
+                Issue.record("Wrong error \(error)")
+                return
+            }
+            #expect(underlying != nil)
+        } catch {
+            Issue.record("Expected ExtractionError, got \(error)")
+        }
+    }
+
     @Test("OCR path on rendered image (skip if Vision fails)")
     func ocrImage() async throws {
         // Render a simple bitmap with text via Core Graphics, then OCR.
@@ -149,6 +190,104 @@ struct AdapterTests {
         }
         // Prefer PDFKit write for cross-platform
         return try writePDFKit(text: text, to: url)
+    }
+
+    private func makeMixedPDFFixture() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("extract-mixed-\(UUID().uuidString).pdf")
+        let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let data = NSMutableData()
+        var mediaBox = pageRect
+        guard let consumer = CGDataConsumer(data: data as CFMutableData),
+            let pdfContext = CGContext(consumer: consumer, mediaBox: &mediaBox, nil)
+        else {
+            throw ExtractionError.internalError("Could not create mixed PDF context")
+        }
+
+        pdfContext.beginPage(mediaBox: &mediaBox)
+        drawText(
+            "TEXT LAYER PAGE WITH ENOUGH CHARACTERS TO KEEP ITS NATIVE TEXT",
+            in: pdfContext,
+            frame: CGRect(x: 50, y: 500, width: 500, height: 100),
+            fontSize: 20
+        )
+        pdfContext.endPage()
+
+        guard
+            let bitmap = CGContext(
+                data: nil,
+                width: 1_200,
+                height: 300,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else {
+            throw ExtractionError.internalError("Could not create scanned page image")
+        }
+        bitmap.setFillColor(CGColor(gray: 1, alpha: 1))
+        bitmap.fill(CGRect(x: 0, y: 0, width: 1_200, height: 300))
+        drawText(
+            "SCANNED PAGE TOTAL 42.00",
+            in: bitmap,
+            frame: CGRect(x: 40, y: 80, width: 1_100, height: 140),
+            fontSize: 64
+        )
+        guard let scannedImage = bitmap.makeImage() else {
+            throw ExtractionError.internalError("Could not render scanned page image")
+        }
+
+        pdfContext.beginPage(mediaBox: &mediaBox)
+        pdfContext.setFillColor(CGColor(gray: 1, alpha: 1))
+        pdfContext.fill(pageRect)
+        pdfContext.saveGState()
+        pdfContext.translateBy(x: pageRect.width, y: 0)
+        pdfContext.scaleBy(x: -1, y: 1)
+        pdfContext.draw(scannedImage, in: CGRect(x: 40, y: 300, width: 532, height: 133))
+        pdfContext.restoreGState()
+        pdfContext.endPage()
+        pdfContext.closePDF()
+
+        try (data as Data).write(to: url)
+        guard let document = PDFDocument(url: url) else {
+            throw ExtractionError.internalError("Could not reopen mixed PDF fixture")
+        }
+        let scannedPageText = document.page(at: 1)?.string ?? ""
+        guard document.pageCount == 2,
+            document.page(at: 0)?.string?.contains("TEXT LAYER PAGE") == true,
+            scannedPageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw ExtractionError.internalError("Mixed PDF fixture has unexpected text layers")
+        }
+        return url
+    }
+
+    private func drawText(
+        _ text: String,
+        in context: CGContext,
+        frame: CGRect,
+        fontSize: CGFloat
+    ) {
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
+        let attributes: [CFString: Any] = [
+            kCTFontAttributeName: font,
+            kCTForegroundColorAttributeName: CGColor(gray: 0, alpha: 1),
+        ]
+        let attributed = CFAttributedStringCreate(
+            nil,
+            text as CFString,
+            attributes as CFDictionary
+        )!
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        let path = CGPath(rect: frame, transform: nil)
+        let textFrame = CTFramesetterCreateFrame(
+            framesetter,
+            CFRange(location: 0, length: 0),
+            path,
+            nil
+        )
+        CTFrameDraw(textFrame, context)
     }
 
     private func writePDFKit(text: String, to url: URL) throws -> URL {

@@ -84,14 +84,13 @@ public enum Extract {
         var partials: [String] = []
         var totalAttempts = 0
         for chunk in chunks {
-            let result = try await extractSingle(
+            let result = try await extractPartial(
                 from: chunk,
                 as: type,
                 using: session,
-                options: options,
-                chunksUsed: chunks.count
+                options: options
             )
-            partials.append(result.rawModelOutput)
+            partials.append(result.json)
             totalAttempts += result.attempts
         }
 
@@ -115,14 +114,14 @@ public enum Extract {
                     mergeUser
                     + "\n\n## Previous merge failed\n\(ValidationErrorFormatter.describe(lastError))\n\n### Previous output\n\(lastRaw)"
             }
+            let raw = try await session.generate(
+                system: PromptBuilder.systemInstructions,
+                user: user,
+                temperature: temperature,
+                schema: schema
+            )
+            lastRaw = raw
             do {
-                let raw = try await session.generate(
-                    system: PromptBuilder.systemInstructions,
-                    user: user,
-                    temperature: temperature,
-                    schema: schema
-                )
-                lastRaw = raw
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
                 return ExtractionResult(
                     value: value,
@@ -137,6 +136,60 @@ public enum Extract {
 
         throw ExtractionError.validationFailed(
             attempts: totalAttempts + maxAttempts,
+            lastError: lastError,
+            rawOutput: lastRaw
+        )
+    }
+
+    private static func extractPartial<T: Extractable>(
+        from document: ExtractedDocument,
+        as type: T.Type,
+        using session: ExtractionSession,
+        options: ExtractionOptions
+    ) async throws -> (json: String, attempts: Int) {
+        var lastError: Error = ExtractionError.internalError("no attempt")
+        var lastRaw = ""
+        let maxAttempts = max(1, options.maxRetries + 1)
+        let temperature = options.resolvedTemperature(session: session)
+        var schema = T.extractionSchema
+        if schema.type == .object {
+            schema.required = []
+        }
+
+        for attempt in 0..<maxAttempts {
+            let repair: PromptBuilder.RepairContext?
+            if attempt == 0 {
+                repair = nil
+            } else {
+                repair = PromptBuilder.RepairContext(
+                    previousOutput: lastRaw,
+                    errorDescription: ValidationErrorFormatter.describe(lastError)
+                )
+            }
+            let user = PromptBuilder.userPrompt(
+                type: type,
+                document: document,
+                locale: options.locale,
+                schema: schema,
+                allowsPartialObject: true,
+                repair: repair
+            )
+            let raw = try await session.generate(
+                system: PromptBuilder.systemInstructions,
+                user: user,
+                temperature: temperature,
+                schema: schema
+            )
+            lastRaw = raw
+            do {
+                return (try PartialJSONValidator.validate(raw, expectedRoot: schema.type), attempt + 1)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw ExtractionError.validationFailed(
+            attempts: maxAttempts,
             lastError: lastError,
             rawOutput: lastRaw
         )
@@ -171,14 +224,14 @@ public enum Extract {
                 locale: options.locale,
                 repair: repair
             )
+            let raw = try await session.generate(
+                system: PromptBuilder.systemInstructions,
+                user: user,
+                temperature: temperature,
+                schema: schema
+            )
+            lastRaw = raw
             do {
-                let raw = try await session.generate(
-                    system: PromptBuilder.systemInstructions,
-                    user: user,
-                    temperature: temperature,
-                    schema: schema
-                )
-                lastRaw = raw
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
                 return ExtractionResult(
                     value: value,
@@ -186,12 +239,6 @@ public enum Extract {
                     rawModelOutput: raw,
                     chunksUsed: chunksUsed
                 )
-            } catch let error as ExtractionError {
-                // Model unavailable etc. should not be retried as validation.
-                if case .modelUnavailable = error {
-                    throw error
-                }
-                lastError = error
             } catch {
                 lastError = error
             }
@@ -219,5 +266,27 @@ public enum Extract {
             }
             return document.chunks(budget: options.softContextCharacterBudget)
         }
+    }
+}
+
+private enum PartialJSONValidator {
+    static func validate(
+        _ raw: String,
+        expectedRoot: ExtractionSchema.SchemaType
+    ) throws -> String {
+        let cleaned = JSONFenceStripper.strip(raw, expectedRoot: expectedRoot)
+        guard let data = cleaned.data(using: .utf8) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "Partial JSON is not valid UTF-8")
+            )
+        }
+        let value = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        if expectedRoot == .object, !(value is [String: Any]) {
+            throw DecodingError.typeMismatch(
+                [String: Any].self,
+                .init(codingPath: [], debugDescription: "Expected a partial JSON object")
+            )
+        }
+        return cleaned
     }
 }

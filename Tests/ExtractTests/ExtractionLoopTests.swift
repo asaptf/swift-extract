@@ -46,6 +46,19 @@ struct ExtractionLoopTests {
         #expect(person.homepage == nil)
     }
 
+    @Test("extracts JSON around bracketed prose")
+    func bracketedProse() async throws {
+        let response = """
+            Notes [not JSON].
+            {"name":"Bracket } [ text","age":20,"balance":"12,50","birthday":"2000-01-02","active":false,"homepage":null}
+            Sources [1]
+            """
+        let session = ExtractionSession.mock(MockLanguageModel(responses: [response]))
+        let person: SimplePerson = try await Extract.from("doc", using: session)
+        #expect(person.name == "Bracket } [ text")
+        #expect(person.balance == Decimal(string: "12.50"))
+    }
+
     @Test("lenient date and decimal decoding")
     func lenientDecode() async throws {
         let json = """
@@ -60,6 +73,89 @@ struct ExtractionLoopTests {
         #expect(comps.month == 3)
         #expect(comps.day == 5)
         #expect(person.active == true)
+    }
+
+    @Test("locale controls ambiguous dates and decimal separators")
+    func localeAwareDecode() async throws {
+        let json = """
+            {"name":"Eva","age":1,"balance":"EUR 1.234,56","birthday":"03/04/2020","active":true,"homepage":null}
+            """
+        let session = ExtractionSession.mock(MockLanguageModel(responses: [json]))
+        let person: SimplePerson = try await Extract.from(
+            "doc",
+            using: session,
+            options: ExtractionOptions(locale: Locale(identifier: "es_ES"))
+        )
+        #expect(person.balance == Decimal(string: "1234.56"))
+        let components = Calendar(identifier: .gregorian)
+            .dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: person.birthday)
+        #expect(components.year == 2020)
+        #expect(components.month == 4)
+        #expect(components.day == 3)
+    }
+
+    @Test("generation errors are not retried as validation failures")
+    func generationErrorPropagation() async throws {
+        let attempts = AttemptCounter()
+        let session = ExtractionSession.mock(
+            MockLanguageModel { _, _, _ in
+                await attempts.increment()
+                throw GenerationProbeError.failed
+            }
+        )
+
+        do {
+            let _: SimplePerson = try await Extract.from(
+                "doc",
+                using: session,
+                options: ExtractionOptions(maxRetries: 2)
+            )
+            Issue.record("Expected generation failure")
+        } catch GenerationProbeError.failed {
+            #expect(await attempts.value == 1)
+        } catch {
+            Issue.record("Wrong error \(error)")
+        }
+    }
+
+    @Test("cancellation propagates immediately")
+    func cancellationPropagation() async throws {
+        let attempts = AttemptCounter()
+        let session = ExtractionSession.mock(
+            MockLanguageModel { _, _, _ in
+                await attempts.increment()
+                throw CancellationError()
+            }
+        )
+
+        do {
+            let _: SimplePerson = try await Extract.from(
+                "doc",
+                using: session,
+                options: ExtractionOptions(maxRetries: 2)
+            )
+            Issue.record("Expected cancellation")
+        } catch is CancellationError {
+            #expect(await attempts.value == 1)
+        } catch {
+            Issue.record("Wrong error \(error)")
+        }
+    }
+
+    @Test("initial prompt has one return instruction")
+    func initialPromptInstruction() async throws {
+        let json = """
+            {"name":"Prompt","age":1,"balance":0,"birthday":"2020-01-01","active":true,"homepage":null}
+            """
+        let session = ExtractionSession.mock(
+            MockLanguageModel { _, user, _ in
+                #expect(user.hasSuffix("Return the JSON object now."))
+                #expect(!user.contains("Return the corrected JSON object now."))
+                return json
+            }
+        )
+        let person: SimplePerson = try await Extract.from("doc", using: session)
+        #expect(person.name == "Prompt")
     }
 
     @Test("repair retry path")
@@ -152,6 +248,36 @@ struct ExtractionLoopTests {
         #expect(result.chunksUsed >= 2)
     }
 
+    @Test("chunks may contain incomplete objects")
+    func chunkMergeAcceptsPartials() async throws {
+        let partial1 = """
+            {"name":"Eve"}
+            """
+        let partial2 = """
+            {"age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":"https://eve.test"}
+            """
+        let merged = """
+            {"name":"Eve","age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":"https://eve.test"}
+            """
+        let session = ExtractionSession.mock(
+            MockLanguageModel(responses: [partial1, partial2, merged])
+        )
+        let options = ExtractionOptions(
+            maxRetries: 0,
+            chunkingStrategy: .fixed(characterBudget: 40)
+        )
+        let result: ExtractionResult<SimplePerson> = try await Extract.detailed(
+            from: .text(String(repeating: "document ", count: 8)),
+            using: session,
+            options: options
+        )
+
+        #expect(result.value.name == "Eve")
+        #expect(result.value.balance == Decimal(99))
+        #expect(result.chunksUsed == 2)
+        #expect(result.attempts == 3)
+    }
+
     @Test("trims strings")
     func trimStrings() async throws {
         let json = """
@@ -160,5 +286,17 @@ struct ExtractionLoopTests {
         let session = ExtractionSession.mock(MockLanguageModel(responses: [json]))
         let person: SimplePerson = try await Extract.from("doc", using: session)
         #expect(person.name == "Frank")
+    }
+}
+
+private enum GenerationProbeError: Error {
+    case failed
+}
+
+private actor AttemptCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }

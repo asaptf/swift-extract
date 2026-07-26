@@ -1,3 +1,4 @@
+import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxMacros
 
@@ -9,17 +10,34 @@ public struct GuideMacro: PeerMacro {
         providingPeersOf declaration: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-        // Validate that the argument is a string literal for clearer diagnostics.
-        if let arguments = node.arguments?.as(LabeledExprListSyntax.self),
-            let first = arguments.first
-        {
-            if first.expression.is(StringLiteralExprSyntax.self) {
-                return []
-            }
-            // Allow string interpolation expressions too.
+        guard
+            let arguments = node.arguments?.as(LabeledExprListSyntax.self),
+            arguments.count == 1,
+            let literal = arguments.first?.expression.as(StringLiteralExprSyntax.self),
+            literal.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) })
+        else {
+            context.diagnose(
+                Diagnostic(
+                    node: Syntax(node),
+                    message: GuideDiagnostic.staticLiteralRequired
+                )
+            )
             return []
         }
-        // `@Guide("...")` without labels still lands as LabeledExprList; empty is fine.
         return []
     }
+}
+
+private enum GuideDiagnostic: DiagnosticMessage {
+    case staticLiteralRequired
+
+    var message: String {
+        "@Guide requires a static string literal without interpolation."
+    }
+
+    var diagnosticID: MessageID {
+        MessageID(domain: "ExtractMacros", id: "guideStaticLiteralRequired")
+    }
+
+    var severity: DiagnosticSeverity { .error }
 }

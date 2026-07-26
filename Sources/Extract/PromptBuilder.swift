@@ -15,14 +15,27 @@ enum PromptBuilder {
         type: T.Type,
         document: ExtractedDocument,
         locale: Locale?,
+        schema: ExtractionSchema? = nil,
+        allowsPartialObject: Bool = false,
         repair: RepairContext? = nil
     ) -> String {
-        let schema = T.extractionSchema.renderJSONSchema(prettyPrinted: true)
-        let guides = T.extractionSchema.guideLines()
+        let targetSchema = schema ?? T.extractionSchema
+        let renderedSchema = targetSchema.renderJSONSchema(prettyPrinted: true)
+        let guides = targetSchema.guideLines()
         var parts: [String] = []
 
         parts.append("## Target type\n\(String(describing: type))")
-        parts.append("## JSON Schema\n```json\n\(schema)\n```")
+        parts.append("## JSON Schema\n```json\n\(renderedSchema)\n```")
+
+        if allowsPartialObject {
+            parts.append(
+                """
+                ## Partial chunk
+                This is one chunk of a larger document. Return only fields supported by this chunk.
+                Omit fields that are absent; the partial objects will be merged and validated later.
+                """
+            )
+        }
 
         if !guides.isEmpty {
             parts.append("## Field guides\n\(guides.joined(separator: "\n"))")
@@ -59,7 +72,7 @@ enum PromptBuilder {
             """
         )
 
-        parts.append("Return the corrected JSON object now." + (repair == nil ? " Return the JSON object now." : ""))
+        parts.append(repair == nil ? "Return the JSON object now." : "Return the corrected JSON object now.")
         return parts.joined(separator: "\n\n")
     }
 

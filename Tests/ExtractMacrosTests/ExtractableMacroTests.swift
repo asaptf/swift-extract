@@ -101,8 +101,9 @@ final class ExtractableMacroTests: XCTestCase {
                 extension Payment: Extractable, Codable, Sendable {
                     public init(from decoder: Decoder) throws {
                         let container = try decoder.container(keyedBy: CodingKeys.self)
+                        let extractionLocale = decoder.userInfo[.swiftExtractLocale] as? Locale
                         self.currency = try container.decodeLenientString(forKey: .currency)
-                        self.amount = try container.decodeLenientDecimal(forKey: .amount)
+                        self.amount = try container.decodeLenientDecimal(forKey: .amount, locale: extractionLocale)
                         self.due = try container.decodeLenientDate(forKey: .due)
                         self.link = try container.decodeLenientURLIfPresent(forKey: .link)
                     }
@@ -305,6 +306,100 @@ final class ExtractableMacroTests: XCTestCase {
                         "@Extractable does not support property `id` of type `UUID`. Supported: String, Bool, integer/float types, Decimal, Date, URL, Optional, Array, nested @Extractable types, and String-backed enums providing extractionSchema.",
                     line: 3,
                     column: 13
+                )
+            ],
+            macros: macros
+        )
+    }
+
+    func testInitializedLetDiagnoses() {
+        assertMacroExpansion(
+            """
+            @Extractable
+            struct Defaults {
+                let name: String = "unknown"
+            }
+            """,
+            expandedSource: """
+                struct Defaults {
+                    let name: String = "unknown"
+
+                    public enum CodingKeys: String, CodingKey {
+                    }
+
+                    public nonisolated static var extractionSchema: ExtractionSchema {
+                        .object(
+                            title: "Defaults",
+                            properties: [:],
+                            required: [String](),
+                            propertyOrder: [String]()
+                        )
+                    }
+                }
+
+                extension Defaults: Extractable, Codable, Sendable {
+                    public init(from decoder: Decoder) throws {
+                        let _ = try decoder.container(keyedBy: CodingKeys.self)
+                    }
+                    public func encode(to encoder: Encoder) throws {
+                        var container = encoder.container(keyedBy: CodingKeys.self)
+                        _ = container
+                    }
+                }
+                """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message:
+                        "Property `name` is a let constant with a default value and cannot be decoded. Remove the default value or change it to var.",
+                    line: 3,
+                    column: 9
+                )
+            ],
+            macros: macros
+        )
+    }
+
+    func testEnumDiagnoses() {
+        assertMacroExpansion(
+            """
+            @Extractable
+            enum Status {
+                case ready
+            }
+            """,
+            expandedSource: """
+                enum Status {
+                    case ready
+                }
+                """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Extractable can only be applied to a struct.",
+                    line: 1,
+                    column: 1
+                )
+            ],
+            macros: macros
+        )
+    }
+
+    func testGuideInterpolationDiagnoses() {
+        assertMacroExpansion(
+            """
+            struct Guided {
+                @Guide("value \\(1)") let name: String
+            }
+            """,
+            expandedSource: """
+                struct Guided {
+                    let name: String
+                }
+                """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Guide requires a static string literal without interpolation.",
+                    line: 2,
+                    column: 5
                 )
             ],
             macros: macros

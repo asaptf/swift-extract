@@ -26,28 +26,24 @@ enum PDFAdapter {
         }
 
         var blocks: [ExtractedDocument.Block] = []
-        var totalChars = 0
 
         for index in 0..<pageCount {
             guard let page = document.page(at: index) else { continue }
             let raw = page.string ?? ""
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            totalChars += trimmed.count
+
+            if trimmed.count < ocrFallbackThreshold {
+                let ocrBlocks = try OCRAdapter.ocrPDFPage(page, pageIndex: index)
+                if !ocrBlocks.isEmpty {
+                    blocks.append(contentsOf: ocrBlocks)
+                    continue
+                }
+            }
             if !trimmed.isEmpty {
                 blocks.append(
                     ExtractedDocument.Block(text: trimmed, pageIndex: index, boundingBox: nil)
                 )
             }
-        }
-
-        let average = pageCount > 0 ? totalChars / pageCount : 0
-        if average < ocrFallbackThreshold {
-            // Rasterize + Vision OCR
-            let ocrBlocks = try OCRAdapter.ocrPDFDocument(document)
-            if !ocrBlocks.isEmpty {
-                return ExtractedDocument(blocks: ocrBlocks, sourceDescription: sourceDescription)
-            }
-            // Fall through to whatever text layer we got (may be empty).
         }
 
         return ExtractedDocument(blocks: blocks, sourceDescription: sourceDescription)
