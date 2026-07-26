@@ -63,45 +63,24 @@ private struct LanguageModelBackend: ExtractionGenerating {
         temperature: Double,
         schema: ExtractionSchema?
     ) async throws -> String {
-        if !model.isAvailable {
-            throw ExtractionError.modelUnavailable(
-                """
-                The configured language model is not available. \
-                Configure ExtractionSession with OpenAILanguageModel, AnthropicLanguageModel, \
-                GeminiLanguageModel, OllamaLanguageModel, or an on-device backend (MLX / Core ML / Llama).
-                """
-            )
-        }
+        // Do **not** pre-check `model.isAvailable`.
+        // MLXLanguageModel (and similar lazy backends) report `.notLoaded` /
+        // `isAvailable == false` until the first successful `respond`, which is
+        // what actually loads weights. Blocking here makes local MLX unusable.
+        // Permanent unavailability (e.g. SystemLanguageModel off-device) surfaces
+        // as an error from `respond` itself.
+        //
+        // Do **not** call `LanguageModelSession.respond(to:schema:)`.
+        // In current AnyLanguageModel that overload discards the schema argument
+        // and generates `GeneratedContent` (placeholder schema), which cloud
+        // providers can mis-apply as `response_format`. Our JSON Schema is
+        // already embedded in the user prompt via `PromptBuilder`; plain
+        // `String` generation is the correct primary path.
+        _ = schema
         let session = LanguageModelSession(model: model, instructions: system)
         let options = GenerationOptions(temperature: temperature)
-
-        // Prefer schema-constrained generation when we can build a GenerationSchema.
-        // Backends that support guided generation (Apple FM, MLX, many cloud APIs)
-        // honor this path; others still receive the schema in the prompt via
-        // includeSchemaInPrompt / our prompt builder.
-        if let schema, let generationSchema = try? schema.toGenerationSchema(name: schema.title ?? "Root") {
-            do {
-                let response = try await session.respond(
-                    to: user,
-                    schema: generationSchema,
-                    includeSchemaInPrompt: true,
-                    options: options
-                )
-                return text(from: response)
-            } catch {
-                // Fall back to plain generation if constrained path fails for this backend.
-            }
-        }
-
         let response = try await session.respond(to: user, options: options)
         return response.content
-    }
-
-    private func text(from response: LanguageModelSession.Response<GeneratedContent>) -> String {
-        if case .string(let s) = response.rawContent.kind {
-            return s
-        }
-        return response.rawContent.jsonString
     }
 }
 
@@ -110,6 +89,8 @@ private enum DefaultSessionResolver {
         if #available(iOS 26, macOS 26, *) {
             #if canImport(FoundationModels)
                 let system = SystemLanguageModel.default
+                // SystemLanguageModel availability is permanent (on-device gate),
+                // not a lazy-load flag — safe to check before wrapping.
                 if system.isAvailable {
                     return ExtractionSession(model: system)
                 }

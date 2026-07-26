@@ -133,12 +133,18 @@ Custom `init(from:)` generated in an extension (preserves memberwise init):
 1. **Swift tools 6.1** instead of 6.0 (traits + AnyLanguageModel).
 2. **CLI does not JIT-compile** arbitrary `.swift` schema files; it matches
    embedded types to the example schema sources.
-3. **Constrained generation** maps `ExtractionSchema` → AnyLanguageModel
-   `DynamicGenerationSchema` / `GenerationSchema` and calls
-   `LanguageModelSession.respond(to:schema:)` when conversion succeeds; plain
-   string generation is the fallback if the constrained path throws. Schema is
-   also always embedded in the prompt for backends without guided decoding.
-4. **Temperature**: `ExtractionOptions.temperature` is `Double?` (`nil` by
+3. **Generation path is plain `String` respond.** AnyLanguageModel’s
+   `respond(to:schema:)` currently discards the schema and targets
+   `GeneratedContent` (placeholder schema), which can break cloud
+   `response_format`. We therefore always call `respond(to:options:)` for
+   `String` and put the full JSON Schema in the prompt via `PromptBuilder`.
+   `SchemaBridge` (`ExtractionSchema` → `GenerationSchema`) remains for a
+   future bridge once ALM passes the schema through correctly.
+4. **No `isAvailable` pre-check on generate.** Lazy backends (MLX) report
+   `.notLoaded` until the first successful `respond`; pre-checking would
+   permanently block them. Permanent unavailability (Apple FM off) is handled
+   at `ExtractionSession.default` resolution and by errors from `respond`.
+5. **Temperature**: `ExtractionOptions.temperature` is `Double?` (`nil` by
    default). Resolved as `options.temperature ?? session.temperature` so
    `ExtractionSession(model:temperature:)` is honored unless the call site
    overrides.
