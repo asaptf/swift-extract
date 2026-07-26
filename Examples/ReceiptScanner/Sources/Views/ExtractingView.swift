@@ -1,16 +1,13 @@
 import SwiftUI
 
 struct ExtractingView: View {
-    @State private var progress: CGFloat = 0
-    @State private var step = 0
+    /// Live status from the extraction pipeline (OCR, model, validation…).
+    var status: String
+    /// Wall-clock seconds since extraction started.
+    var elapsedSeconds: Int
+    var onCancel: () -> Void
 
-    private let steps = [
-        "Reading document…",
-        "Running OCR when needed…",
-        "Building extraction schema…",
-        "Asking the model…",
-        "Validating typed result…",
-    ]
+    @State private var progress: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 28) {
@@ -38,22 +35,35 @@ struct ExtractingView: View {
             VStack(spacing: 8) {
                 Text("Extracting")
                     .font(.title2.weight(.semibold))
-                Text(steps[step % steps.count])
+                Text(status)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .animation(.easeInOut, value: step)
+                    .multilineTextAlignment(.center)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.25), value: status)
+                    .frame(maxWidth: 320)
+                Text(elapsedLabel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
             }
+
+            Button("Cancel", role: .cancel, action: onCancel)
+                .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
                 progress = 0.85
             }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(1100))
-                step += 1
-            }
         }
+    }
+
+    private var elapsedLabel: String {
+        let m = elapsedSeconds / 60
+        let s = elapsedSeconds % 60
+        if m > 0 {
+            return String(format: "%d:%02d elapsed", m, s)
+        }
+        return "\(elapsedSeconds)s elapsed"
     }
 }

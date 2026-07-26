@@ -12,9 +12,11 @@
 		3225FBA78C3CCB60F8F0D1C2 /* ExtractingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8F77985238D210666D7DAB2 /* ExtractingView.swift */; };
 		43A2E1E215B8337647A4515B /* PickView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD1880BFF5B1B629C94F5404 /* PickView.swift */; };
 		5871920E9C22E4B72F755D25 /* ResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11E710BB90121F2FF1739243 /* ResultView.swift */; };
+		5FE26B43363EA6154F1D985F /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = F4CC8BCB25475B0C534D005D /* MLXLMCommon */; };
 		6AFEFDFEA4DAF325FA2F3C13 /* ReceiptScannerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F3314AA1DFD182A20852E08 /* ReceiptScannerApp.swift */; };
 		7EE013237451A3FD231C2C68 /* Extract in Frameworks */ = {isa = PBXBuildFile; productRef = ACC0065432C350065425086B /* Extract */; };
 		81C6D514715D9205788AF474 /* ReceiptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AE246A6C693702FC44510C5 /* ReceiptModels.swift */; };
+		ACCDD225BEE3C54A48B76AE8 /* MLXModelCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35278B91723E34D1202D4F7A /* MLXModelCatalog.swift */; };
 		F2A02783D79D0DB9F6FC7899 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13433FE34D9DBE9F44C1C786 /* ContentView.swift */; };
 /* End PBXBuildFile section */
 
@@ -22,6 +24,7 @@
 		0DD2D05AF8660070BE20531E /* ReceiptScanner.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ReceiptScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		11E710BB90121F2FF1739243 /* ResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultView.swift; sourceTree = "<group>"; };
 		13433FE34D9DBE9F44C1C786 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		35278B91723E34D1202D4F7A /* MLXModelCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXModelCatalog.swift; sourceTree = "<group>"; };
 		3AA807B19E166BCB7A4A9122 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		3AE246A6C693702FC44510C5 /* ReceiptModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptModels.swift; sourceTree = "<group>"; };
 		9F3314AA1DFD182A20852E08 /* ReceiptScannerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptScannerApp.swift; sourceTree = "<group>"; };
@@ -37,6 +40,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7EE013237451A3FD231C2C68 /* Extract in Frameworks */,
+				5FE26B43363EA6154F1D985F /* MLXLMCommon in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +82,7 @@
 		8C854CF8FBFF7B80DBFC491C /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				35278B91723E34D1202D4F7A /* MLXModelCatalog.swift */,
 				EAC51E37BC480C3AE1698BD8 /* ModelSettingsStore.swift */,
 				3AE246A6C693702FC44510C5 /* ReceiptModels.swift */,
 			);
@@ -124,6 +129,7 @@
 			name = ReceiptScanner;
 			packageProductDependencies = (
 				ACC0065432C350065425086B /* Extract */,
+				F4CC8BCB25475B0C534D005D /* MLXLMCommon */,
 			);
 			productName = ReceiptScanner;
 			productReference = 0DD2D05AF8660070BE20531E /* ReceiptScanner.app */;
@@ -139,6 +145,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					E43FADB7A4D46456C064BB2B = {
+						DevelopmentTeam = WV9GF23FQM;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -153,6 +160,7 @@
 			mainGroup = 6668D9B73C2EB5DE7A2AD745;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				EA19231E9886A9393250C80B /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 				4FCCC7F57FC60AFE84F37F05 /* XCLocalSwiftPackageReference "../.." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -172,6 +180,7 @@
 			files = (
 				F2A02783D79D0DB9F6FC7899 /* ContentView.swift in Sources */,
 				3225FBA78C3CCB60F8F0D1C2 /* ExtractingView.swift in Sources */,
+				ACCDD225BEE3C54A48B76AE8 /* MLXModelCatalog.swift in Sources */,
 				1973D828F0B09F6714D4907F /* ModelSettingsStore.swift in Sources */,
 				43A2E1E215B8337647A4515B /* PickView.swift in Sources */,
 				81C6D514715D9205788AF474 /* ReceiptModels.swift in Sources */,
@@ -313,10 +322,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = WV9GF23FQM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
@@ -337,7 +345,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG MLX $(inherited)";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -346,10 +354,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = WV9GF23FQM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
@@ -370,6 +377,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "MLX $(inherited)";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -402,13 +410,32 @@
 		4FCCC7F57FC60AFE84F37F05 /* XCLocalSwiftPackageReference "../.." */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../..;
+			traits = (
+				MLX,
+			);
 		};
 /* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		EA19231E9886A9393250C80B /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				kind = exactVersion;
+				version = 2.30.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		ACC0065432C350065425086B /* Extract */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Extract;
+		};
+		F4CC8BCB25475B0C534D005D /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EA19231E9886A9393250C80B /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

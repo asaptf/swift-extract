@@ -15,8 +15,19 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
 
 packages:
+  # MLX trait enables on-device MLX backends via AnyLanguageModel.
+  # mlx-swift-lm is also declared directly as the SPM trait graph workaround
+  # (see AnyLanguageModel#135 / swift-package-manager#9286) and so the demo
+  # can call MLXLMCommon.downloadModel with progress.
   swift-extract:
     path: ../..
+    traits:
+      - MLX
+  # Pin below 2.31: mlx-swift 0.31.5+ uses swift-tools 6.3 experimentalCGen +
+  # a CudaBuild plugin that fails Xcode package validation on Apple platforms.
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    exactVersion: 2.30.6
 
 targets:
   ReceiptScanner:
@@ -32,6 +43,8 @@ targets:
     dependencies:
       - package: swift-extract
         product: Extract
+      - package: mlx-swift-lm
+        product: MLXLMCommon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.swiftextract.ReceiptScanner
@@ -42,9 +55,7 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: "Scan receipts and documents for structured extraction."
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Select receipt photos for structured extraction."
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
+        DEVELOPMENT_TEAM: WV9GF23FQM
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
         LD_RUNPATH_SEARCH_PATHS:
@@ -53,9 +64,11 @@ targets:
         ENABLE_PREVIEWS: YES
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        # App-side `#if MLX` gates (ModelSettingsStore) mirror the package trait.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "MLX $(inherited)"
       configs:
         Debug:
-          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG $(inherited)"
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG MLX $(inherited)"
         Release:
           SWIFT_COMPILATION_MODE: wholemodule
     info:

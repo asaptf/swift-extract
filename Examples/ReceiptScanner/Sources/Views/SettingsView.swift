@@ -25,20 +25,31 @@ struct SettingsView: View {
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     if kind == .appleIntelligence {
+                                        let status = modelStore.appleIntelligenceStatus
+                                        Text(status.shortLabel)
+                                            .font(.caption2)
+                                            .foregroundStyle(status.isAvailable ? .green : .orange)
+                                        if !status.isAvailable {
+                                            Text(status.guidance)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                    if kind == .mlx {
                                         Text(
-                                            modelStore.appleIntelligenceAvailable
-                                                ? "Available on this device"
-                                                : "Not available on this device"
+                                            modelStore.mlxBackendCompiledIn
+                                                ? (modelStore.mlxIsOnDisk
+                                                    ? "Model on disk — ready"
+                                                    : "Download a model below to use offline")
+                                                : "MLX not linked in this build"
                                         )
                                         .font(.caption2)
                                         .foregroundStyle(
-                                            modelStore.appleIntelligenceAvailable ? .green : .orange
+                                            modelStore.mlxIsOnDisk
+                                                ? .green
+                                                : (modelStore.mlxBackendCompiledIn ? .orange : .red)
                                         )
-                                    }
-                                    if kind == .mlx {
-                                        Text("Requires MLX package trait + Apple Silicon")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
                                     }
                                 }
                                 Spacer()
@@ -69,14 +80,7 @@ struct SettingsView: View {
                 }
 
                 if modelStore.backend == .mlx {
-                    Section("MLX local model") {
-                        TextField("Model ID", text: $modelStore.mlxModelId)
-                        Text(
-                            "Example: mlx-community/Qwen2.5-3B-Instruct-4bit or mlx-community/Llama-3.2-3B-Instruct-4bit. Enable the MLX trait on the swift-extract package dependency."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
+                    MLXSettingsSection()
                 }
 
                 Section("About") {
@@ -96,8 +100,127 @@ struct SettingsView: View {
             }
         }
         #if os(macOS)
-            .frame(minWidth: 420, minHeight: 480)
+            .frame(minWidth: 420, minHeight: 520)
         #endif
+    }
+}
+
+// MARK: - MLX settings
+
+private struct MLXSettingsSection: View {
+    @EnvironmentObject private var modelStore: ModelSettingsStore
+
+    var body: some View {
+        Section("MLX presets") {
+            ForEach(MLXModelCatalog.presets) { preset in
+                Button {
+                    modelStore.selectMLXPreset(preset)
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(
+                            systemName: modelStore.mlxModelId == preset.id
+                                ? "checkmark.circle.fill" : "circle"
+                        )
+                        .foregroundStyle(
+                            modelStore.mlxModelId == preset.id ? .orange : .secondary
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(preset.title)
+                                .foregroundStyle(.primary)
+                            Text(preset.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("\(preset.id) · \(preset.approxSize)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+
+        Section("MLX model") {
+            TextField("Hugging Face model id", text: $modelStore.mlxModelId)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                #if os(iOS)
+                    .textContentType(.none)
+                    .keyboardType(.asciiCapable)
+                #endif
+
+            downloadControls
+
+            Text(
+                """
+                Models are downloaded from Hugging Face into the app cache and run fully on-device via MLX. \
+                Prefer the smaller presets on iPhone. First load after download can take a moment while weights map into memory.
+                """
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var downloadControls: some View {
+        switch modelStore.mlxDownloadPhase {
+        case .idle:
+            Button {
+                modelStore.downloadMLXModel()
+            } label: {
+                Label(
+                    modelStore.mlxIsOnDisk ? "Re-download Model" : "Download Model",
+                    systemImage: "arrow.down.circle"
+                )
+            }
+            .disabled(!modelStore.mlxBackendCompiledIn || modelStore.mlxModelId.isEmpty)
+
+            if modelStore.mlxIsOnDisk {
+                Label("Weights found in cache", systemImage: "checkmark.seal.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+
+        case .downloading(let fraction):
+            VStack(alignment: .leading, spacing: 8) {
+                ProgressView(value: fraction)
+                HStack {
+                    Text("Downloading… \(Int(fraction * 100))%")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") {
+                        modelStore.cancelMLXDownload()
+                    }
+                    .font(.caption)
+                }
+            }
+
+        case .ready:
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Model ready on device", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Button {
+                    modelStore.downloadMLXModel()
+                } label: {
+                    Label("Re-download", systemImage: "arrow.clockwise")
+                }
+            }
+
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button {
+                    modelStore.downloadMLXModel()
+                } label: {
+                    Label("Retry download", systemImage: "arrow.down.circle")
+                }
+            }
+        }
     }
 }
 
