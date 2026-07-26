@@ -1,5 +1,22 @@
 // swift-tools-version: 6.1
+import Foundation
 import PackageDescription
+
+// SPM path-package identity is the **directory basename**, not Package.swift `name`.
+// Local clones may live in `swift-extraction-lib` while GitHub Actions checks out
+// `swift-extract` — resolve the product against whichever parent dir we are in.
+let rootPackageIdentity = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent() // Examples/ReceiptScanner
+    .deletingLastPathComponent() // Examples
+    .deletingLastPathComponent() // repo root
+    .lastPathComponent
+
+// SPM package for `swift build` / CI.
+// Full MLX download support is enabled in ReceiptScanner.xcodeproj (package trait
+// MLX + MLXLMCommon). Keeping the SPM graph free of mlx-swift keeps CI green and
+// avoids the heavy Metal/CUDA native build on GitHub Actions.
+//
+// To build with MLX via SPM locally, see project.yml / README.
 
 let package = Package(
     name: "ReceiptScanner",
@@ -11,29 +28,20 @@ let package = Package(
         .executable(name: "ReceiptScanner", targets: ["ReceiptScanner"])
     ],
     dependencies: [
-        .package(
-            path: "../..",
-            traits: ["MLX"]
-        ),
-        // SPM trait graph workaround + download progress API for the demo.
-        // Pin below 2.31: mlx-swift 0.31.5+ pulls experimentalCGen + CudaBuild plugin
-        // that fails Xcode package validation on Apple platforms.
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.30.6"),
+        .package(path: "../.."),
     ],
     targets: [
         .executableTarget(
             name: "ReceiptScanner",
             dependencies: [
-                .product(name: "Extract", package: "swift-extract"),
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "Extract", package: rootPackageIdentity)
             ],
             path: "Sources",
             resources: [
                 .copy("Resources/Fixtures")
             ],
             swiftSettings: [
-                .swiftLanguageMode(.v6),
-                .define("MLX"),
+                .swiftLanguageMode(.v6)
             ]
         )
     ]

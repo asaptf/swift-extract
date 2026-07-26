@@ -112,10 +112,12 @@ enum AppleIntelligenceStatus: Equatable, Sendable {
     }
 
     static func resolve() -> AppleIntelligenceStatus {
+        // SystemLanguageModel lives in FoundationModels (and AnyLanguageModel only
+        // re-exports it when that framework can be imported). On CI / Xcode 16 SDKs
+        // without FoundationModels the type is not in scope — never reference it
+        // outside `#if canImport(FoundationModels)`.
         if #available(iOS 26, macOS 26, *) {
             #if canImport(FoundationModels)
-                // Prefer Apple's API directly so we get the real UnavailableReason
-                // (AnyLanguageModel wraps the same model but the demo UI needs precise copy).
                 switch FoundationModels.SystemLanguageModel.default.availability {
                 case .available:
                     return .available
@@ -128,10 +130,6 @@ enum AppleIntelligenceStatus: Equatable, Sendable {
                 case .unavailable(let reason):
                     return .unknown("Unavailable (\(String(describing: reason)))")
                 }
-            #elseif canImport(AnyLanguageModel)
-                return AnyLanguageModel.SystemLanguageModel.default.isAvailable
-                    ? .available
-                    : .unknown("SystemLanguageModel reports unavailable")
             #else
                 return .frameworkMissing
             #endif
@@ -255,9 +253,18 @@ final class ModelSettingsStore: ObservableObject {
         appleIntelligenceStatus.isAvailable
     }
 
-    /// Whether the MLX stack (AnyLanguageModel + MLXLMCommon) is compiled into this app.
+    /// Whether the MLX stack is compiled into this app (Xcode project with MLX trait).
     var mlxBackendCompiledIn: Bool {
-        #if canImport(MLXLMCommon) && canImport(AnyLanguageModel)
+        #if canImport(AnyLanguageModel) && MLX
+            return true
+        #else
+            return false
+        #endif
+    }
+
+    /// Whether Hub download APIs (MLXLMCommon) are linked.
+    var mlxDownloadAvailable: Bool {
+        #if canImport(MLXLMCommon)
             return true
         #else
             return false
@@ -292,7 +299,13 @@ final class ModelSettingsStore: ObservableObject {
         }
         guard mlxBackendCompiledIn else {
             mlxDownloadPhase = .failed(
-                "MLX is not linked. Rebuild with the MLX trait enabled."
+                "MLX is not linked. Open ReceiptScanner.xcodeproj (MLX trait) and rebuild."
+            )
+            return
+        }
+        guard mlxDownloadAvailable else {
+            mlxDownloadPhase = .failed(
+                "MLXLMCommon is not linked — cannot download with progress. Rebuild the Xcode project."
             )
             return
         }
@@ -353,8 +366,9 @@ final class ModelSettingsStore: ObservableObject {
             #endif
         case .appleIntelligence:
             if #available(iOS 26, macOS 26, *) {
-                #if canImport(AnyLanguageModel)
-                    // AnyLanguageModel's wrapper (not FoundationModels.SystemLanguageModel).
+                // AnyLanguageModel.SystemLanguageModel is only compiled when
+                // FoundationModels is available — gate the same way.
+                #if canImport(FoundationModels) && canImport(AnyLanguageModel)
                     let model = AnyLanguageModel.SystemLanguageModel.default
                     guard model.isAvailable else {
                         throw ExtractionError.modelUnavailable(setupMessage)
@@ -431,18 +445,18 @@ enum MLXModelDownloader {
 
 enum MLXSessionFactory {
     static func makeSession(modelId: String) throws -> ExtractionSession {
-        #if canImport(AnyLanguageModel) && canImport(MLXLMCommon)
-            let model = MLXLanguageModel(modelId: modelId)
-            return ExtractionSession(model: model)
-        #elseif canImport(AnyLanguageModel) && MLX
+        // `MLXLanguageModel` is only present when AnyLanguageModel is built with the
+        // MLX trait. The demo sets SWIFT_ACTIVE_COMPILATION_CONDITIONS=MLX in the
+        // Xcode project (and links MLXLMCommon) when that trait is enabled.
+        #if canImport(AnyLanguageModel) && MLX
             let model = MLXLanguageModel(modelId: modelId)
             return ExtractionSession(model: model)
         #else
             throw ExtractionError.modelUnavailable(
                 """
-                MLX backend is not compiled into this build. Enable the MLX package trait \
-                on swift-extract (and declare mlx-swift-lm per the README SPM workaround), \
-                then rebuild ReceiptScanner.
+                MLX backend is not compiled into this build. Open ReceiptScanner.xcodeproj \
+                (MLX trait enabled) or add traits: [\"MLX\"] + mlx-swift-lm to Package.swift, \
+                then rebuild.
                 """
             )
         #endif
