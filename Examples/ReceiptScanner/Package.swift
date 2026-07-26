@@ -17,7 +17,7 @@ let package = Package(
         .executableTarget(
             name: "ReceiptScanner",
             dependencies: [
-                .product(name: "Extract", package: "swift-extraction-lib")
+                .product(name: "Extract", package: "swift-extract")
             ],
             path: "Sources",
             resources: [
