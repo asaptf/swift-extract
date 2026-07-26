@@ -4,9 +4,10 @@
 
 Powered by any LLM: Apple Intelligence on-device, MLX / Core ML / llama.cpp locally, or OpenAI / Anthropic / Gemini in the cloud — via [AnyLanguageModel](https://github.com/huggingface/AnyLanguageModel).
 
-[![CI](https://github.com/swift-extract/swift-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/swift-extract/swift-extract/actions/workflows/ci.yml)
+[![CI](https://github.com/asaptf/swift-extract/actions/workflows/ci.yml/badge.svg)](https://github.com/asaptf/swift-extract/actions/workflows/ci.yml)
+[![Swift versions](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fasaptf%2Fswift-extract%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/asaptf/swift-extract)
+[![Platforms](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fasaptf%2Fswift-extract%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/asaptf/swift-extract)
 ![Swift 6.1](https://img.shields.io/badge/Swift-6.1-F05138.svg)
-![Platforms](https://img.shields.io/badge/platforms-iOS%2017%20%7C%20macOS%2014-lightgrey.svg)
 ![SPM](https://img.shields.io/badge/SPM-compatible-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
@@ -61,7 +62,7 @@ Macros give compile-time schemas (no `Mirror`). Vision and PDFKit are first-part
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/swift-extract/swift-extract.git", from: "0.1.0")
+    .package(url: "https://github.com/asaptf/swift-extract.git", from: "0.1.0")
 ]
 ```
 
@@ -174,7 +175,7 @@ Default build is **lightweight**: text + PDFKit + Vision OCR + cloud/Apple backe
 
 ```swift
 .package(
-    url: "https://github.com/swift-extract/swift-extract.git",
+    url: "https://github.com/asaptf/swift-extract.git",
     from: "0.1.0",
     traits: ["MLX"]
 )
@@ -187,7 +188,7 @@ If enabling traits fails with *“exhausted attempts to resolve the dependencies
 ```swift
 dependencies: [
     .package(
-        url: "https://github.com/swift-extract/swift-extract.git",
+        url: "https://github.com/asaptf/swift-extract.git",
         from: "0.1.0",
         traits: ["MLX", "CoreML", "Llama"]
     ),
@@ -289,10 +290,17 @@ Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) and [
 
 ---
 
-## Name note
+## Package identity
 
-The package identity is **`swift-extract`** (library product: **`Extract`**). As of 2026-07 there is no conflicting published SPM package under that name for structured LLM extraction (checked against GitHub / Swift Package Index search). Import remains:
+| | |
+| --- | --- |
+| Repository | https://github.com/asaptf/swift-extract |
+| Package name | `swift-extract` |
+| Library product | `Extract` |
+| License | Apache-2.0 |
 
 ```swift
 import Extract
 ```
+
+After the first release is indexed, add the package to the [Swift Package Index](https://swiftpackageindex.com/add-a-package) with that repository URL.

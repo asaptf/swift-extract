@@ -13,7 +13,7 @@ This guide takes you from an empty app to a working extraction in a few minutes.
 ### Xcode app
 
 1. **File → Add Package Dependencies…**
-2. URL: `https://github.com/swift-extract/swift-extract.git`
+2. URL: `https://github.com/asaptf/swift-extract.git`
 3. Add product **`Extract`** to your app target.
 
 ### Package.swift
@@ -26,7 +26,7 @@ let package = Package(
     name: "MyApp",
     platforms: [.iOS(.v17), .macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/swift-extract/swift-extract.git", from: "0.1.0")
+        .package(url: "https://github.com/asaptf/swift-extract.git", from: "0.1.0")
     ],
     targets: [
         .executableTarget(

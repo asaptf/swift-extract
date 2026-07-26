@@ -64,7 +64,7 @@ let session = ExtractionSession(model: model)
 
 ```swift
 .package(
-    url: "https://github.com/swift-extract/swift-extract.git",
+    url: "https://github.com/asaptf/swift-extract.git",
     from: "0.1.0",
     traits: ["MLX"]
 )
