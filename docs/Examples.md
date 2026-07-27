@@ -76,8 +76,9 @@ Recognize structured fields from a passport, national ID, or driver-license phot
 > **Privacy:** Use **synthetic or fully redacted** samples only in demos, fixtures,
 > CI, and docs. Never commit real government ID photos or personal data.
 > For production ID handling, prefer **on-device** backends (Apple Intelligence / MLX)
-> so images and PII stay on the device. This library extracts fields via OCR + LLM;
-> it is **not** a certified KYC, MRZ checksum, or NFC ePassport reader.
+> so images and PII stay on the device. LLM extraction is **not** certified KYC or
+> NFC ePassport verification. For deterministic MRZ fields with ICAO check digits,
+> use `MRZParser` (below).
 
 ```swift
 import Extract
@@ -131,6 +132,40 @@ let fromText: IdentityDocument = try await Extract.from(text, using: session)
 
 print(fromText.fullName, fromText.documentNumber, fromText.documentType)
 ```
+
+### Deterministic MRZ (ICAO 9303 check digits)
+
+When the document includes a Machine Readable Zone, parse it **without** an LLM.
+`MRZParser` reads TD1 / TD2 / TD3 layouts, verifies every ICAO check digit, and
+still returns fields when a checksum fails (failed checks are a trust signal, not
+a hard error).
+
+```swift
+import Extract
+
+// From OCR / plain text that contains an MRZ block somewhere on the page:
+let text = try String(contentsOf: URL(fileURLWithPath: "fixtures/identity_document.txt"))
+let mrz = try MRZParser.findAndParse(in: text)
+
+print(mrz.surname, mrz.givenNames, mrz.documentNumber)
+print(mrz.dateOfBirth.raw, mrz.dateOfBirth.date)
+print(mrz.checks.allPassed)  // true only when every defined check digit matched
+
+// Or parse already-isolated MRZ lines:
+let isolated = try MRZParser.parse("""
+    P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<
+    L898902C36UTO7408122F1204159ZE184226B<<<<<10
+    """)
+```
+
+**What this proves and does not prove**
+
+- **Does:** Detects transcription / OCR errors via ICAO 7-3-1 check digits
+  (including the composite check). Surfaces structured fields deterministically.
+- **Does not:** Prove the document is genuine, replace chip/NFC ePassport
+  verification, or verify that the bearer matches the document (not KYC / not
+  anti-forgery). Pair with the LLM path above for visual fields the MRZ omits
+  (address, issue date, issuing authority name, photo side, etc.).
 
 ### Offline CLI (deterministic mock)
 

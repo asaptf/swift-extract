@@ -25,8 +25,8 @@ SPRINGFIELD, IL 62701
 UNITED STATES
 
 MRZ (synthetic, not a real passport):
-P<USADOE<<JANE<ALEXANDRA<<<<<<<<<<<<<<<<<<<
-X12345678USA9003159F3012310<<<<<<<<<<<<<<<0
+P<USADOE<<JANE<ALEXANDRA<<<<<<<<<<<<<<<<<<<<
+X123456785USA9003152F3012316<<<<<<<<<<<<<<06
 
 *** SYNTHETIC SAMPLE — NO REAL PII ***
 This fixture is entirely fictional for offline demos and tests.
