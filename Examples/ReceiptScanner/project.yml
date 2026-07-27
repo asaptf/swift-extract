@@ -37,9 +37,11 @@ targets:
       - path: Sources
         excludes:
           - Resources
-    resources:
+      # Folder reference so fixtures land at `Fixtures/` in the bundle
+      # (SampleFixture.url looks them up by that subdirectory).
       - path: Sources/Resources/Fixtures
         type: folder
+        buildPhase: resources
     dependencies:
       - package: swift-extract
         product: Extract

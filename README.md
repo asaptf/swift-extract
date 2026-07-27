@@ -25,8 +25,9 @@ struct Invoice {
 let invoice: Invoice = try await Extract.from(pdfURL)
 ```
 
-> **Demo GIF** — drop a screen recording at [`docs/demo.gif`](docs/demo.gif).  
-> *(Author note: record the ReceiptScanner flow for the launch tweet.)*
+![ReceiptScanner extracting a receipt into a typed Swift value](docs/demo.gif)
+
+*The [ReceiptScanner demo](Examples/ReceiptScanner/README.md) running a café receipt through the real pipeline — Vision OCR, then a local **MLX** model (Qwen2.5 1.5B, 4-bit) generating the typed `Receipt`. Fully on-device, no network. The spinner is sped up 4×; everything else is real time.*
 
 ---
 
