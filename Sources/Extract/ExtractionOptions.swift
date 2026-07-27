@@ -44,17 +44,41 @@ public struct ExtractionOptions: Sendable, Equatable {
     }
 }
 
-/// Full extraction outcome including metadata.
+/// Full extraction outcome including metadata and grounding signals.
+///
+/// ``signals`` are **informational evidence, not a calibrated confidence score**.
+/// There is no probability attached; do not threshold them for auto-accept.
+/// See ``ExtractionSignals`` and ``Grounding``.
 public struct ExtractionResult<T: Extractable>: Sendable {
     public let value: T
     public let attempts: Int
     public let rawModelOutput: String
     public let chunksUsed: Int
+    /// Per-leaf grounding and run metadata. Always populated by ``Extract``; empty
+    /// ``ExtractionSignals/fields`` when constructed without source text.
+    public let signals: ExtractionSignals
 
-    public init(value: T, attempts: Int, rawModelOutput: String, chunksUsed: Int = 1) {
+    /// - Parameters:
+    ///   - value: Decoded extractable value.
+    ///   - attempts: Total generation attempts.
+    ///   - rawModelOutput: Last raw model text.
+    ///   - chunksUsed: Document chunks that contributed.
+    ///   - signals: Optional precomputed signals. When `nil`, a placeholder with
+    ///     matching attempt/chunk counts and no field rows is used (source-compatible
+    ///     for call sites that construct results without source text).
+    public init(
+        value: T,
+        attempts: Int,
+        rawModelOutput: String,
+        chunksUsed: Int = 1,
+        signals: ExtractionSignals? = nil
+    ) {
         self.value = value
         self.attempts = attempts
         self.rawModelOutput = rawModelOutput
         self.chunksUsed = chunksUsed
+        self.signals =
+            signals
+            ?? ExtractionSignals(attempts: attempts, chunksUsed: chunksUsed, fields: [])
     }
 }

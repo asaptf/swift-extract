@@ -70,13 +70,15 @@ public enum Extract {
         options: ExtractionOptions
     ) async throws -> ExtractionResult<T> {
         let chunks = resolveChunks(document: document, options: options)
+        let sourceText = document.fullText
         if chunks.count == 1 {
             return try await extractSingle(
                 from: chunks[0],
                 as: type,
                 using: session,
                 options: options,
-                chunksUsed: 1
+                chunksUsed: 1,
+                sourceText: sourceText
             )
         }
 
@@ -123,11 +125,19 @@ public enum Extract {
             lastRaw = raw
             do {
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
+                let attempts = totalAttempts + attempt + 1
+                let signals = FieldGrounding.compute(
+                    value: value,
+                    sourceText: sourceText,
+                    attempts: attempts,
+                    chunksUsed: chunks.count
+                )
                 return ExtractionResult(
                     value: value,
-                    attempts: totalAttempts + attempt + 1,
+                    attempts: attempts,
                     rawModelOutput: raw,
-                    chunksUsed: chunks.count
+                    chunksUsed: chunks.count,
+                    signals: signals
                 )
             } catch {
                 lastError = error
@@ -200,7 +210,8 @@ public enum Extract {
         as type: T.Type,
         using session: ExtractionSession,
         options: ExtractionOptions,
-        chunksUsed: Int
+        chunksUsed: Int,
+        sourceText: String
     ) async throws -> ExtractionResult<T> {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
@@ -233,11 +244,19 @@ public enum Extract {
             lastRaw = raw
             do {
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
+                let attempts = attempt + 1
+                let signals = FieldGrounding.compute(
+                    value: value,
+                    sourceText: sourceText,
+                    attempts: attempts,
+                    chunksUsed: chunksUsed
+                )
                 return ExtractionResult(
                     value: value,
-                    attempts: attempt + 1,
+                    attempts: attempts,
                     rawModelOutput: raw,
-                    chunksUsed: chunksUsed
+                    chunksUsed: chunksUsed,
+                    signals: signals
                 )
             } catch {
                 lastError = error

@@ -167,6 +167,69 @@ let isolated = try MRZParser.parse("""
   anti-forgery). Pair with the LLM path above for visual fields the MRZ omits
   (address, issue date, issuing authority name, photo side, etc.).
 
+### Cross-check LLM fields against the MRZ
+
+The library stays **domain-agnostic**: you state which extracted values map to which
+MRZ fields. It does not hardcode a mapping from `IdentityDocument` (or guess names).
+
+Cross-check results are **informational signals, not a calibrated confidence score**.
+Agreement is independent deterministic evidence; disagreement means “look at this field”,
+not automatic rejection.
+
+```swift
+let detailed: ExtractionResult<IdentityDocument> = try await Extract.detailed(
+    from: .text(text),
+    using: session
+)
+let document = detailed.value
+
+// Optional: review leaves that were not found in the source text.
+// `absent` is a prompt to inspect — not proof of error.
+for path in detailed.signals.absentFieldPaths {
+    print("Not found in source text:", path)
+}
+
+// Parse MRZ independently, then compare only the fields you care about.
+let mrz = try MRZParser.findAndParse(in: text)
+
+let isoDate: (Date) -> String = { date in
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withFullDate]
+    f.timeZone = TimeZone(secondsFromGMT: 0)
+    return f.string(from: date)
+}
+
+// Explicit mapping: caller decides how IdentityDocument relates to MRZField.
+var mapping: [MRZField: String] = [
+    .documentNumber: document.documentNumber,
+    .sex: document.sex ?? "",
+    .dateOfBirth: isoDate(document.dateOfBirth),
+]
+// Surname / given names often need a split the LLM schema does not provide:
+if let comma = document.fullName.lastIndex(of: " ") {
+    mapping[.givenNames] = String(document.fullName[..<comma])
+    mapping[.surname] = String(document.fullName[document.fullName.index(after: comma)...])
+}
+if let expiry = document.expiryDate {
+    mapping[.expiryDate] = isoDate(expiry)
+}
+if let nationality = document.nationality {
+    mapping[.nationality] = nationality  // may be a country name; code mismatch is expected
+}
+
+let check = mrz.crossCheck(against: mapping)
+if check.allAgree {
+    print("MRZ agrees with extracted fields")
+} else {
+    for field in check.mismatchedFields {
+        print("Review MRZ field:", field.rawValue)
+    }
+}
+```
+
+Text comparison folds case and diacritics (`Jane` ≡ `JANE`, `José` ≡ `JOSE`). Dates
+compare by calendar day; pass ISO-8601 (`1990-03-15`) or raw MRZ `YYMMDD` (`900315`).
+
 ### Offline CLI (deterministic mock)
 
 ```bash

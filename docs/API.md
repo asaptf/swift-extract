@@ -209,6 +209,7 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     public let attempts: Int
     public let rawModelOutput: String
     public let chunksUsed: Int
+    public let signals: ExtractionSignals   // grounding evidence (not a score)
 }
 
 public enum ExtractionError: Error {
@@ -224,6 +225,112 @@ public enum ExtractionError: Error {
 `locale` does not restrict input language: document content may be Chinese, Arabic, or other
 scripts. It only steers ambiguous date/number interpretation and a prompt locale hint.
 Multilingual scope: [README → Languages & scripts](../README.md#languages--scripts).
+
+---
+
+## Extraction signals (grounding)
+
+Every successful `Extract.detailed` result includes ``ExtractionSignals``: **informational
+facts about how each leaf relates to the source text**, not a calibrated confidence score.
+There is no probability, percentage, or single aggregate number. Do not threshold these
+for auto-accept.
+
+```swift
+public enum Grounding: String, Sendable {
+    case verbatim      // exact substring of the source
+    case normalized    // found after case / whitespace / diacritic / punctuation folding
+    case reformatted   // type-converted (dates, numbers, bools) — literal match N/A
+    case absent        // not found in source (inferred or hallucinated) — look, don't auto-reject
+}
+
+public struct FieldSignal: Sendable {
+    public let path: String       // e.g. "total", "items[0].name"
+    public let grounding: Grounding
+}
+
+public struct ExtractionSignals: Sendable {
+    public let attempts: Int
+    public let chunksUsed: Int
+    public let fields: [FieldSignal]
+    public var absentFieldPaths: [String] { get }
+}
+```
+
+### How grounding is computed
+
+1. The decoded value is re-encoded with `JSONEncoder` (dates as ISO strings).
+2. The JSON tree is walked in parallel with `T.extractionSchema` so each leaf knows its
+   declared type / `format`.
+3. Paths use dotted and indexed notation: `merchant`, `lineItems[0].amount`.
+4. Strings are searched in the source text (verbatim, then normalized). Normalization
+   case-folds, strips diacritics, treats punctuation as word boundaries, and collapses
+   whitespace — so a comma-joined address still matches the same content printed across
+   newlines.
+5. Leaves with `format == "date-time"` and numeric leaves are reported as
+   **`reformatted`** when they do not appear literally — the model routinely rewrites
+   `15 MAR 1990` → `1990-03-15` and `12.50` / `$12.50` → `12.5`. Treating those as
+   `absent` would make the signal pure noise.
+6. Booleans and nulls are not groundable against free text; they are reported as
+   `reformatted`.
+
+### When `absent` can fire
+
+**In practice `absent` only ever fires for string leaves.** Numeric and date fields are
+never reported as `absent`:
+
+| Leaf type | No match found → |
+| --- | --- |
+| String | `absent` |
+| Number / integer | `reformatted` (never `absent`) |
+| Date-time | `reformatted` (never `absent`) |
+| Bool / null | `reformatted` |
+
+For **numbers** this is deliberate and conservative: small integers like `quantity: 2`
+would otherwise match spuriously throughout free text, so a **fabricated number is never
+flagged**. `absentFieldPaths` therefore cannot be used to catch invented totals or
+quantities — only invented strings.
+
+**`absent` means “not found in the source text”.** That is a prompt to inspect the field,
+not proof of error (the model may have correctly inferred a value that is only implied).
+
+```swift
+let result: ExtractionResult<Receipt> = try await Extract.detailed(from: photo, using: session)
+for field in result.signals.fields where field.grounding == .absent {
+    print("Review:", field.path)
+}
+print(result.signals.absentFieldPaths)
+```
+
+Signals are computed on every extraction (substring search over the document text). There
+is no opt-out flag.
+
+---
+
+## MRZ cross-check
+
+When a document has a Machine Readable Zone, `MRZParser` yields an independent
+deterministic source for several fields. Cross-check those against LLM-extracted values
+with an **explicit** mapping — the library does not guess property names.
+
+```swift
+public enum MRZField: String, Sendable {
+    case documentNumber, surname, givenNames, nationality, sex
+    case dateOfBirth, expiryDate, issuingState, documentCode
+}
+
+extension MRZResult {
+    public func crossCheck(against extracted: [MRZField: String]) -> MRZCrossCheckResult
+}
+```
+
+Comparison normalizes before deciding: MRZ is uppercase, diacritic-free, and `<`-padded;
+extracted values may look like `Jane Alexandra Doe`. Dates compare by calendar day and
+accept ISO-8601 or raw `YYMMDD` on the caller’s side.
+
+Like grounding, this is an **informational signal, not a confidence score**. Agreement is
+real evidence; disagreement is a prompt to look. See
+[Examples → Identity document](Examples.md#3-identity-document-passport--id--driver-license)
+for a full `IdentityDocument` mapping recipe.
 
 ---
 
