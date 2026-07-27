@@ -1,6 +1,6 @@
 # swift-extract
 
-**Define a Swift type. Point the library at anything — a PDF, a receipt photo, a screenshot, or plain text — and get back a fully typed, validated instance.**
+**Define a Swift type. Point the library at anything — a PDF, a receipt photo, an ID document, a screenshot, or plain text — and get back a fully typed, validated instance.**
 
 Powered by any LLM: Apple Intelligence on-device, MLX / Core ML / llama.cpp locally, or OpenAI / Anthropic / Gemini in the cloud — via [AnyLanguageModel](https://github.com/huggingface/AnyLanguageModel).
 
@@ -44,13 +44,72 @@ Macros give compile-time schemas (no `Mirror`). Vision and PDFKit are first-part
 
 ---
 
+## A general-purpose extractor, not a receipt scanner
+
+The demo happens to scan a receipt, but nothing in the library knows what a receipt *is*. There is no
+built-in document taxonomy, no per-vendor templates, no trained document classifier. The pipeline is
+document-agnostic end to end:
+
+**any source → text → your `@Extractable` type**
+
+The only thing that describes your domain is the Swift type you declare. Swap the type and you have
+changed the extractor — no new parser, no retraining, no template to maintain.
+
+```swift
+// Same call. The return type is the entire configuration.
+let receipt:  Receipt              = try await Extract.from(photoURL,  using: session)
+let invoice:  Invoice              = try await Extract.from(pdfURL,    using: session)
+let passport: IdentityDocument     = try await Extract.from(scanURL,   using: session)
+let shipment: ShippingConfirmation = try await Extract.from(emailBody, using: session)
+```
+
+### What people extract with it
+
+| Domain | Typical type | Notes |
+| --- | --- | --- |
+| **Receipts & invoices** | `Receipt`, `Invoice` | Line items, totals, tax, currency — see the [cookbook](docs/Examples.md) |
+| **Identity documents** | `IdentityDocument` | Passports, national IDs, driver licenses, residence permits — [schema](Examples/schemas/IdentityDocument.swift), [recipe](docs/Examples.md#3-identity-document-passport--id--driver-license). Read the privacy notes below |
+| **Email & confirmations** | `ShippingConfirmation` | Order numbers, dates, addresses from free-form text |
+| **Forms & applications** | your own | Scanned or digital; optional fields decode as `nil` when a box is blank |
+| **Tickets & boarding passes** | your own | Codes, times, seat/gate, passenger name |
+| **Contracts & statements** | your own | Long documents chunk and merge automatically |
+| **Anything else printed** | your own | Business cards, lab reports, shipping labels, meter readings, menus |
+
+The last row is the point: those are not features we shipped, they are types a user declared.
+
+### What makes it general
+
+- **Any input.** PDFs (text layer or scanned), photos and screenshots via Vision OCR, and plain
+  strings — one `ExtractionSource` enum, [same entry point](docs/API.md).
+- **Any shape.** Nested structs, arrays, optionals, string-backed enums, `Date`/`Decimal`/`URL`.
+  Unsupported types fail at **compile time**, not at runtime — see [Supported property types](#supported-property-types).
+- **Any language.** Document text may be Chinese, Arabic, Japanese, and more — see
+  [Languages & scripts](#languages--scripts).
+- **Any model.** Apple Intelligence, MLX, Core ML, llama.cpp locally, or OpenAI / Anthropic / Gemini
+  in the cloud. The schema and the retry loop do not change when you switch.
+
+### Identity documents & sensitive data
+
+ID recognition is a first-class use case, with caveats worth stating plainly:
+
+- **Prefer on-device backends** (Apple Intelligence or MLX) for real documents, so images and personal
+  data never leave the device. This is the main reason the library exists.
+- **Use synthetic or redacted samples** in fixtures, tests, logs, and screenshots. The bundled
+  [`fixtures/identity_document.txt`](fixtures/identity_document.txt) is entirely fictional.
+- **This is not a KYC or identity-verification product.** It reads printed fields via OCR plus an LLM.
+  It does not validate MRZ checksums, read ePassport NFC chips, detect forgery, or perform liveness or
+  document-authenticity checks. Treat every field as *model output that needs review*, not as a
+  verified fact — and keep a human in the loop for decisions that affect someone.
+
+---
+
 ## Contents
 
 | Doc | What it covers |
 | --- | --- |
 | [Getting started](docs/GettingStarted.md) | Install, first extraction, backends |
 | [API reference guide](docs/API.md) | Macros, sources, session, options, errors |
-| [Examples cookbook](docs/Examples.md) | Receipts, invoices, emails, retries, tests |
+| [Examples cookbook](docs/Examples.md) | Receipts, invoices, **ID documents**, multilingual docs, emails, retries, tests |
 | [Backends & traits](docs/Backends.md) | Apple Intelligence, MLX, OpenAI, Anthropic, SPM traits |
 | [ReceiptScanner demo](Examples/ReceiptScanner/README.md) | One-click Xcode project |
 
@@ -209,9 +268,16 @@ swift run extract-cli fixtures/invoice.pdf \
   --schema Examples/schemas/Invoice.swift \
   --mock
 
+# Identity document (synthetic fixture — never use real PII)
+swift run extract-cli fixtures/identity_document.txt \
+  --schema Examples/schemas/IdentityDocument.swift \
+  --mock
+
 # Live (uses ExtractionSession.default when Apple Intelligence is available)
 swift run extract-cli fixtures/invoice.pdf --type Invoice
 ```
+
+Supported embedded schema types: `Invoice`, `Receipt`, `IdentityDocument`.
 
 ---
 
@@ -252,11 +318,37 @@ Unsupported types (`UUID`, `Data`, dictionaries, …) produce a **compile-time**
 
 ---
 
+## Languages & scripts
+
+Document content can be in **many languages**, not only English — including **Chinese (Simplified/Traditional)**, **Arabic**, Japanese, Korean, and other scripts Vision and your model support.
+
+| Stage | How multilingual works |
+| --- | --- |
+| Plain text / PDF text layer | Unicode as-is; Chinese, Arabic, and other scripts pass through unchanged |
+| Image / scanned PDF OCR | Apple Vision (`VNRecognizeTextRequest`) — multi-script; quality depends on OS language packs and image quality |
+| LLM field extraction | Any multilingual backend (OpenAI, Anthropic, Gemini, Apple Intelligence, capable local models) maps non-English text into your typed schema |
+
+```swift
+// Chinese receipt, German invoice, Arabic ID — same API
+var options = ExtractionOptions()
+options.locale = Locale(identifier: "zh_CN")  // date/number parsing + prompt hint
+let receipt: Receipt = try await Extract.from(photoURL, using: session, options: options)
+```
+
+**Practical notes**
+
+- Schema `@Guide`s and the extraction prompt are **English-first**; the model still reads multilingual *document* text and fills English-named (or any Unicode) fields.
+- Set `ExtractionOptions.locale` when dates/numbers are locale-specific (e.g. `dd/MM/yyyy`, Arabic-Indic digits, Chinese date formats).
+- OCR for Arabic (RTL) and dense CJK works on supported devices, but reading-order heuristics are LTR-oriented; prefer a clear scan and a strong model for best field mapping.
+- Field *values* may stay in the document language (`merchant: "星巴克"`, `fullName: "محمد …"`) unless your guides ask the model to transliterate or translate.
+
+---
+
 ## Limitations (v0.1)
 
 - Handwriting OCR quality is not guaranteed.
 - Table structure is linearized text — not a table model.
-- Prompts are English-first.
+- Prompts and built-in guides are English-first (document content can still be multilingual — see [Languages & scripts](#languages--scripts)).
 - Guided generation uses schema-in-prompt (AnyLanguageModel’s `respond(to:schema:)` is not used; see `DECISIONS.md`).
 - CLI does not JIT-compile arbitrary `.swift` schema files; use embedded types matching `Examples/schemas/`.
 
@@ -280,8 +372,11 @@ Architecture notes: [`DECISIONS.md`](DECISIONS.md).
 swift build
 swift test
 swift run extract-cli fixtures/invoice.pdf --schema Examples/schemas/Invoice.swift --mock
+swift run extract-cli fixtures/identity_document.txt --type IdentityDocument --mock
 swift format lint --configuration .swift-format --recursive Sources Tests
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ---
 

@@ -34,6 +34,52 @@ struct Receipt {
     }
 }
 
+/// Keep in sync with `Examples/schemas/IdentityDocument.swift`.
+@Extractable
+struct IdentityDocument {
+    @Guide(
+        "Document kind as printed or clearly implied: passport, nationalId, driverLicense, residencePermit, or other"
+    )
+    let documentType: DocumentType
+
+    @Guide("Full legal name as printed on the document, given names then surname when both appear")
+    let fullName: String
+
+    @Guide("Primary document / passport / ID number as printed (alphanumeric, no spaces if possible)")
+    let documentNumber: String
+
+    @Guide("Date of birth in ISO 8601 when possible")
+    let dateOfBirth: Date
+
+    @Guide("Expiry date if printed; null when the document has no expiry")
+    let expiryDate: Date?
+
+    @Guide("Issue / date of issue if printed; null when not present")
+    let issueDate: Date?
+
+    @Guide("Nationality as printed (country name or ISO code), or null if only issuing authority is shown")
+    let nationality: String?
+
+    @Guide("Issuing authority or country of issue as printed (e.g. U.S. DEPARTMENT OF STATE)")
+    let issuingAuthority: String?
+
+    @Guide("Sex or gender as printed (e.g. F, M, X); null if not present")
+    let sex: String?
+
+    @Guide("Address as printed when present on the document; null otherwise")
+    let address: String?
+
+    enum DocumentType: String, Codable, Sendable, CaseIterable {
+        case passport
+        case nationalId
+        case driverLicense
+        case residencePermit
+        case other
+    }
+}
+
+extension IdentityDocument.DocumentType: Extractable {}
+
 // MARK: - CLI
 
 @main
@@ -130,6 +176,9 @@ struct ExtractCLI {
         case "receipt":
             let value: Receipt = try await Extract.from(source, using: session, options: options)
             json = try encodePretty(value)
+        case "identitydocument", "identity_document", "id", "identity":
+            let value: IdentityDocument = try await Extract.from(source, using: session, options: options)
+            json = try encodePretty(value)
         default:
             throw CLIError.unknownSchema(schemaName)
         }
@@ -155,7 +204,7 @@ struct ExtractCLI {
         Options:
           --schema <path>   Schema declaration path (selects embedded type by filename)
           --as <name>       Schema name or path (e.g. Invoice.swift)
-          --type <name>     Invoice | Receipt
+          --type <name>     Invoice | Receipt | IdentityDocument
           --mock            Use deterministic offline mock model (also EXTRACT_USE_MOCK=1)
           --mock-json <s>   Canned model JSON (or path to a .json file)
           -h, --help        Show this help
@@ -193,6 +242,9 @@ struct ExtractCLI {
                   ]
                 }
                 """
+        case "identitydocument", "identity_document", "id", "identity":
+            // Synthetic passport fixture values — must match fixtures/identity_document.txt
+            return identityDocumentMockJSON
         default:
             // Invoice
             if text.localizedCaseInsensitiveContains("Acme") {
@@ -221,6 +273,24 @@ struct ExtractCLI {
                 """
         }
     }
+
+    /// Canned JSON aligned with `fixtures/identity_document.txt` (synthetic only).
+    static var identityDocumentMockJSON: String {
+        """
+        {
+          "documentType": "passport",
+          "fullName": "JANE ALEXANDRA DOE",
+          "documentNumber": "X12345678",
+          "dateOfBirth": "1990-03-15",
+          "expiryDate": "2030-12-31",
+          "issueDate": "2020-01-01",
+          "nationality": "UNITED STATES OF AMERICA",
+          "issuingAuthority": "U.S. DEPARTMENT OF STATE",
+          "sex": "F",
+          "address": "123 SAMPLE STREET, APT 4B, SPRINGFIELD, IL 62701, UNITED STATES"
+        }
+        """
+    }
 }
 
 enum CLIError: Error, LocalizedError {
@@ -239,7 +309,7 @@ enum CLIError: Error, LocalizedError {
         case .unknownOption(let o): return "Unknown option: \(o)"
         case .unexpectedArgument(let a): return "Unexpected argument: \(a)"
         case .unknownSchema(let s):
-            return "Unknown schema '\(s)'. Supported: Invoice, Receipt."
+            return "Unknown schema '\(s)'. Supported: Invoice, Receipt, IdentityDocument."
         }
     }
 }

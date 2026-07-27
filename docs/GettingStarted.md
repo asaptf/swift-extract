@@ -175,9 +175,19 @@ print("attempts:", detailed.attempts)
 print("raw:", detailed.rawModelOutput)
 ```
 
+## Multilingual documents
+
+swift-extract is **not English-only**. Document text may be Chinese, Arabic, Japanese, Korean, or other languages your OCR and model support:
+
+- **PDF / plain text** — Unicode text is passed through unchanged.
+- **Photos & scans** — Vision OCR is multi-script (including CJK and Arabic when available on the device).
+- **Extraction** — multilingual LLMs map that text into your `@Extractable` fields.
+
+Use `ExtractionOptions.locale` so ambiguous dates and number formats are interpreted correctly (`zh_CN`, `ar_SA`, `ja_JP`, …). Prompts and example `@Guide`s are English-first; field *values* can remain in the document language. See [README → Languages & scripts](../README.md#languages--scripts).
+
 ## Next steps
 
 - [API guide](API.md) — full surface
-- [Examples cookbook](Examples.md) — receipts, emails, custom enums, tests
+- [Examples cookbook](Examples.md) — receipts, invoices, identity documents, emails, custom enums, tests
 - [Backends & traits](Backends.md) — MLX, traits, [small local models](Backends.md#choosing-a-small-local-model), Keychain tips
 - [ReceiptScanner](../Examples/ReceiptScanner/README.md) — polished multiplatform demo

@@ -199,7 +199,7 @@ let session = ExtractionSession(
 public struct ExtractionOptions: Sendable {
     public var maxRetries: Int                 // default 2
     public var chunkingStrategy: ChunkingStrategy  // .automatic | .none | .fixed(characterBudget:)
-    public var locale: Locale?
+    public var locale: Locale?                 // date/number parse + prompt hint (zh_CN, ar_SA, …)
     public var softContextCharacterBudget: Int // default 12_000
     public var temperature: Double?            // nil → session.temperature
 }
@@ -220,6 +220,10 @@ public enum ExtractionError: Error {
     case internalError(String)
 }
 ```
+
+`locale` does not restrict input language: document content may be Chinese, Arabic, or other
+scripts. It only steers ambiguous date/number interpretation and a prompt locale hint.
+Multilingual scope: [README → Languages & scripts](../README.md#languages--scripts).
 
 ---
 

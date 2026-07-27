@@ -2,6 +2,8 @@
 
 Copy-paste oriented recipes. All snippets assume `import Extract` and a configured `session: ExtractionSession`.
 
+**First-class use cases:** receipts · invoices · **identity documents** · emails / free text.
+
 ---
 
 ## 1. Receipt from a photo
@@ -65,7 +67,90 @@ Nested line items usually need a stronger model than a bare total. Prefer
 
 ---
 
-## 3. Email / confirmation text
+## 3. Identity document (passport / ID / driver license)
+
+Recognize structured fields from a passport, national ID, or driver-license photo
+(or OCR/plain text). The published schema lives at
+[`Examples/schemas/IdentityDocument.swift`](../Examples/schemas/IdentityDocument.swift).
+
+> **Privacy:** Use **synthetic or fully redacted** samples only in demos, fixtures,
+> CI, and docs. Never commit real government ID photos or personal data.
+> For production ID handling, prefer **on-device** backends (Apple Intelligence / MLX)
+> so images and PII stay on the device. This library extracts fields via OCR + LLM;
+> it is **not** a certified KYC, MRZ checksum, or NFC ePassport reader.
+
+```swift
+import Extract
+import Foundation
+
+@Extractable
+struct IdentityDocument {
+    @Guide("Document kind: passport, nationalId, driverLicense, residencePermit, or other")
+    let documentType: DocumentType
+
+    @Guide("Full legal name as printed")
+    let fullName: String
+
+    @Guide("Primary document / passport / ID number")
+    let documentNumber: String
+
+    @Guide("Date of birth")
+    let dateOfBirth: Date
+
+    @Guide("Expiry date if printed; null when absent")
+    let expiryDate: Date?
+
+    @Guide("Issue date if printed; null when absent")
+    let issueDate: Date?
+
+    @Guide("Nationality as printed, or null")
+    let nationality: String?
+
+    @Guide("Issuing authority as printed")
+    let issuingAuthority: String?
+
+    @Guide("Sex or gender as printed (e.g. F, M, X); null if absent")
+    let sex: String?
+
+    @Guide("Address as printed when present; null otherwise")
+    let address: String?
+
+    enum DocumentType: String, Codable, Sendable, CaseIterable {
+        case passport, nationalId, driverLicense, residencePermit, other
+    }
+}
+extension IdentityDocument.DocumentType: Extractable {}
+
+// From a photo / scan
+let idPhoto = try ExtractionSource.image(url: photoURL)
+let document: IdentityDocument = try await Extract.from(idPhoto, using: session)
+
+// From plain text (OCR output or synthetic fixture)
+let text = try String(contentsOf: URL(fileURLWithPath: "fixtures/identity_document.txt"))
+let fromText: IdentityDocument = try await Extract.from(text, using: session)
+
+print(fromText.fullName, fromText.documentNumber, fromText.documentType)
+```
+
+### Offline CLI (deterministic mock)
+
+```bash
+swift run extract-cli fixtures/identity_document.txt \
+  --schema Examples/schemas/IdentityDocument.swift \
+  --mock
+# or: --type IdentityDocument --mock
+```
+
+Expected primary fields for the synthetic fixture: full name `JANE ALEXANDRA DOE`,
+document number `X12345678`, type `passport`.
+
+Backend note: photo + multi-field ID extraction benefits from a vision-capable cloud
+model or a solid local ~3B+ model; pure text from OCR works with smaller models.
+See [Backends](Backends.md).
+
+---
+
+## 4. Email / confirmation text
 
 ```swift
 @Extractable
@@ -90,7 +175,7 @@ let conf: ShippingConfirmation = try await Extract.from(body, using: session)
 
 ---
 
-## 4. String-backed enums
+## 5. String-backed enums
 
 ```swift
 enum Priority: String, Codable, Sendable, CaseIterable {
@@ -114,7 +199,7 @@ let ticket: Ticket = try await Extract.from(
 
 ---
 
-## 5. Repair retries (Instructor-style)
+## 6. Repair retries (Instructor-style)
 
 ```swift
 var options = ExtractionOptions()
@@ -134,7 +219,7 @@ On each failure the next prompt includes machine-readable field errors, e.g.
 
 ---
 
-## 6. Large documents (chunk + merge)
+## 7. Large documents (chunk + merge)
 
 ```swift
 var options = ExtractionOptions()
@@ -154,7 +239,7 @@ print("chunks:", result.chunksUsed, "attempts:", result.attempts)
 
 ---
 
-## 7. Locale-aware dates
+## 8. Locale-aware dates (and multilingual docs)
 
 ```swift
 var options = ExtractionOptions()
@@ -164,9 +249,23 @@ options.locale = Locale(identifier: "en_GB")
 let event: CalendarEvent = try await Extract.from(ukEmail, using: session, options: options)
 ```
 
+The same option helps non-English documents. Chinese, Arabic, and other scripts work
+through Unicode text, Vision OCR, and a multilingual model — set locale for parsing:
+
+```swift
+var options = ExtractionOptions()
+options.locale = Locale(identifier: "zh_CN")
+// or: Locale(identifier: "ar_SA")
+
+let receipt: Receipt = try await Extract.from(photoURL, using: session, options: options)
+// e.g. merchant may stay "星巴克"; amounts/dates parse with the locale hint
+```
+
+See [README → Languages & scripts](../README.md#languages--scripts) for scope and caveats.
+
 ---
 
-## 8. Unit tests without network
+## 9. Unit tests without network
 
 ```swift
 import Testing
@@ -201,7 +300,7 @@ let r: Receipt = try await Extract.from("doc", using: session)
 
 ---
 
-## 9. CLI from a script
+## 10. CLI from a script
 
 ```bash
 export EXTRACT_USE_MOCK=1
@@ -211,13 +310,17 @@ swift run extract-cli fixtures/invoice.pdf \
 
 jq .vendor /tmp/invoice.json
 # "Acme Supplies Co."
+
+# Identity document (synthetic fixture only)
+swift run extract-cli fixtures/identity_document.txt \
+  --type IdentityDocument --mock
 ```
 
 Live path (no `--mock`) uses `ExtractionSession.default`.
 
 ---
 
-## 10. SwiftUI: extract then bind to a form
+## 11. SwiftUI: extract then bind to a form
 
 ```swift
 @MainActor

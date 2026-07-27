@@ -1,0 +1,33 @@
+UNITED STATES OF AMERICA
+PASSPORT
+
+Type / Type: P
+Country Code / Code du pays: USA
+Passport No. / No du passeport: X12345678
+
+Surname / Nom: DOE
+Given Names / Prénoms: JANE ALEXANDRA
+Full Name: JANE ALEXANDRA DOE
+
+Nationality / Nationalité: UNITED STATES OF AMERICA
+Date of birth / Date de naissance: 15 MAR 1990
+Sex / Sexe: F
+Place of birth / Lieu de naissance: NEW YORK, USA
+
+Date of issue / Date de délivrance: 01 JAN 2020
+Date of expiry / Date d'expiration: 31 DEC 2030
+Authority / Autorité: U.S. DEPARTMENT OF STATE
+
+Address (optional, as printed on supporting ID):
+123 SAMPLE STREET
+APT 4B
+SPRINGFIELD, IL 62701
+UNITED STATES
+
+MRZ (synthetic, not a real passport):
+P<USADOE<<JANE<ALEXANDRA<<<<<<<<<<<<<<<<<<<
+X12345678USA9003159F3012310<<<<<<<<<<<<<<<0
+
+*** SYNTHETIC SAMPLE — NO REAL PII ***
+This fixture is entirely fictional for offline demos and tests.
+Do not use real government ID photos or personal data.
