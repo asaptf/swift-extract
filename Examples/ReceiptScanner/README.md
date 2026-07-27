@@ -34,6 +34,9 @@ The demo enables the **MLX** package trait and can download models from Hugging 
 
 Requires Apple Silicon (iPhone / M‑series Mac). First load after download may take a few seconds while weights map into memory.
 
+Which preset to pick (receipt totals vs. full invoice line items) is documented in
+[Backends → Choosing a small local model](../../docs/Backends.md#choosing-a-small-local-model).
+
 ## Fixtures (bundled)
 
 - `invoice.pdf` — digital invoice (text layer)

@@ -179,5 +179,5 @@ print("raw:", detailed.rawModelOutput)
 
 - [API guide](API.md) — full surface
 - [Examples cookbook](Examples.md) — receipts, emails, custom enums, tests
-- [Backends & traits](Backends.md) — MLX, traits, Keychain tips
+- [Backends & traits](Backends.md) — MLX, traits, [small local models](Backends.md#choosing-a-small-local-model), Keychain tips
 - [ReceiptScanner](../Examples/ReceiptScanner/README.md) — polished multiplatform demo

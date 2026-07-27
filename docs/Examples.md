@@ -31,6 +31,9 @@ for item in receipt.items {
 }
 ```
 
+For offline / on-device backends (small MLX models from Hugging Face, model size
+vs. field complexity), see [Backends → Choosing a small local model](Backends.md#choosing-a-small-local-model).
+
 ---
 
 ## 2. Invoice PDF with nested lines
@@ -55,6 +58,10 @@ let pdf = URL(fileURLWithPath: "fixtures/invoice.pdf")
 let invoice: Invoice = try await Extract.from(.pdf(pdf), using: session)
 print(invoice.vendor, invoice.total)
 ```
+
+Nested line items usually need a stronger model than a bare total. Prefer
+~3B local or a cloud mini model; see
+[Choosing a small local model](Backends.md#choosing-a-small-local-model).
 
 ---
 
