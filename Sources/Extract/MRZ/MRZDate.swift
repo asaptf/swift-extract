@@ -123,11 +123,23 @@ enum MRZDateParser {
             }
             return y1900
         case .expiry:
-            // Window centred near the present: [ref − 50, ref + 50].
-            if y2000 >= referenceYear - 50 {
+            // Window centred near the present: [ref − 50, ref + 50]. Prefer the
+            // 2000-based year only when it lies inside that closed interval; the
+            // lower-bound-only check previously admitted 2099 for raw `99…` under
+            // a 2026 reference (outside the documented window) instead of 1999.
+            let lower = referenceYear - 50
+            let upper = referenceYear + 50
+            if (lower...upper).contains(y2000) {
                 return y2000
             }
-            return y1900
+            if (lower...upper).contains(y1900) {
+                return y1900
+            }
+            // Neither candidate in window (should be rare for real documents).
+            // Prefer the closer of the two to the reference year.
+            let d2000 = abs(y2000 - referenceYear)
+            let d1900 = abs(y1900 - referenceYear)
+            return d2000 <= d1900 ? y2000 : y1900
         }
     }
 }

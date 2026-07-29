@@ -36,6 +36,17 @@ enum LenientDecoding {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return nil }
 
+        // Strict `yyyy-MM-dd` first so `ISO8601DateFormatter` cannot roll an
+        // impossible day (e.g. `2012-04-31` → May 1) into a plausible date.
+        if let strict = parseStrictGregorianDateOnly(trimmed) {
+            return strict
+        }
+        // Bare `yyyy-MM-dd` that failed the strict check is an impossible day —
+        // do not fall through to the rolling ISO formatter.
+        if isISODateOnlyShape(trimmed) {
+            return nil
+        }
+
         let isoFractional = ISO8601DateFormatter()
         isoFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = isoFractional.date(from: trimmed) { return date }
@@ -44,12 +55,7 @@ enum LenientDecoding {
         iso.formatOptions = [.withInternetDateTime]
         if let date = iso.date(from: trimmed) { return date }
 
-        let isoDateOnly = ISO8601DateFormatter()
-        isoDateOnly.formatOptions = [.withFullDate]
-        if let date = isoDateOnly.date(from: trimmed) { return date }
-
         var formats = [
-            "yyyy-MM-dd",
             "yyyy/MM/dd",
             "MMM d, yyyy",
             "MMMM d, yyyy",
@@ -61,9 +67,9 @@ enum LenientDecoding {
         let monthFirst = ["MM/dd/yyyy", "M/d/yyyy", "MM-dd-yyyy"]
         let dayFirst = ["dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy"]
         if locale.map(prefersDayBeforeMonth) == true {
-            formats.insert(contentsOf: dayFirst + monthFirst, at: 2)
+            formats.insert(contentsOf: dayFirst + monthFirst, at: 0)
         } else {
-            formats.insert(contentsOf: monthFirst + dayFirst, at: 2)
+            formats.insert(contentsOf: monthFirst + dayFirst, at: 0)
         }
 
         let formatter = DateFormatter()
@@ -77,6 +83,51 @@ enum LenientDecoding {
             }
         }
         return nil
+    }
+
+    /// `yyyy-MM-dd` shape check (exactly three numeric groups).
+    private static func isISODateOnlyShape(_ string: String) -> Bool {
+        let parts = string.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+            parts[0].count == 4,
+            parts[1].count == 2,
+            parts[2].count == 2,
+            parts[0].allSatisfy(\.isNumber),
+            parts[1].allSatisfy(\.isNumber),
+            parts[2].allSatisfy(\.isNumber)
+        else {
+            return false
+        }
+        return true
+    }
+
+    /// Parse `yyyy-MM-dd` and reject dates the calendar would normalise away
+    /// (31 Apr, 30 Feb, etc.).
+    private static func parseStrictGregorianDateOnly(_ string: String) -> Date? {
+        guard isISODateOnlyShape(string) else { return nil }
+        let parts = string.split(separator: "-")
+        guard let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
+            return nil
+        }
+        guard (1...12).contains(month), (1...31).contains(day) else { return nil }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = 0
+        components.minute = 0
+        components.second = 0
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+
+        guard let date = calendar.date(from: components) else { return nil }
+        let back = calendar.dateComponents([.year, .month, .day], from: date)
+        guard back.year == year, back.month == month, back.day == day else {
+            return nil
+        }
+        return date
     }
 
     static func parseDecimal(_ string: String, locale: Locale? = nil) -> Decimal? {
@@ -133,7 +184,11 @@ enum LenientDecoding {
         // Model output sometimes emits scientific notation as a *string*. Accept only
         // a strict form; never strip `e` and concatenate surrounding digits.
         if sawScientificExponent {
-            return parseScientificDecimal(trimmed, forceNegative: parenthesizedNegative)
+            return parseScientificDecimal(
+                trimmed,
+                forceNegative: parenthesizedNegative,
+                locale: locale
+            )
         }
 
         // Lone `e` / `E` (no digit before it) with no other letters — e.g. `"e10"` —
@@ -143,7 +198,11 @@ enum LenientDecoding {
         if !asciiLetters.isEmpty,
             asciiLetters.allSatisfy({ $0 == "e" || $0 == "E" })
         {
-            return parseScientificDecimal(trimmed, forceNegative: parenthesizedNegative)
+            return parseScientificDecimal(
+                trimmed,
+                forceNegative: parenthesizedNegative,
+                locale: locale
+            )
         }
 
         let normalized = normalizeSeparators(in: cleaned, locale: locale)
@@ -153,55 +212,122 @@ enum LenientDecoding {
         }
         // `Decimal(string:)` is itself lenient (trailing junk, multi-dot truncation).
         // We only call it after structural validation so those paths are unreachable.
-        return Decimal(string: signed, locale: Locale(identifier: "en_US_POSIX"))
+        return finiteDecimal(string: signed)
     }
 
-    /// Strict scientific-notation path for strings like `"1.5e3"` / `"1E-2"`.
+    /// Maximum absolute decimal exponent accepted for scientific strings.
+    ///
+    /// Foundation's `Decimal` is backed by `NSDecimal` whose exponent range is
+    /// roughly `[-128, 127]`. Anything outside this either traps (on `Int.min`
+    /// negation of the loop counter), hangs (billion multiplications), or yields
+    /// `Decimal.nan`. Bound early and reject non-finite results after scaling.
+    private static let maxScientificExponent = 127
+
+    /// Strict scientific-notation path for strings like `"1.5e3"` / `"1,5e3"` / `"1E-2"`.
+    ///
+    /// Validates the original token rather than deleting interior characters (which
+    /// turned `"1eUSD3"` into `1000` and `"1,5e3"` under `de_DE` into `15000`). The
+    /// mantissa is normalised with the caller's locale; the exponent must be a plain
+    /// integer with no junk.
     private static func parseScientificDecimal(
         _ raw: String,
-        forceNegative: Bool
+        forceNegative: Bool,
+        locale: Locale?
     ) -> Decimal? {
-        // Keep digits, sign, dot, and a single exponent letter — drop currency etc.
-        var kept = ""
+        // Exactly one exponent marker in the original token.
+        let expMarkers = raw.indices.filter { raw[$0] == "e" || raw[$0] == "E" }
+        guard expMarkers.count == 1, let expIndex = expMarkers.first else {
+            return nil
+        }
+
+        let mantissaRaw = String(raw[..<expIndex])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let exponentRaw = String(raw[raw.index(after: expIndex)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let expInt = parseIntegerExponent(exponentRaw) else {
+            return nil
+        }
+        // Bound before any scaling so `Int.min` never reaches unary minus and a
+        // billion-step loop is unreachable. Compare both sides (do not use
+        // `abs(expInt)` — `abs(Int.min)` traps).
+        guard expInt >= -maxScientificExponent, expInt <= maxScientificExponent else {
+            return nil
+        }
+
+        guard let mantissaCleaned = cleanScientificMantissa(mantissaRaw) else {
+            return nil
+        }
+        let normalized = normalizeSeparators(in: mantissaCleaned, locale: locale)
+        guard let mantLiteral = validatedDecimalLiteral(normalized, forceNegative: false),
+            var value = finiteDecimal(string: mantLiteral)
+        else {
+            return nil
+        }
+
+        if expInt != 0 {
+            // O(1) scale via Decimal's exponent rather than iterative *10 / ÷10.
+            let scale = Decimal(sign: .plus, exponent: expInt, significand: 1)
+            value *= scale
+        }
+        if value.isNaN {
+            return nil
+        }
+
+        // Parentheses mean "accounting negative". If the mantissa is already
+        // negative (`(-1e3)`), do not flip it positive.
+        if forceNegative, value > 0 {
+            value = -value
+        }
+        return value
+    }
+
+    /// Exponent body: optional leading sign and ASCII digits only.
+    private static func parseIntegerExponent(_ raw: String) -> Int? {
+        guard !raw.isEmpty else { return nil }
+        var index = raw.startIndex
+        if raw[index] == "+" || raw[index] == "-" {
+            index = raw.index(after: index)
+        }
+        let body = raw[index...]
+        guard !body.isEmpty, body.allSatisfy({ $0.isASCII && $0.isNumber }) else {
+            return nil
+        }
+        // No second sign, no decimal point, no letters (`USD3` fails here).
+        return Int(raw)
+    }
+
+    /// Keep digits / signs / separators in a scientific mantissa; strip only
+    /// leading currency noise. Any interior letter or trailing junk rejects.
+    private static func cleanScientificMantissa(_ raw: String) -> String? {
+        var cleaned = ""
+        var sawDigit = false
         for scalar in raw.unicodeScalars {
             if (48...57).contains(scalar.value) {
-                kept.unicodeScalars.append(scalar)
-            } else if scalar == "." || scalar == "+" || scalar == "-" || scalar == "e" || scalar == "E" {
-                kept.unicodeScalars.append(scalar)
+                cleaned.unicodeScalars.append(scalar)
+                sawDigit = true
+            } else if scalar == "." || scalar == "," || scalar == "+" || scalar == "-" {
+                cleaned.unicodeScalars.append(scalar)
+            } else if scalar == " " || scalar == "\t" {
+                continue
+            } else if !sawDigit {
+                // Leading currency / symbol (e.g. `$`, `€`) — skip.
+                continue
+            } else {
+                // Interior or trailing non-structural character.
+                return nil
             }
         }
-        // Exactly one exponent marker.
-        let exponentMarkers = kept.filter { $0 == "e" || $0 == "E" }
-        guard exponentMarkers.count == 1,
-            let expIndex = kept.firstIndex(where: { $0 == "e" || $0 == "E" })
+        guard sawDigit else { return nil }
+        return cleaned
+    }
+
+    /// `Decimal(string:)` that rejects non-finite results.
+    private static func finiteDecimal(string: String) -> Decimal? {
+        guard let value = Decimal(string: string, locale: Locale(identifier: "en_US_POSIX")),
+            !value.isNaN
         else {
             return nil
-        }
-        let mantissa = String(kept[..<expIndex])
-        let exponent = String(kept[kept.index(after: expIndex)...])
-        guard let mantLiteral = validatedDecimalLiteral(mantissa, forceNegative: false),
-            let expLiteral = validatedDecimalLiteral(exponent, forceNegative: false),
-            // Exponent must be an integer (no fractional part).
-            !expLiteral.contains("."),
-            let expInt = Int(expLiteral)
-        else {
-            return nil
-        }
-        guard var value = Decimal(string: mantLiteral, locale: Locale(identifier: "en_US_POSIX"))
-        else {
-            return nil
-        }
-        if expInt > 0 {
-            for _ in 0..<expInt {
-                value *= 10
-            }
-        } else if expInt < 0 {
-            for _ in 0..<(-expInt) {
-                value /= 10
-            }
-        }
-        if forceNegative {
-            value = -value
         }
         return value
     }
@@ -315,14 +441,9 @@ enum LenientDecoding {
             if looksLikeGroupedNumber(value, separator: separator) {
                 return value.replacingOccurrences(of: separatorString, with: "")
             }
-            // European-style `1.234.56` (last group is a 1–2 digit fraction; earlier
-            // groups are thousands). Reject ambiguous multi-separator junk (`1.2.3`).
-            if looksLikeGroupedNumberWithDecimalFraction(value, separator: separator) {
-                guard let last = value.lastIndex(of: separator) else { return value }
-                let whole = value[..<last].filter { $0 != separator }
-                let fraction = value[value.index(after: last)...]
-                return "\(whole).\(fraction)"
-            }
+            // Same mark used as both grouping and decimal (e.g. `1.234.56`, `1,234,56`)
+            // is not a real locale form. Leave multi-separator junk intact so structural
+            // validation rejects it rather than guessing a plausible value.
             return value
         }
 
@@ -346,28 +467,6 @@ enum LenientDecoding {
         guard groups.count > 1 else { return false }
         guard isSignedOrPlainDigitGroup(groups[0], maxDigits: 3) else { return false }
         return groups.dropFirst().allSatisfy { group in
-            group.count == 3 && group.allSatisfy(\.isNumber)
-        }
-    }
-
-    /// Thousands groups plus a short final fractional group, e.g. `1.234.56`.
-    private static func looksLikeGroupedNumberWithDecimalFraction(
-        _ value: String,
-        separator: Character
-    ) -> Bool {
-        let groups = value.split(separator: separator, omittingEmptySubsequences: false)
-        guard groups.count >= 2 else { return false }
-        let fraction = groups[groups.count - 1]
-        guard (1...2).contains(fraction.count), fraction.allSatisfy(\.isNumber) else {
-            return false
-        }
-        let wholeGroups = groups.dropLast()
-        guard let first = wholeGroups.first,
-            isSignedOrPlainDigitGroup(first, maxDigits: 3)
-        else {
-            return false
-        }
-        return wholeGroups.dropFirst().allSatisfy { group in
             group.count == 3 && group.allSatisfy(\.isNumber)
         }
     }
@@ -503,7 +602,13 @@ extension KeyedDecodingContainer {
 // MARK: - Top-level decode for Extractable
 
 extension Extractable {
-    /// Decode from raw model JSON text using lenient strategies.
+    /// Decode from raw model JSON text using lenient strategies, then enforce
+    /// ``validateInvariants()``.
+    ///
+    /// A successfully returned value has already passed any type-declared
+    /// cross-field invariants — the same guarantee as both extraction paths.
+    /// Callers that need the raw decode without invariant checks should use
+    /// `JSONDecoder` directly rather than this helper.
     public static func decodeExtracted(from jsonText: String, locale: Locale? = nil) throws -> Self {
         let cleaned = JSONFenceStripper.strip(jsonText, expectedRoot: extractionSchema.type)
         guard let data = cleaned.data(using: .utf8) else {
@@ -512,7 +617,9 @@ extension Extractable {
             )
         }
         let decoder = LenientDecoding.makeDecoder(locale: locale)
-        return try decoder.decode(Self.self, from: data)
+        let value = try decoder.decode(Self.self, from: data)
+        try value.validateInvariants()
+        return value
     }
 }
 

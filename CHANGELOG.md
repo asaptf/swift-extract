@@ -28,6 +28,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pre-release review hardenings (numeric parsing, invariants, MRZ, signals):**
+  - Scientific decimals bound the exponent to the defensible `Decimal` range
+    (`±127`), reject non-finite results, and never trap on `Int.min` negation or
+    hang on unbounded multiplications (`1e1000000000`).
+  - Scientific mantissas normalise locale-aware separators (so `1,5e3` under
+    `de_DE` is `1500`, not `15000`) and validate the original token instead of
+    deleting interior characters (`1eUSD3` is rejected).
+  - Parenthesised scientific values that already carry a minus (`(-1e3)`) stay
+    negative instead of double-negating to a positive amount.
+  - Same-separator grouping+decimal forms (`1.234.56`, `1,234,56`) are rejected;
+    no locale uses one mark for both roles.
+  - Public `Extractable.decodeExtracted(from:)` now runs `validateInvariants()`
+    so the documented "value implies invariants held" guarantee is true on every
+    decode path, not only the extraction loop.
+  - MRZ expiry century resolution keeps both bounds of the documented
+    `[ref−50, ref+50]` window (raw `99…` under a 2026 reference → 1999, not 2099).
+  - MRZ cross-check validates date-only components so impossible days like
+    `2012-04-31` cannot agree via `ISO8601DateFormatter` rollover.
+  - `MRZParser.findAndParse` prefers checksum-valid candidates over earlier
+    MRZ-alphabet noise, and windows any run longer than the target format so a
+    two-line TD3 after a noise line inside a three-line run is still found.
+  - Grounding signals emit an explicit `reformatted` row for nil optional fields
+    (macro `encodeIfPresent` drops the key), keep numeric signs in skeleton
+    matching so opposite-sign amounts are not labelled `normalized`, and cache
+    source normalisation once per `compute` call (was O(N×M) per leaf).
 - ReceiptScanner's Xcode project now bundles its sample fixtures. XcodeGen has no `resources:` target key, so that block in `project.yml` was silently ignored and every "Try a sample" tap failed with *"Fixture … is missing from the app bundle."* The fixtures are declared under `sources:` with `buildPhase: resources` instead.
 
 ### Documentation

@@ -55,17 +55,46 @@ public enum MRZParser {
     ///
     /// Ignores surrounding prose and blank lines. Candidates are contiguous runs
     /// of MRZ-alphabet lines whose lengths match a supported format.
+    ///
+    /// When several blocks parse structurally, the candidate with
+    /// ``MRZCheckResult/allPassed`` is preferred; otherwise the strongest check
+    /// result wins. Returning the first structurally-parseable block would let
+    /// MRZ-alphabet OCR noise ahead of a valid passport win with failed checks.
     public static func findAndParse(
         in text: String,
         referenceDate: Date = Date()
     ) throws -> MRZResult {
         let candidates = findCandidateBlocks(in: text)
+        var best: MRZResult?
+        var bestScore = -1
         for block in candidates {
-            if let result = try? parse(lines: block, referenceDate: referenceDate) {
+            guard let result = try? parse(lines: block, referenceDate: referenceDate) else {
+                continue
+            }
+            if result.checks.allPassed {
                 return result
             }
+            let score = checkScore(result.checks)
+            if score > bestScore {
+                bestScore = score
+                best = result
+            }
+        }
+        if let best {
+            return best
         }
         throw MRZError.notFound
+    }
+
+    /// Count of checks that passed (optional treated as pass when absent).
+    private static func checkScore(_ checks: MRZCheckResult) -> Int {
+        var score = 0
+        if checks.documentNumber { score += 1 }
+        if checks.dateOfBirth { score += 1 }
+        if checks.expiryDate { score += 1 }
+        if checks.optionalData ?? true { score += 1 }
+        if checks.composite { score += 1 }
+        return score
     }
 
     // MARK: - Format detection & normalization
@@ -125,10 +154,12 @@ public enum MRZParser {
             blocks.append(current)
         }
 
-        // Also try every sliding window of 2 and 3 consecutive MRZ-looking lines
-        // even when a longer run was collected (e.g. 4 lines of OCR noise).
+        // Sliding windows of 2 and 3 consecutive MRZ-looking lines for any run
+        // longer than the target format. A 3-line run that is really noise + TD3
+        // must still yield the two-line passport window (`count > 3` previously
+        // skipped exactly that case and made `findAndParse` throw `notFound`).
         var expanded: [[String]] = blocks
-        for block in blocks where block.count > 3 {
+        for block in blocks where block.count > 2 {
             for start in 0...(block.count - 2) {
                 expanded.append(Array(block[start..<(start + 2)]))
                 if start + 3 <= block.count {

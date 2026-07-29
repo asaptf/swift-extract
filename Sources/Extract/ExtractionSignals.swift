@@ -97,12 +97,75 @@ public struct ExtractionSignals: Sendable, Equatable {
 
 /// Builds ``ExtractionSignals`` by encoding the value and walking it with the schema.
 enum FieldGrounding {
+    /// Per-`compute` call counters (thread-safe for concurrent tests).
+    final class ComputeStats: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _normalizeForSearchCalls = 0
+        private var _numericSkeletonCalls = 0
+
+        var normalizeForSearchCalls: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _normalizeForSearchCalls
+        }
+
+        var numericSkeletonCalls: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _numericSkeletonCalls
+        }
+
+        func recordNormalize() {
+            lock.lock()
+            _normalizeForSearchCalls += 1
+            lock.unlock()
+        }
+
+        func recordSkeleton() {
+            lock.lock()
+            _numericSkeletonCalls += 1
+            lock.unlock()
+        }
+    }
+
+    /// Precomputed source views shared across every leaf of one ``compute`` call.
+    ///
+    /// Without this, each string leaf re-folds the full source (case / diacritic /
+    /// punctuation) and each number leaf rebuilds the numeric skeleton — making
+    /// mandatory signal generation O(N×M) and able to appear hung on large
+    /// chunk-merged documents.
+    private struct SourceIndex {
+        let raw: String
+        let normalized: String
+        let numericSkeleton: String
+        let stats: ComputeStats?
+
+        init(sourceText: String, stats: ComputeStats?) {
+            raw = sourceText
+            self.stats = stats
+            normalized = FieldGrounding.normalizeForSearch(sourceText, stats: stats)
+            numericSkeleton = FieldGrounding.numericSkeleton(sourceText, stats: stats)
+        }
+    }
+
     /// Compute per-leaf grounding of `value` against `sourceText`.
     static func compute<T: Extractable>(
         value: T,
         sourceText: String,
         attempts: Int,
         chunksUsed: Int
+    ) -> ExtractionSignals {
+        compute(value: value, sourceText: sourceText, attempts: attempts, chunksUsed: chunksUsed, stats: nil)
+    }
+
+    /// Package-test helper: same as ``compute(value:sourceText:attempts:chunksUsed:)``
+    /// but records how many times source-scale normalisations ran.
+    static func compute<T: Extractable>(
+        value: T,
+        sourceText: String,
+        attempts: Int,
+        chunksUsed: Int,
+        stats: ComputeStats?
     ) -> ExtractionSignals {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom(encodeDate)
@@ -114,12 +177,13 @@ enum FieldGrounding {
             return ExtractionSignals(attempts: attempts, chunksUsed: chunksUsed, fields: [])
         }
 
+        let source = SourceIndex(sourceText: sourceText, stats: stats)
         var fields: [FieldSignal] = []
         walk(
             json: root,
             schema: T.extractionSchema,
             path: "",
-            source: sourceText,
+            source: source,
             fields: &fields
         )
         return ExtractionSignals(attempts: attempts, chunksUsed: chunksUsed, fields: fields)
@@ -131,7 +195,7 @@ enum FieldGrounding {
         json: Any,
         schema: ExtractionSchema,
         path: String,
-        source: String,
+        source: SourceIndex,
         fields: inout [FieldSignal]
     ) {
         switch schema.type {
@@ -141,15 +205,28 @@ enum FieldGrounding {
             let order = schema.propertyOrder ?? Array(properties.keys).sorted()
             var seen = Set<String>()
             for key in order {
-                guard let childSchema = properties[key], let childJSON = object[key] else { continue }
-                seen.insert(key)
+                guard let childSchema = properties[key] else { continue }
                 let childPath = path.isEmpty ? key : "\(path).\(key)"
+                // Macro-generated `encodeIfPresent` omits nil optionals entirely.
+                // Documented behaviour is that null leaves are `reformatted`; emit
+                // an explicit row so callers can distinguish considered-null from
+                // a missing signal.
+                guard let childJSON = object[key], !(childJSON is NSNull) else {
+                    fields.append(FieldSignal(path: childPath, grounding: .reformatted))
+                    seen.insert(key)
+                    continue
+                }
+                seen.insert(key)
                 walk(json: childJSON, schema: childSchema, path: childPath, source: source, fields: &fields)
             }
             for (key, childJSON) in object where !seen.contains(key) {
                 guard let childSchema = properties[key] else { continue }
                 let childPath = path.isEmpty ? key : "\(path).\(key)"
-                walk(json: childJSON, schema: childSchema, path: childPath, source: source, fields: &fields)
+                if childJSON is NSNull {
+                    fields.append(FieldSignal(path: childPath, grounding: .reformatted))
+                } else {
+                    walk(json: childJSON, schema: childSchema, path: childPath, source: source, fields: &fields)
+                }
             }
 
         case .array:
@@ -164,7 +241,7 @@ enum FieldGrounding {
             if schema.format == "date-time" {
                 fields.append(FieldSignal(path: path, grounding: dateGrounding(json: json, source: source)))
             } else if let string = json as? String {
-                fields.append(FieldSignal(path: path, grounding: stringGrounding(string, in: source)))
+                fields.append(FieldSignal(path: path, grounding: stringGrounding(string, source: source)))
             } else {
                 // Encoded non-string for a string schema (unusual) — treat as reformatted.
                 fields.append(FieldSignal(path: path, grounding: .reformatted))
@@ -185,41 +262,41 @@ enum FieldGrounding {
 
     // MARK: Leaf grounding
 
-    private static func stringGrounding(_ value: String, in source: String) -> Grounding {
+    private static func stringGrounding(_ value: String, source: SourceIndex) -> Grounding {
         if value.isEmpty {
             // Empty string has no informative substring; treat as absent.
             return .absent
         }
-        if source.contains(value) {
+        if source.raw.contains(value) {
             return .verbatim
         }
-        let normalizedValue = normalizeForSearch(value)
-        if !normalizedValue.isEmpty, normalizeForSearch(source).contains(normalizedValue) {
+        let normalizedValue = normalizeForSearch(value, stats: source.stats)
+        if !normalizedValue.isEmpty, source.normalized.contains(normalizedValue) {
             return .normalized
         }
         return .absent
     }
 
-    private static func dateGrounding(json: Any, source: String) -> Grounding {
+    private static func dateGrounding(json: Any, source: SourceIndex) -> Grounding {
         // Prefer string encodings produced by our custom date encoder.
         if let string = json as? String {
-            if source.contains(string) {
+            if source.raw.contains(string) {
                 return .verbatim
             }
             // Also try date-only prefix of an ISO timestamp.
             if string.count >= 10 {
                 let prefix = String(string.prefix(10))
-                if prefix.contains("-"), source.contains(prefix) {
+                if prefix.contains("-"), source.raw.contains(prefix) {
                     return .verbatim
                 }
             }
-            let normalized = normalizeForSearch(string)
-            if !normalized.isEmpty, normalizeForSearch(source).contains(normalized) {
+            let normalized = normalizeForSearch(string, stats: source.stats)
+            if !normalized.isEmpty, source.normalized.contains(normalized) {
                 return .normalized
             }
         } else if let number = json as? NSNumber {
             let string = number.stringValue
-            if source.contains(string) {
+            if source.raw.contains(string) {
                 return .verbatim
             }
         }
@@ -227,18 +304,17 @@ enum FieldGrounding {
         return .reformatted
     }
 
-    private static func numberGrounding(json: Any, source: String) -> Grounding {
+    private static func numberGrounding(json: Any, source: SourceIndex) -> Grounding {
         let candidates = numberSearchCandidates(json)
         for candidate in candidates where !candidate.isEmpty {
-            if source.contains(candidate) {
+            if source.raw.contains(candidate) {
                 return .verbatim
             }
         }
-        // Currency / grouping variants: compare digit+separator runs.
-        let sourceNumeric = numericSkeleton(source)
+        // Currency / grouping variants: compare digit+separator runs (signs kept).
         for candidate in candidates {
-            let skeleton = numericSkeleton(candidate)
-            if !skeleton.isEmpty, sourceNumeric.contains(skeleton) {
+            let skeleton = numericSkeleton(candidate, stats: source.stats)
+            if !skeleton.isEmpty, source.numericSkeleton.contains(skeleton) {
                 return .normalized
             }
         }
@@ -270,15 +346,36 @@ enum FieldGrounding {
         return result.filter { seen.insert($0).inserted }
     }
 
-    /// Digits and decimal separators only, for loose numeric containment.
-    private static func numericSkeleton(_ text: String) -> String {
+    /// Digits, decimal separators, and leading-minus signs for numeric containment.
+    ///
+    /// Signs must participate: stripping them labels extracted `-12.5` as
+    /// ``Grounding/normalized`` against source text `Total: 12.50`. Only a minus
+    /// immediately before a digit is kept, so hyphenated prose does not pollute
+    /// the skeleton.
+    private static func numericSkeleton(_ text: String, stats: ComputeStats? = nil) -> String {
+        stats?.recordSkeleton()
         var out = ""
-        for scalar in text.unicodeScalars {
+        let scalars = Array(text.unicodeScalars)
+        var index = 0
+        while index < scalars.count {
+            let scalar = scalars[index]
             if (48...57).contains(scalar.value) || scalar == "." || scalar == "," {
                 out.unicodeScalars.append(scalar)
+            } else if isMinusScalar(scalar),
+                index + 1 < scalars.count,
+                (48...57).contains(scalars[index + 1].value)
+            {
+                // Normalise every Unicode minus to ASCII so skeletons compare equal.
+                out.append("-")
             }
+            index += 1
         }
         return out.replacingOccurrences(of: ",", with: "")
+    }
+
+    private static func isMinusScalar(_ scalar: UnicodeScalar) -> Bool {
+        // ASCII hyphen-minus, Unicode minus, small hyphen-minus, fullwidth hyphen-minus.
+        scalar == "-" || scalar == "\u{2212}" || scalar == "\u{FE63}" || scalar == "\u{FF0D}"
     }
 
     // MARK: Normalization
@@ -293,7 +390,8 @@ enum FieldGrounding {
     /// separator would glue tokens (`"U.S."` → `"us"`) into accidental substrings; mapping
     /// it to spaces preserves token boundaries while still equating comma-joined and
     /// newline-separated forms. Only Unicode letters and digits survive as content.
-    static func normalizeForSearch(_ text: String) -> String {
+    static func normalizeForSearch(_ text: String, stats: ComputeStats? = nil) -> String {
+        stats?.recordNormalize()
         let folded =
             text
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
