@@ -88,6 +88,37 @@ The last row is the point: those are not features we shipped, they are types a u
 - **Any model.** Apple Intelligence, MLX, Core ML, llama.cpp locally, or OpenAI / Anthropic / Gemini
   in the cloud. The schema and the retry loop do not change when you switch.
 
+### How much can you trust a result?
+
+Structured extraction fails at the validation boundary, not on the happy path. A malformed
+response is easy to catch; a well-typed wrong one is the problem. Three answers, in descending
+order of how much they actually prove:
+
+**Arithmetic — `MRZParser`.** Where a document has a machine-readable zone, the fields are parsed
+directly and every ICAO 9303 check digit is verified. No model in the loop, so those fields are
+computed rather than inferred. See [MRZ](docs/Examples.md).
+
+**Enforced — `validateInvariants()`.** Declare semantic constraints on your own type in plain Swift
+(line items + tax ≈ total, expiry after issue). A violation is treated like a decode failure: the
+specific complaint goes back to the model, which retries, and the call throws if it cannot be
+satisfied. So if a type declares invariants and you received a value, those invariants held.
+
+```swift
+func validateInvariants() throws {
+    let expected = items.reduce(0) { $0 + $1.price } + tax
+    guard Extract.isApproximatelyEqual(total, to: expected) else {
+        throw InvariantValidationError(path: "total", expected: "\(expected)", found: "\(total)")
+    }
+}
+```
+
+**Evidence — `result.signals`.** Per field, whether the value was actually found in the source text
+(`verbatim`, `normalized`, `reformatted`, `absent`), plus attempt and chunk counts. There is
+deliberately **no confidence score**: nothing behind one would be calibrated, and a single number
+gets thresholded for auto-accept. Note the limit — `absent` only fires for text fields, since a
+`quantity: 2` matches almost any document. A confidently wrong *number* is caught by invariants,
+not by grounding.
+
 ### Identity documents & sensitive data
 
 ID recognition is a first-class use case, with caveats worth stating plainly:
@@ -96,10 +127,11 @@ ID recognition is a first-class use case, with caveats worth stating plainly:
   data never leave the device. This is the main reason the library exists.
 - **Use synthetic or redacted samples** in fixtures, tests, logs, and screenshots. The bundled
   [`fixtures/identity_document.txt`](fixtures/identity_document.txt) is entirely fictional.
-- **This is not a KYC or identity-verification product.** It reads printed fields via OCR plus an LLM.
-  It does not validate MRZ checksums, read ePassport NFC chips, detect forgery, or perform liveness or
-  document-authenticity checks. Treat every field as *model output that needs review*, not as a
-  verified fact — and keep a human in the loop for decisions that affect someone.
+- **This is not a KYC or identity-verification product.** MRZ check digits *are* verified, which
+  catches transcription and OCR errors on the fields the MRZ carries. That is all it catches: there
+  is no ePassport NFC/chip reading, no biometrics, no forgery or liveness detection, no
+  certification. Fields that live only in the visual zone still come from an LLM — treat them as
+  *model output that needs review*, and keep a human in the loop for decisions that affect someone.
 
 ---
 
@@ -344,10 +376,13 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
 
 ---
 
-## Limitations (v0.1)
+## Limitations (v0.2)
 
 - Handwriting OCR quality is not guaranteed.
 - Table structure is linearized text — not a table model.
+- Grounding reports `absent` only for text fields; numeric and date fields never do. Use
+  [invariants](#how-much-can-you-trust-a-result) to catch a wrong number.
+- Chunk-and-merge on long documents is the least exercised path in the library.
 - Prompts and built-in guides are English-first (document content can still be multilingual — see [Languages & scripts](#languages--scripts)).
 - Guided generation uses schema-in-prompt (AnyLanguageModel’s `respond(to:schema:)` is not used; see `DECISIONS.md`).
 - CLI does not JIT-compile arbitrary `.swift` schema files; use embedded types matching `Examples/schemas/`.
