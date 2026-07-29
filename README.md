@@ -379,7 +379,11 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
 ## Limitations (v0.2)
 
 - Handwriting OCR quality is not guaranteed.
-- Table structure is linearized text — not a table model.
+- Table reconstruction is geometric (OCR/PDF positions), not a trained table model.
+  Detected grids are appended to the prompt as Markdown and exposed on
+  `result.tables`. Cell merge is lossy (no spanning or nested cells, no cross-page
+  merge); header detection is keyword-based and often absent; skewed scans break
+  it. Linear document text is always kept — tables are additive, never a substitute.
 - Grounding reports `absent` only for text fields; numeric and date fields never do. Use
   [invariants](#how-much-can-you-trust-a-result) to catch a wrong number.
 - Chunk-and-merge on long documents is the least exercised path in the library.

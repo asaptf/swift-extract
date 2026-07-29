@@ -65,6 +65,36 @@ Nested line items usually need a stronger model than a bare total. Prefer
 ~3B local or a cloud mini model; see
 [Choosing a small local model](Backends.md#choosing-a-small-local-model).
 
+### Line items via reconstructed tables
+
+When the source has geometry (text-layer PDF or OCR), Extract reconstructs tables
+and both **shows them to the model as Markdown** (additive section on the prompt)
+and **returns them on the result**:
+
+```swift
+let result: ExtractionResult<Invoice> = try await Extract.detailed(
+    from: .pdf(pdf),
+    using: session
+)
+
+// Model already saw the pipe table; you can also read the grid directly:
+for table in result.tables {
+    print(table.markdown())
+    for row in 0..<table.rowCount {
+        let cells = (0..<table.columnCount).compactMap { table.text(row: row, column: $0) }
+        print(cells.joined(separator: " | "))
+    }
+}
+
+// Disable if you only want linear text (prompt matches a no-table document):
+var options = ExtractionOptions()
+options.tableDetection = .off
+let linearOnly: Invoice = try await Extract.from(.pdf(pdf), using: session, options: options)
+```
+
+Reconstruction is geometric, not a trained table model — no spanning/nested cells,
+no cross-page merge. Linear document text stays in the prompt either way.
+
 ---
 
 ## 3. Identity document (passport / ID / driver license)

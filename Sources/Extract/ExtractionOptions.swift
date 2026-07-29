@@ -25,8 +25,9 @@ public struct ExtractionOptions: Sendable, Equatable {
     public var temperature: Double?
     /// Geometric table reconstruction from positioned blocks (default ``TableDetectionMode/automatic``).
     ///
-    /// Stage 1 exposes the flag and ``TableDetector``; wiring into prompts is stage 2.
-    /// Callers can set ``TableDetectionMode/off`` to disable detection entirely.
+    /// When automatic, detected tables are appended to the model prompt as Markdown and
+    /// returned on ``ExtractionResult/tables``. Set ``TableDetectionMode/off`` to skip
+    /// detection entirely (prompt stays identical to a no-table document).
     public var tableDetection: TableDetectionMode
 
     public init(
@@ -51,11 +52,15 @@ public struct ExtractionOptions: Sendable, Equatable {
     }
 }
 
-/// Full extraction outcome including metadata and grounding signals.
+/// Full extraction outcome including metadata, grounding signals, and tables.
 ///
 /// ``signals`` are **informational evidence, not a calibrated confidence score**.
 /// There is no probability attached; do not threshold them for auto-accept.
 /// See ``ExtractionSignals`` and ``Grounding``.
+///
+/// ``tables`` are geometrically reconstructed grids from OCR/PDF positions (not a
+/// trained table model). Empty when detection is off, finds nothing, or the source
+/// has no geometry.
 public struct ExtractionResult<T: Extractable>: Sendable {
     public let value: T
     public let attempts: Int
@@ -64,6 +69,9 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     /// Per-leaf grounding and run metadata. Always populated by ``Extract``; empty
     /// ``ExtractionSignals/fields`` when constructed without source text.
     public let signals: ExtractionSignals
+    /// Tables detected for this document (full-document detection, not per-chunk).
+    /// Empty array when none were found or ``TableDetectionMode/off`` was set.
+    public let tables: [ExtractedTable]
 
     /// - Parameters:
     ///   - value: Decoded extractable value.
@@ -73,12 +81,15 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     ///   - signals: Optional precomputed signals. When `nil`, a placeholder with
     ///     matching attempt/chunk counts and no field rows is used (source-compatible
     ///     for call sites that construct results without source text).
+    ///   - tables: Optional detected tables. When `nil`, defaults to `[]`
+    ///     (source-compatible with call sites that omit tables).
     public init(
         value: T,
         attempts: Int,
         rawModelOutput: String,
         chunksUsed: Int = 1,
-        signals: ExtractionSignals? = nil
+        signals: ExtractionSignals? = nil,
+        tables: [ExtractedTable]? = nil
     ) {
         self.value = value
         self.attempts = attempts
@@ -87,5 +98,6 @@ public struct ExtractionResult<T: Extractable>: Sendable {
         self.signals =
             signals
             ?? ExtractionSignals(attempts: attempts, chunksUsed: chunksUsed, fields: [])
+        self.tables = tables ?? []
     }
 }

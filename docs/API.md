@@ -261,6 +261,7 @@ public struct ExtractionOptions: Sendable {
     public var locale: Locale?                 // date/number parse + prompt hint (zh_CN, ar_SA, …)
     public var softContextCharacterBudget: Int // default 12_000
     public var temperature: Double?            // nil → session.temperature
+    public var tableDetection: TableDetectionMode  // .automatic (default) | .off
 }
 
 public struct ExtractionResult<T: Extractable>: Sendable {
@@ -269,8 +270,31 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     public let rawModelOutput: String
     public let chunksUsed: Int
     public let signals: ExtractionSignals   // grounding evidence (not a score)
+    public let tables: [ExtractedTable]     // geometric grids; empty when none / off
 }
 
+public enum TableDetectionMode: Sendable {
+    case automatic  // run geometric reconstruction when positioned blocks exist
+    case off        // skip detection; prompt stays byte-identical to no-table docs
+}
+
+public struct ExtractedTable: Sendable {
+    public let pageIndex: Int
+    public let rowCount: Int
+    public let columnCount: Int
+    public let cells: [Cell]
+    public let headerRowIndex: Int?
+    public func markdown() -> String   // GFM pipe table for prompts / debugging
+}
+```
+
+`tableDetection` defaults to `.automatic`. Detected tables are **appended** to the model
+prompt as a labelled Markdown section; the linearised document text is left unchanged
+(cell merge is lossy, so substituting would drop content). When no tables are found or
+mode is `.off`, the prompt is byte-identical to a build without this feature.
+`result.tables` always reflects full-document detection (not a per-chunk subset).
+
+```swift
 public enum ExtractionError: Error {
     case unreadableSource(underlying: Error?)
     case emptyDocument

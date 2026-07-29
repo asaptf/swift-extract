@@ -69,6 +69,11 @@ public enum Extract {
         using session: ExtractionSession,
         options: ExtractionOptions
     ) async throws -> ExtractionResult<T> {
+        // Detect once on the full document (geometry is lost after some chunk splits).
+        let tables = TableDetector.detect(
+            documentBlocks: document.blocks,
+            mode: options.tableDetection
+        )
         let chunks = resolveChunks(document: document, options: options)
         let sourceText = document.fullText
         if chunks.count == 1 {
@@ -78,19 +83,24 @@ public enum Extract {
                 using: session,
                 options: options,
                 chunksUsed: 1,
-                sourceText: sourceText
+                sourceText: sourceText,
+                tables: tables
             )
         }
 
-        // Per-chunk extraction then merge.
+        // Per-chunk extraction then merge. Assign whole tables to chunks by page;
+        // never emit a half table. Fallback: if page filtering drops every table,
+        // attach the full set to the first chunk so the section is not lost.
+        let tablesByChunk = assignTablesToChunks(tables, chunks: chunks)
         var partials: [String] = []
         var totalAttempts = 0
-        for chunk in chunks {
+        for (index, chunk) in chunks.enumerated() {
             let result = try await extractPartial(
                 from: chunk,
                 as: type,
                 using: session,
-                options: options
+                options: options,
+                tables: tablesByChunk[index]
             )
             partials.append(result.json)
             totalAttempts += result.attempts
@@ -145,7 +155,8 @@ public enum Extract {
                     attempts: attempts,
                     rawModelOutput: raw,
                     chunksUsed: chunks.count,
-                    signals: signals
+                    signals: signals,
+                    tables: tables
                 )
             } catch {
                 lastError = error
@@ -163,7 +174,8 @@ public enum Extract {
         from document: ExtractedDocument,
         as type: T.Type,
         using session: ExtractionSession,
-        options: ExtractionOptions
+        options: ExtractionOptions,
+        tables: [ExtractedTable]
     ) async throws -> (json: String, attempts: Int) {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
@@ -190,7 +202,8 @@ public enum Extract {
                 locale: options.locale,
                 schema: schema,
                 allowsPartialObject: true,
-                repair: repair
+                repair: repair,
+                tables: tables
             )
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
@@ -219,7 +232,8 @@ public enum Extract {
         using session: ExtractionSession,
         options: ExtractionOptions,
         chunksUsed: Int,
-        sourceText: String
+        sourceText: String,
+        tables: [ExtractedTable]
     ) async throws -> ExtractionResult<T> {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
@@ -241,7 +255,8 @@ public enum Extract {
                 type: type,
                 document: document,
                 locale: options.locale,
-                repair: repair
+                repair: repair,
+                tables: tables
             )
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
@@ -269,7 +284,8 @@ public enum Extract {
                     attempts: attempts,
                     rawModelOutput: raw,
                     chunksUsed: chunksUsed,
-                    signals: signals
+                    signals: signals,
+                    tables: tables
                 )
             } catch {
                 lastError = error
@@ -298,6 +314,41 @@ public enum Extract {
             }
             return document.chunks(budget: options.softContextCharacterBudget)
         }
+    }
+
+    /// Map whole tables onto chunks without splitting a table's Markdown.
+    ///
+    /// Prefer page-index membership. When a chunk has no page indices (rare unpaged
+    /// hard splits), require every non-empty cell text to appear in the chunk so we
+    /// never attach a table that mostly lives elsewhere. If filtering would drop all
+    /// tables, attach the full set to the first chunk (graceful fallback).
+    static func assignTablesToChunks(
+        _ tables: [ExtractedTable],
+        chunks: [ExtractedDocument]
+    ) -> [[ExtractedTable]] {
+        guard !tables.isEmpty, !chunks.isEmpty else {
+            return Array(repeating: [], count: chunks.count)
+        }
+
+        var assigned: [[ExtractedTable]] = chunks.map { chunk in
+            let pages = Set(chunk.blocks.compactMap(\.pageIndex))
+            if pages.isEmpty {
+                let text = chunk.fullText
+                return tables.filter { table in
+                    let cells = table.cells.map(\.text).filter {
+                        !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    guard !cells.isEmpty else { return false }
+                    return cells.allSatisfy { text.contains($0) }
+                }
+            }
+            return tables.filter { pages.contains($0.pageIndex) }
+        }
+
+        if assigned.allSatisfy(\.isEmpty) {
+            assigned[0] = tables
+        }
+        return assigned
     }
 }
 

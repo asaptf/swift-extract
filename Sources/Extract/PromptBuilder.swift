@@ -17,7 +17,8 @@ enum PromptBuilder {
         locale: Locale?,
         schema: ExtractionSchema? = nil,
         allowsPartialObject: Bool = false,
-        repair: RepairContext? = nil
+        repair: RepairContext? = nil,
+        tables: [ExtractedTable] = []
     ) -> String {
         let targetSchema = schema ?? T.extractionSchema
         let renderedSchema = targetSchema.renderJSONSchema(prettyPrinted: true)
@@ -72,7 +73,34 @@ enum PromptBuilder {
             """
         )
 
+        // Additive only: when empty, omit entirely so the prompt is byte-identical
+        // to pre-table builds (prose documents and `tableDetection: .off`).
+        if !tables.isEmpty {
+            parts.append(tablesSection(tables))
+        }
+
         parts.append(repair == nil ? "Return the JSON object now." : "Return the corrected JSON object now.")
+        return parts.joined(separator: "\n\n")
+    }
+
+    /// Markdown section listing reconstructed tables for the model.
+    ///
+    /// Intentionally duplicates content already present in linearised document text:
+    /// cell merge is lossy, so the original lines must stay in the prompt.
+    static func tablesSection(_ tables: [ExtractedTable]) -> String {
+        let intro = """
+            ## Detected tables
+            The following tables were reconstructed from document layout (geometry of \
+            positioned text). They duplicate content already present in the document text \
+            above. Prefer the table structure for multi-column line items when it clarifies \
+            columns; prefer the linear document text when they disagree.
+            """
+        var parts: [String] = [intro]
+        for (index, table) in tables.enumerated() {
+            let md = table.markdown()
+            guard !md.isEmpty else { continue }
+            parts.append("### Table \(index + 1) (page \(table.pageIndex + 1))\n\n\(md)")
+        }
         return parts.joined(separator: "\n\n")
     }
 

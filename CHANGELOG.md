@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structural tables surface to the model and callers (stage 2).** Detected tables
+  from geometric reconstruction are appended to the extraction prompt as a labelled
+  Markdown section (linear document text is left unchanged — additive, not a
+  substitute) and returned on `ExtractionResult.tables`. When no tables are found or
+  `tableDetection` is `.off`, the prompt is byte-identical to the pre-feature shape.
+  Chunked runs assign whole tables by page (never a half table); if page filtering
+  would drop every table, the full set is attached to the first chunk. Docs:
+  [API](docs/API.md), [Examples](docs/Examples.md), [README limitations](README.md).
+
 ## [0.2.0] — 2026-07-29
 
 Everything in this release was reviewed twice by an independent model and attacked
