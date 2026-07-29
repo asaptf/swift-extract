@@ -126,6 +126,14 @@ example-based suite or ThreadSanitizer had caught. Details under **Fixed**.
 
 ### Fixed
 
+- **Trailing-minus accounting notation in `LenientDecoding.parseDecimal`.** SAP /
+  German invoice amounts print the sign after the digits (`"1,12 -"`, `"12-"`).
+  Those forms now decode as negatives (−1.12, −12) instead of being rejected.
+  Optional whitespace before the sign is allowed; a trailing `+` is accepted as a
+  positive dual-suffix marker (no-op). Two-sign forms (`-12-`, `12--`, `+12-`,
+  parenthesised-plus-trailing) stay rejected, as do the existing multi-dot /
+  multi-sign / junk-exponent hardenings. Parenthesised accounting negatives and
+  scientific paths are unchanged.
 - **Pre-release review hardenings (numeric parsing, invariants, MRZ, signals):**
   - Scientific decimals bound the exponent to the defensible `Decimal` range
     (`±127`), reject non-finite results, and never trap on `Int.min` negation or

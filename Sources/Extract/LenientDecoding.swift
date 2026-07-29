@@ -190,6 +190,18 @@ enum LenientDecoding {
             trimmed = inner
         }
 
+        // Trailing accounting sign (SAP / German invoice style): `"1,12 -"`, `"12-"`.
+        // Peeled before digit cleaning so whitespace between the mantissa and the
+        // sign is allowed. Two sign sources stay rejected (`-12-`, `(12)-`, `12--`).
+        guard let accounting = peelTrailingAccountingSign(trimmed) else {
+            return nil
+        }
+        trimmed = accounting.body
+        let trailingSign = accounting.trailingSign
+        if trailingSign != nil, parenthesizedNegative {
+            return nil
+        }
+
         // Keep only ASCII digits and structural punctuation. Currency, letters,
         // emoji, control chars, and non-ASCII digits are dropped. Non-ASCII digit
         // scripts therefore cannot silently become a value (no ASCII digit left).
@@ -219,13 +231,16 @@ enum LenientDecoding {
             return nil
         }
 
+        let forceNegative = parenthesizedNegative || trailingSign == "-"
+
         // Model output sometimes emits scientific notation as a *string*. Accept only
         // a strict form; never strip `e` and concatenate surrounding digits.
         if sawScientificExponent {
             return parseScientificDecimal(
                 trimmed,
-                forceNegative: parenthesizedNegative,
-                locale: locale
+                forceNegative: forceNegative,
+                locale: locale,
+                trailingSign: trailingSign
             )
         }
 
@@ -238,19 +253,63 @@ enum LenientDecoding {
         {
             return parseScientificDecimal(
                 trimmed,
-                forceNegative: parenthesizedNegative,
-                locale: locale
+                forceNegative: forceNegative,
+                locale: locale,
+                trailingSign: trailingSign
             )
         }
 
         let normalized = normalizeSeparators(in: cleaned, locale: locale)
-        guard let signed = validatedDecimalLiteral(normalized, forceNegative: parenthesizedNegative)
+        guard
+            let signed = validatedDecimalLiteral(
+                normalized,
+                forceNegative: forceNegative,
+                trailingSign: trailingSign
+            )
         else {
             return nil
         }
         // `Decimal(string:)` is itself lenient (trailing junk, multi-dot truncation).
         // We only call it after structural validation so those paths are unreachable.
         return finiteDecimal(string: signed)
+    }
+
+    /// Peel one trailing accounting sign from a decimal token.
+    ///
+    /// German / SAP-style amounts often print the sign after the digits
+    /// (`"1,12 -"` / `"1,12-"` → −1.12). Optional whitespace before the sign is
+    /// allowed. A trailing `+` is accepted as an explicit positive marker (SAP
+    /// dual-suffix credit/debit display) — a no-op relative to an unsigned value —
+    /// because the same printers that emit trailing minus also emit trailing plus.
+    /// Multiple trailing signs (`"12--"`, `"12-+"`) return `nil`.
+    private static func peelTrailingAccountingSign(
+        _ value: String
+    ) -> (body: String, trailingSign: Character?)? {
+        // Find the last non-whitespace character.
+        guard let signIndex = value.lastIndex(where: { !$0.isWhitespace }) else {
+            return (value, nil)
+        }
+        let sign = value[signIndex]
+        guard sign == "-" || sign == "+" else {
+            return (value, nil)
+        }
+        let body = String(value[..<signIndex])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // A second trailing sign (possibly with spaces) is ambiguous — reject.
+        if let prev = body.lastIndex(where: { !$0.isWhitespace }) {
+            let prevChar = body[prev]
+            if prevChar == "-" || prevChar == "+" {
+                // Only reject when that previous sign is *trailing* on the body
+                // (e.g. `"12--"`, `"12 - -"`), not a legitimate leading sign
+                // (`"-12-"` peels to `"-12"`, handled as two-sign later).
+                let afterPrev = body[body.index(after: prev)...]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if afterPrev.isEmpty {
+                    return nil
+                }
+            }
+        }
+        return (body, sign)
     }
 
     /// Maximum absolute decimal exponent accepted for scientific strings.
@@ -266,11 +325,12 @@ enum LenientDecoding {
     /// Validates the original token rather than deleting interior characters (which
     /// turned `"1eUSD3"` into `1000` and `"1,5e3"` under `de_DE` into `15000`). The
     /// mantissa is normalised with the caller's locale; the exponent must be a plain
-    /// integer with no junk.
+    /// integer with no junk. Trailing accounting signs are peeled by the caller.
     private static func parseScientificDecimal(
         _ raw: String,
         forceNegative: Bool,
-        locale: Locale?
+        locale: Locale?,
+        trailingSign: Character? = nil
     ) -> Decimal? {
         // Exactly one exponent marker in the original token.
         let expMarkers = raw.indices.filter { raw[$0] == "e" || raw[$0] == "E" }
@@ -297,7 +357,14 @@ enum LenientDecoding {
             return nil
         }
         let normalized = normalizeSeparators(in: mantissaCleaned, locale: locale)
-        guard let mantLiteral = validatedDecimalLiteral(normalized, forceNegative: false),
+        // Trailing sign already applied via `forceNegative`; reject a leading sign
+        // in the mantissa when a trailing accounting sign was also present.
+        guard
+            let mantLiteral = validatedDecimalLiteral(
+                normalized,
+                forceNegative: false,
+                trailingSign: trailingSign
+            ),
             var value = finiteDecimal(string: mantLiteral)
         else {
             return nil
@@ -312,8 +379,8 @@ enum LenientDecoding {
             return nil
         }
 
-        // Parentheses mean "accounting negative". If the mantissa is already
-        // negative (`(-1e3)`), do not flip it positive.
+        // Parentheses / trailing accounting minus mean "negative". If the mantissa
+        // is already negative (`(-1e3)`), do not flip it positive.
         if forceNegative, value > 0 {
             value = -value
         }
@@ -371,11 +438,17 @@ enum LenientDecoding {
     }
 
     /// Accept only a single optional leading sign and a mantissa of digits with at most
-    /// one decimal point. Rejects multi-sign garbage (`--12`, `+-12`), trailing signs
-    /// (`12-`), and multi-dot forms that Foundation would silently truncate.
+    /// one decimal point.
+    ///
+    /// Trailing accounting signs (`"12-"`, `"1,12 -"`) are peeled by
+    /// ``peelTrailingAccountingSign`` before this runs; when `trailingSign` is set,
+    /// a leading sign is rejected (two-sign forms like `"-12-"` / `"+12-"`). Also
+    /// rejects multi-sign garbage (`--12`, `+-12`) and multi-dot forms that
+    /// Foundation would silently truncate.
     private static func validatedDecimalLiteral(
         _ value: String,
-        forceNegative: Bool
+        forceNegative: Bool,
+        trailingSign: Character? = nil
     ) -> String? {
         var index = value.startIndex
         var sawSign = false
@@ -394,6 +467,11 @@ enum LenientDecoding {
             } else {
                 break
             }
+        }
+
+        // Leading sign + trailing accounting sign is ambiguous — do not guess.
+        if sawSign, trailingSign != nil {
+            return nil
         }
 
         let body = value[index...]

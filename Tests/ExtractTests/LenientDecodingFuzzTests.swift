@@ -3,6 +3,11 @@ import Testing
 
 @testable import Extract
 
+@Extractable
+private struct AccountingTaxTotal {
+    let taxTotal: Decimal
+}
+
 /// Adversarial / property coverage for lenient decimal and date parsing.
 ///
 /// These APIs are intentionally forgiving for model and OCR output. Forgiving
@@ -62,10 +67,8 @@ struct LenientDecodingFuzzTests {
         "++12",
         "+-12",
         "-+12",
-        "12-",
         "-12-",
         "1-2",
-        "12+",
         "+12+",
         "1.2.3",
         "1..2",
@@ -82,6 +85,10 @@ struct LenientDecodingFuzzTests {
         "1e2.5",  // fractional exponent rejected
         "1e+",
         "e",
+        "12--",
+        "-12 -",
+        "+12-",
+        "12-+",
     ]
 
     private static let wellFormedSamples: [(input: String, locale: Locale?, expected: Decimal)] = [
@@ -106,6 +113,12 @@ struct LenientDecodingFuzzTests {
         ("1e3", nil, 1000),
         ("1.5E2", nil, 150),
         ("2e-2", nil, Decimal(string: "0.02")!),
+        // Trailing accounting notation (SAP / German invoice style).
+        ("12-", nil, -12),
+        ("12+", nil, 12),
+        ("12,50-", nil, Decimal(string: "-12.50")!),
+        ("1,12 -", nil, Decimal(string: "-1.12")!),
+        ("1,12-", nil, Decimal(string: "-1.12")!),
     ]
 
     // MARK: - Digit-free never yields
@@ -167,6 +180,88 @@ struct LenientDecodingFuzzTests {
         #expect(LenientDecoding.parseDecimal("12,50", locale: es) == Decimal(string: "12.50"))
         #expect(LenientDecoding.parseDecimal("12,50", locale: de) == Decimal(string: "12.50"))
         #expect(LenientDecoding.parseDecimal("12.50", locale: de) == Decimal(string: "1250"))
+    }
+
+    // MARK: - Trailing accounting sign (SAP / German invoice notation)
+
+    @Test("trailing minus is accounting negation under comma and dot locales")
+    func trailingAccountingMinus() {
+        let expected = Decimal(string: "-1.12")
+        let en = Locale(identifier: "en_US")  // dot-decimal
+        let de = Locale(identifier: "de_DE")  // comma-decimal
+
+        // Corpus document form: "Steuerbetrag in EUR 1,12 -" → −1.12.
+        // Comma is the decimal mark in the printed amount; assert under both a
+        // comma-decimal locale and the nil/POSIX path (1–2 digit fractional comma).
+        for input in ["1,12 -", "1,12-"] {
+            #expect(
+                LenientDecoding.parseDecimal(input) == expected,
+                "nil-locale \(input.debugDescription)"
+            )
+            #expect(
+                LenientDecoding.parseDecimal(input, locale: de) == expected,
+                "de_DE \(input.debugDescription)"
+            )
+        }
+        // Dot-decimal locale: same trailing-minus rule on a dot mantissa.
+        for input in ["1.12 -", "1.12-"] {
+            #expect(
+                LenientDecoding.parseDecimal(input, locale: en) == expected,
+                "en_US \(input.debugDescription)"
+            )
+        }
+
+        #expect(LenientDecoding.parseDecimal("12-") == -12)
+        #expect(LenientDecoding.parseDecimal("12,50-") == Decimal(string: "-12.50"))
+        // Trailing + is SAP dual-suffix positive (no-op).
+        #expect(LenientDecoding.parseDecimal("12+") == 12)
+        #expect(LenientDecoding.parseDecimal("12,50 +") == Decimal(string: "12.50"))
+    }
+
+    /// Boundary table: every hardening rejection that must stay rejected after
+    /// trailing-minus acceptance. Kept in one place so the line is visible.
+    private static let stillRejectedInputs: [String] = [
+        "--12",
+        "+-12",
+        "++12",
+        "1.2.3",
+        "1..2",
+        "1.234.56",
+        "1,234,56",
+        "e10",
+        "1eUSD3",
+        "-12-",
+        "12--",
+        "-12 -",
+        "12 - 5",
+        "-",
+        "(-1e3-)",  // paren + trailing = two signs
+        "+12-",
+        "-12+",
+    ]
+
+    @Test("hardening rejections stay rejected after trailing-minus acceptance")
+    func hardeningRejectionsStillRejected() {
+        for input in Self.stillRejectedInputs {
+            let result = LenientDecoding.parseDecimal(input)
+            #expect(
+                result == nil,
+                "\(input.debugDescription) should stay rejected, got \(String(describing: result))"
+            )
+        }
+        // Parenthesised forms still negate once (no double negation).
+        #expect(LenientDecoding.parseDecimal("(12.50)") == Decimal(string: "-12.50"))
+        #expect(LenientDecoding.parseDecimal("(-1e3)") == Decimal(string: "-1000"))
+    }
+
+    @Test("public decodeExtracted round-trips trailing-minus taxTotal")
+    func trailingMinusRoundTripThroughPublicAPI() throws {
+        let json = #"{"taxTotal":"1,12-"}"#
+        let value = try AccountingTaxTotal.decodeExtracted(from: json)
+        #expect(value.taxTotal == Decimal(string: "-1.12"))
+
+        let spaced = try AccountingTaxTotal.decodeExtracted(from: #"{"taxTotal":"1,12 -"}"#)
+        #expect(spaced.taxTotal == Decimal(string: "-1.12"))
     }
 
     // MARK: - Property: generated adversarial corpus
