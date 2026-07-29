@@ -125,6 +125,7 @@ public enum Extract {
             lastRaw = raw
             do {
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
+                try value.validateInvariants()
                 let attempts = totalAttempts + attempt + 1
                 let signals = FieldGrounding.compute(
                     value: value,
@@ -244,6 +245,7 @@ public enum Extract {
             lastRaw = raw
             do {
                 let value = try T.decodeExtracted(from: raw, locale: options.locale)
+                try value.validateInvariants()
                 let attempts = attempt + 1
                 let signals = FieldGrounding.compute(
                     value: value,

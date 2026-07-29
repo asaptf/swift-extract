@@ -315,6 +315,8 @@ do {
 On each failure the next prompt includes machine-readable field errors, e.g.  
 `field total: expected number, got string 'twelve'`.
 
+Decode failures **and** cross-field invariant violations (see below) share this loop.
+
 ---
 
 ## 7. Large documents (chunk + merge)
@@ -363,7 +365,71 @@ See [README → Languages & scripts](../README.md#languages--scripts) for scope 
 
 ---
 
-## 9. Unit tests without network
+## 9. Cross-field invariants (repair loop)
+
+JSON Schema only catches *malformed* output. A well-typed but wrong total — `99.99` when
+items sum to `12.50` — decodes perfectly, and grounding never flags fabricated numbers as
+`absent`. Declare the arithmetic in plain Swift so a violation is **wired into the same
+repair loop** as decode failures: the field-level complaint goes back to the model, it
+retries, and only after retries are exhausted does the call throw.
+
+```swift
+@Extractable
+struct Receipt {
+    let merchant: String
+    let date: Date
+    let total: Decimal
+    let tax: Decimal
+    @Guide("3-letter ISO currency code") let currency: String
+    let items: [Item]
+
+    @Extractable
+    struct Item {
+        let name: String
+        let price: Decimal
+        let quantity: Int?
+    }
+
+    func validateInvariants() throws {
+        let itemsSum = items.reduce(Decimal.zero) { $0 + $1.price }
+        let expected = itemsSum + tax
+        // Receipts legitimately round — never use bare == on money.
+        // Tolerance is always explicit (default: Decimal.defaultMoneyTolerance == 0.01).
+        if !total.isApproximatelyEqual(to: expected, tolerance: .defaultMoneyTolerance) {
+            throw InvariantValidationError(
+                path: "total",
+                expected: "items sum + tax ≈ \(expected)",
+                found: "\(total)"
+            )
+        }
+    }
+}
+
+// If this returns, items + tax ≈ total held (arithmetic, not inference).
+let receipt: Receipt = try await Extract.from(photo, using: session)
+```
+
+**Useful consequence:** if a type declares invariants and you got a value back, those
+invariants held on that value. That is arithmetic, not a confidence score — unlike
+grounding signals, which are only evidence.
+
+When the model still cannot satisfy the invariant after `maxRetries + 1` attempts:
+
+```swift
+do {
+    let receipt: Receipt = try await Extract.from(source, using: session, options: options)
+} catch let ExtractionError.validationFailed(attempts, last, raw) {
+    // last is typically InvariantValidationError with path / expected / found
+    print(attempts, last, raw)
+}
+```
+
+See [API → Cross-field invariants](API.md#cross-field-invariants) for the protocol
+requirement, issue types, and chunk-merge behavior.
+
+---
+
+## 10. Unit tests without network
 
 ```swift
 import Testing
@@ -398,7 +464,7 @@ let r: Receipt = try await Extract.from("doc", using: session)
 
 ---
 
-## 10. CLI from a script
+## 11. CLI from a script
 
 ```bash
 export EXTRACT_USE_MOCK=1
@@ -418,7 +484,7 @@ Live path (no `--mock`) uses `ExtractionSession.default`.
 
 ---
 
-## 11. SwiftUI: extract then bind to a form
+## 12. SwiftUI: extract then bind to a form
 
 ```swift
 @MainActor

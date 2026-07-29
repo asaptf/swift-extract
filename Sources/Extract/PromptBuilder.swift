@@ -115,6 +115,9 @@ enum ValidationErrorFormatter {
         if let decoding = error as? DecodingError {
             return describeDecoding(decoding)
         }
+        if let invariant = error as? InvariantValidationError {
+            return describeInvariant(invariant)
+        }
         return error.localizedDescription
     }
 
@@ -135,6 +138,14 @@ enum ValidationErrorFormatter {
         @unknown default:
             return error.localizedDescription
         }
+    }
+
+    /// Same field-addressable shape as decode errors so the model can repair invariants.
+    private static func describeInvariant(_ error: InvariantValidationError) -> String {
+        if error.issues.isEmpty {
+            return error.localizedDescription
+        }
+        return error.issues.map(\.description).joined(separator: "\n")
     }
 
     private static func codingPath(_ path: [CodingKey]) -> String {

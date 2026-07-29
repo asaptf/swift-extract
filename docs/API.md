@@ -55,6 +55,10 @@ let currency: String
 ```swift
 public protocol Extractable: Codable, Sendable {
     nonisolated static var extractionSchema: ExtractionSchema { get }
+
+    /// Cross-field semantic checks after a successful decode.
+    /// Default is a no-op; override to throw ``InvariantValidationError``.
+    func validateInvariants() throws
 }
 ```
 
@@ -66,6 +70,60 @@ enum Status: String, Codable, Sendable, CaseIterable {
 }
 extension Status: Extractable {} // uses default string-enum schema
 ```
+
+### Cross-field invariants
+
+JSON Schema (and lenient decoding) only catch *malformed* output. A response that is
+well-typed and **wrong** — e.g. `total: 99.99` when line items sum to `12.50` — decodes
+cleanly. Grounding signals deliberately never flag fabricated numbers as `absent`.
+
+Declare arithmetic or temporal constraints in plain Swift by overriding
+`validateInvariants()`:
+
+```swift
+@Extractable
+struct Receipt {
+    let total: Decimal
+    let tax: Decimal
+    let items: [Item]
+    // ...
+
+    func validateInvariants() throws {
+        let sum = items.reduce(0) { $0 + $1.price } + tax
+        if !total.isApproximatelyEqual(to: sum) {
+            throw InvariantValidationError(
+                path: "total",
+                expected: "items + tax ≈ \(sum)",
+                found: "\(total)"
+            )
+        }
+    }
+}
+```
+
+| Type | Role |
+| --- | --- |
+| `InvariantIssue` | One field-addressable complaint (`path`, `expected`, `found`) |
+| `InvariantValidationError` | Thrown from `validateInvariants()`; holds one or more issues |
+| `Decimal.isApproximatelyEqual(to:tolerance:)` | Money comparison with **explicit** tolerance (default `0.01`) |
+
+**Retry semantics:** a thrown invariant error is treated exactly like a decode failure:
+
+1. The issue is rendered into the same field-shaped repair prompt as `DecodingError`.
+2. The previous JSON is attached; the model retries.
+3. After `maxRetries + 1` total attempts the call throws
+   `ExtractionError.validationFailed` (same case as decode exhaustion), with the last
+   `InvariantValidationError` as `lastError` and the raw model output.
+
+Both the single-chunk path and the chunk-merge path run `validateInvariants()` on the
+fully decoded value (partials from individual chunks are not invariant-checked).
+
+**Useful consequence:** if a type declares invariants and you got a value back, those
+invariants held on that value. That is arithmetic, not inference — unlike
+`ExtractionSignals`, which are only grounding evidence.
+
+See [Examples → Cross-field invariants](Examples.md#9-cross-field-invariants-repair-loop)
+for a full Receipt recipe.
 
 ---
 
@@ -164,8 +222,9 @@ Extract.from(fileURL, using: session)              // URL → .fileURL
 2. Build prompt (persona + schema + guides + locale + document)
 3. Generate (`String` via AnyLanguageModel)
 4. Strip markdown fences → lenient decode
-5. On failure: repair prompt with field-level errors; retry up to `maxRetries`
-6. Large docs: chunk extract → merge pass
+5. Run ``Extractable/validateInvariants()`` (default no-op)
+6. On decode **or** invariant failure: repair prompt with field-level errors; retry up to `maxRetries`
+7. Large docs: chunk extract → merge pass (invariants checked on the merged value)
 
 ---
 
@@ -216,6 +275,8 @@ public enum ExtractionError: Error {
     case unreadableSource(underlying: Error?)
     case emptyDocument
     case modelUnavailable(String)
+    /// Decode *or* invariant validation exhausted retries.
+    /// `lastError` is a `DecodingError` or `InvariantValidationError`.
     case validationFailed(attempts: Int, lastError: Error, rawOutput: String)
     case mergeFailed(String)
     case internalError(String)

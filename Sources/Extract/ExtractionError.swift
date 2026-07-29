@@ -8,7 +8,10 @@ public enum ExtractionError: Error, Sendable, LocalizedError {
     case emptyDocument
     /// No usable language model is configured.
     case modelUnavailable(String)
-    /// Decoding/validation failed after the allowed number of repair attempts.
+    /// Decode or invariant validation failed after the allowed number of repair attempts.
+    ///
+    /// `lastError` is either a ``DecodingError`` or an ``InvariantValidationError`` from
+    /// ``Extractable/validateInvariants()``.
     case validationFailed(attempts: Int, lastError: Error, rawOutput: String)
     /// Chunk merge could not produce a valid combined object.
     case mergeFailed(String)

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cross-field invariants wired into the repair loop.** Callers override
+  `Extractable.validateInvariants()` (default no-op — existing types and macro
+  conformances compile unchanged) and throw `InvariantValidationError` with
+  field-addressable `InvariantIssue`s. Violations are formatted like decode errors,
+  retried on both the single-chunk and chunk-merge paths, and surface as
+  `ExtractionError.validationFailed` after retries are exhausted. Money comparisons
+  use `Decimal.isApproximatelyEqual(to:tolerance:)` with an explicit default of
+  `0.01` so legitimate receipt rounding does not thrash the model. Docs:
+  [API](docs/API.md#cross-field-invariants),
+  [Examples](docs/Examples.md#9-cross-field-invariants-repair-loop).
 - **Identity-document recognition as a first-class product path.**
   - Published example schema [`Examples/schemas/IdentityDocument.swift`](Examples/schemas/IdentityDocument.swift) with field `@Guide`s for document type, full name, document number, date of birth, expiry/issue dates, nationality, issuing authority, optional sex/gender and address.
   - Synthetic offline fixture [`fixtures/identity_document.txt`](fixtures/identity_document.txt) (no real PII).
