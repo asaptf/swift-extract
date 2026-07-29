@@ -440,4 +440,4 @@ Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) and [
 import Extract
 ```
 
-After the first release is indexed, add the package to the [Swift Package Index](https://swiftpackageindex.com/add-a-package) with that repository URL.
+Indexed on the [Swift Package Index](https://swiftpackageindex.com/asaptf/swift-extract).

@@ -29,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anywhere, including nested. Header-only types get a prompt byte-identical to
   `.off`. No new enum case; callers who need grids without line items still use
   `result.tables`.
+
+  Measured on 76 Factur-X invoices with embedded EN16931 ground truth, same local
+  MLX model per run, `temperature = 0`, tables `.automatic` vs `.off`:
+
+  | | Qwen2.5 1.5B 4-bit | Qwen2.5 7B 4-bit |
+  | --- | ---: | ---: |
+  | header accuracy, tables off | 62.7% | 95.2% |
+  | header accuracy, tables on | 51.3% | 95.8% |
+  | Δ on the files where tables were injected | **−11.4 pp** | **+0.8 pp** |
+  | Δ line description | −1.0 pp | **+7.1 pp** |
+
+  So the distraction is a **small-model artefact, not a property of the approach**:
+  at 7B the table section no longer costs header accuracy and clearly helps line
+  descriptions. Schema gating is kept because it is exactly right for weak models
+  and for header-only schemas, and costs a strong model nothing. On header-only
+  types the two arms produced **byte-identical extractions on all 76 documents** —
+  only the reported `tables` count differs, which is the intended behaviour.
 - **Table detection precision against real invoices.** `TableDetector` now splits
   multi-column regions on large vertical gaps (line items vs totals), bridges short
   single-column description lines under items, keeps only “spine” rows (numeric /
