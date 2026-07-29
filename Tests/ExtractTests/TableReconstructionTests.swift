@@ -415,6 +415,205 @@ struct TableReconstructionTests {
         }
     }
 
+    // MARK: - Precision guards (real-invoice failure shapes)
+
+    /// Coolblue-style layout: line items, then a vertical gap, then a totals block with
+    /// different x-anchors. Merging them produced an 8-column sparse grid (dens ~0.45)
+    /// with empty middle columns and values landing in unrelated columns.
+    @Test("vertical gap splits line-item block from totals block")
+    func regionSplitOnVerticalGap() {
+        // Line-item grid (4 cols): description | qty | unit | total
+        var blocks: [TableSourceBlock] = [
+            source("Decoded Leather Slim Cover", x: 0.08, y: 0.30, w: 0.32, h: 0.018),
+            source("1", x: 0.48, y: 0.30, w: 0.04, h: 0.018),
+            source("EUR 69,99", x: 0.58, y: 0.30, w: 0.12, h: 0.018),
+            source("EUR 69,99", x: 0.78, y: 0.30, w: 0.12, h: 0.018),
+
+            source("Nintendo 3DS XL Wit + Blauw", x: 0.08, y: 0.33, w: 0.30, h: 0.018),
+            source("1", x: 0.48, y: 0.33, w: 0.04, h: 0.018),
+            source("EUR 189,00", x: 0.58, y: 0.33, w: 0.12, h: 0.018),
+            source("EUR 189,00", x: 0.78, y: 0.33, w: 0.12, h: 0.018),
+
+            source("Mario Kart 7", x: 0.08, y: 0.36, w: 0.22, h: 0.018),
+            source("1", x: 0.48, y: 0.36, w: 0.04, h: 0.018),
+            source("EUR 39,99", x: 0.58, y: 0.36, w: 0.12, h: 0.018),
+            source("EUR 39,99", x: 0.78, y: 0.36, w: 0.12, h: 0.018),
+
+            source("New Super Mario Bros. 2", x: 0.08, y: 0.39, w: 0.28, h: 0.018),
+            source("1", x: 0.48, y: 0.39, w: 0.04, h: 0.018),
+            source("EUR 39,99", x: 0.58, y: 0.39, w: 0.12, h: 0.018),
+            source("EUR 39,99", x: 0.78, y: 0.39, w: 0.12, h: 0.018),
+        ]
+
+        // Significant vertical gap (~0.06) then a totals block with different anchors.
+        blocks += [
+            source("Exclusief BTW", x: 0.45, y: 0.50, w: 0.14, h: 0.018),
+            source("EUR 593,36", x: 0.78, y: 0.50, w: 0.12, h: 0.018),
+            source("Subtotaal", x: 0.55, y: 0.53, w: 0.12, h: 0.018),
+            source("EUR 717,97", x: 0.78, y: 0.53, w: 0.12, h: 0.018),
+            source("Totaal", x: 0.55, y: 0.56, w: 0.10, h: 0.018),
+            source("EUR 717,97", x: 0.78, y: 0.56, w: 0.12, h: 0.018),
+        ]
+
+        let tables = TableDetector.detect(in: blocks)
+        #expect(!tables.isEmpty, "expected at least the line-item table")
+
+        let lineItems = tables.first { table in
+            let joined = table.cells.map(\.text).joined(separator: " ").lowercased()
+            return joined.contains("nintendo") && joined.contains("mario")
+        }
+        guard let items = lineItems else {
+            Issue.record("No table contained line items: \(tables.map { $0.markdown() })")
+            return
+        }
+
+        // Line items must not swallow the totals block as extra rows.
+        #expect(items.rowCount == 4, "line-item rows only; got \(items.rowCount): \(items.markdown())")
+        #expect(items.columnCount >= 2 && items.columnCount <= 5, "got \(items.columnCount) cols")
+
+        let joined = items.cells.map(\.text).joined(separator: " ").lowercased()
+        #expect(!joined.contains("subtotaal") && !joined.contains("exclusief"))
+        #expect(joined.contains("nintendo") || joined.contains("3ds"))
+        #expect(joined.contains("69,99") || joined.contains("69.99") || joined.contains("189"))
+
+        // Density and no all-empty columns (hard requirements).
+        let density = Double(items.cells.count) / Double(items.rowCount * items.columnCount)
+        #expect(density >= 0.55, "density \(density) for \(items.markdown())")
+        for c in 0..<items.columnCount {
+            #expect(items.cells.contains { $0.column == c }, "column \(c) is all-empty")
+        }
+    }
+
+    /// Side-by-side documents share Y ranges; without a horizontal (column-band) split,
+    /// row grouping merges them into one sparse mega-grid (or density-rejects to zero).
+    /// Two independent 3-column grids separated by a wide mid-X corridor must come back
+    /// as TWO tables.
+    @Test("horizontal corridor splits side-by-side tables (XY-cut)")
+    func regionSplitOnHorizontalCorridor() {
+        // Left document: Item | Qty | Price  (x ≈ 0.05–0.38)
+        var blocks: [TableSourceBlock] = [
+            source("Item", x: 0.05, y: 0.20, w: 0.10, h: 0.02),
+            source("Qty", x: 0.18, y: 0.20, w: 0.06, h: 0.02),
+            source("Price", x: 0.28, y: 0.20, w: 0.08, h: 0.02),
+            source("Widget", x: 0.05, y: 0.25, w: 0.10, h: 0.02),
+            source("2", x: 0.18, y: 0.25, w: 0.04, h: 0.02),
+            source("10.00", x: 0.28, y: 0.25, w: 0.08, h: 0.02),
+            source("Gadget", x: 0.05, y: 0.30, w: 0.10, h: 0.02),
+            source("1", x: 0.18, y: 0.30, w: 0.04, h: 0.02),
+            source("5.00", x: 0.28, y: 0.30, w: 0.08, h: 0.02),
+            source("Cable", x: 0.05, y: 0.35, w: 0.10, h: 0.02),
+            source("3", x: 0.18, y: 0.35, w: 0.04, h: 0.02),
+            source("7.50", x: 0.28, y: 0.35, w: 0.08, h: 0.02),
+        ]
+
+        // Wide corridor (~0.20 of page width), then right document: SKU | Desc | Amt
+        // (x ≈ 0.58–0.92). Same Y ranges as the left grid so a naive row-group merges them.
+        blocks += [
+            source("SKU", x: 0.58, y: 0.20, w: 0.08, h: 0.02),
+            source("Desc", x: 0.70, y: 0.20, w: 0.10, h: 0.02),
+            source("Amt", x: 0.84, y: 0.20, w: 0.08, h: 0.02),
+            source("A1", x: 0.58, y: 0.25, w: 0.06, h: 0.02),
+            source("Alpha", x: 0.70, y: 0.25, w: 0.10, h: 0.02),
+            source("1.00", x: 0.84, y: 0.25, w: 0.08, h: 0.02),
+            source("B2", x: 0.58, y: 0.30, w: 0.06, h: 0.02),
+            source("Beta", x: 0.70, y: 0.30, w: 0.10, h: 0.02),
+            source("2.00", x: 0.84, y: 0.30, w: 0.08, h: 0.02),
+            source("C3", x: 0.58, y: 0.35, w: 0.06, h: 0.02),
+            source("Gamma", x: 0.70, y: 0.35, w: 0.10, h: 0.02),
+            source("3.00", x: 0.84, y: 0.35, w: 0.08, h: 0.02),
+        ]
+
+        let tables = TableDetector.detect(in: blocks)
+        #expect(
+            tables.count == 2,
+            "expected two independent tables, got \(tables.count): \(tables.map { $0.markdown() })"
+        )
+
+        let left = tables.first { t in
+            let j = t.cells.map(\.text).joined(separator: " ").lowercased()
+            return j.contains("widget") && j.contains("gadget")
+        }
+        let right = tables.first { t in
+            let j = t.cells.map(\.text).joined(separator: " ").lowercased()
+            return j.contains("alpha") && j.contains("beta")
+        }
+        #expect(left != nil, "left grid missing: \(tables.map { $0.markdown() })")
+        #expect(right != nil, "right grid missing: \(tables.map { $0.markdown() })")
+
+        if let left {
+            #expect(left.rowCount >= 3, "left rows: \(left.markdown())")
+            #expect(left.columnCount == 3, "left cols: \(left.markdown())")
+            let j = left.cells.map(\.text).joined(separator: " ").lowercased()
+            #expect(!j.contains("alpha") && !j.contains("sku"))
+            let density = Double(left.cells.count) / Double(left.rowCount * left.columnCount)
+            #expect(density >= 0.55)
+        }
+        if let right {
+            #expect(right.rowCount >= 3, "right rows: \(right.markdown())")
+            #expect(right.columnCount == 3, "right cols: \(right.markdown())")
+            let j = right.cells.map(\.text).joined(separator: " ").lowercased()
+            #expect(!j.contains("widget") && !j.contains("gadget"))
+            let density = Double(right.cells.count) / Double(right.rowCount * right.columnCount)
+            #expect(density >= 0.55)
+        }
+
+        // Not one merged mega-grid.
+        #expect(tables.allSatisfy { $0.columnCount <= 4 })
+    }
+
+    /// Phantom mid-description columns that never receive a cell must be dropped, not
+    /// emitted as blank pipe cells (coolblue failure: 3 empty columns between desc and qty).
+    @Test("all-empty columns are never emitted")
+    func neverEmitAllEmptyColumns() {
+        // Shared qty/price columns plus a few stray words at unique x that only appear
+        // once — previously those became empty columns for every other row.
+        let blocks = [
+            source("Decoded Leather Slim Cover Apple iPad", x: 0.08, y: 0.20, w: 0.35, h: 0.02),
+            source("1", x: 0.50, y: 0.20, w: 0.04, h: 0.02),
+            source("EUR 69,99", x: 0.62, y: 0.20, w: 0.12, h: 0.02),
+            source("EUR 69,99", x: 0.80, y: 0.20, w: 0.12, h: 0.02),
+
+            source("Nintendo 3DS XL", x: 0.08, y: 0.24, w: 0.22, h: 0.02),
+            // One-off fragment that would invent a column at x≈0.30 if agreement is weak.
+            source("Wit", x: 0.30, y: 0.24, w: 0.05, h: 0.02),
+            source("1", x: 0.50, y: 0.24, w: 0.04, h: 0.02),
+            source("EUR 189,00", x: 0.62, y: 0.24, w: 0.12, h: 0.02),
+            source("EUR 189,00", x: 0.80, y: 0.24, w: 0.12, h: 0.02),
+
+            source("Mario Kart 7", x: 0.08, y: 0.28, w: 0.18, h: 0.02),
+            source("1", x: 0.50, y: 0.28, w: 0.04, h: 0.02),
+            source("EUR 39,99", x: 0.62, y: 0.28, w: 0.12, h: 0.02),
+            source("EUR 39,99", x: 0.80, y: 0.28, w: 0.12, h: 0.02),
+
+            source("New Super Mario Bros. 2", x: 0.08, y: 0.32, w: 0.28, h: 0.02),
+            source("1", x: 0.50, y: 0.32, w: 0.04, h: 0.02),
+            source("EUR 39,99", x: 0.62, y: 0.32, w: 0.12, h: 0.02),
+            source("EUR 39,99", x: 0.80, y: 0.32, w: 0.12, h: 0.02),
+        ]
+
+        let tables = TableDetector.detect(in: blocks)
+        #expect(!tables.isEmpty)
+        for table in tables {
+            for c in 0..<table.columnCount {
+                #expect(
+                    table.cells.contains { $0.column == c },
+                    "table has all-empty column \(c): \(table.markdown())"
+                )
+            }
+            let density = Double(table.cells.count) / Double(table.rowCount * table.columnCount)
+            #expect(density >= 0.55, "density \(density): \(table.markdown())")
+        }
+
+        let lineItems = tables.first { t in
+            t.cells.map(\.text).joined(separator: " ").localizedCaseInsensitiveContains("Nintendo")
+        }
+        #expect(lineItems != nil)
+        if let t = lineItems {
+            // Phantom "Wit"-only column must not pad the grid to 5+ with empties.
+            #expect(t.columnCount <= 5, "over-segmented: \(t.markdown())")
+        }
+    }
+
     // MARK: - Helpers
 
     private func source(

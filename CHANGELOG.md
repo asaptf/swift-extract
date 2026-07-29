@@ -18,6 +18,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   would drop every table, the full set is attached to the first chunk. Docs:
   [API](docs/API.md), [Examples](docs/Examples.md), [README limitations](README.md).
 
+### Changed
+
+- **Table detection precision against real invoices.** `TableDetector` now splits
+  multi-column regions on large vertical gaps (line items vs totals), bridges short
+  single-column description lines under items, keeps only “spine” rows (numeric /
+  header-like) when clustering columns, drops sparse and all-empty columns, and
+  requires fill density ≥ 0.55 before emission. On a 314-file invoice corpus this
+  raised median density from ~0.71 to 1.0, cut `pdf/` average tables/file from 3.4
+  to 1.8, and eliminated all-empty columns, while preserving line-item recall on
+  Coolblue, Sammy Maystone, `fixtures/invoice.pdf`, and `fixtures/receipt.png`.
+  Unit tests cover a Coolblue-style merged-region layout and an empty-column case.
+- **Recursive XY-cut (horizontal column bands).** Before row grouping, the detector
+  splits a page on a vertical whitespace corridor — the largest mid-X gap between
+  blocks — when the gap is ≥ 0.06, ≥ 1.25× each band’s internal mid-X structure,
+  both bands have ≥ 2 multi-column rows, and their Y-ranges overlap (≥ 25% of the
+  shorter band). Each band then runs the existing vertical region split. This
+  recovers side-by-side documents that previously merged into one sparse mega-grid
+  (or density-rejected to zero), e.g. `hard/invoice_table_detect_img1.jpg`, without
+  bisecting single-document line-item tables (Coolblue, Sammy). Unit test covers two
+  independent 3-column grids separated by a wide corridor.
+
 ## [0.2.0] — 2026-07-29
 
 Everything in this release was reviewed twice by an independent model and attacked
