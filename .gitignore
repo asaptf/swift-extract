@@ -18,3 +18,6 @@ DerivedData/
 *.xcuserstate
 Package.resolved
 **/Package.resolved
+
+# Ad-hoc measurement output (corpus harnesses); never commit build artifacts
+scratchpad/

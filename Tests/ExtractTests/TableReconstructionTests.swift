@@ -484,10 +484,9 @@ struct TableReconstructionTests {
         }
     }
 
-    /// Side-by-side documents share Y ranges; without a horizontal (column-band) split,
-    /// row grouping merges them into one sparse mega-grid (or density-rejects to zero).
-    /// Two independent 3-column grids separated by a wide mid-X corridor must come back
-    /// as TWO tables.
+    /// Side-by-side documents with a wide mid-X corridor and *unrelated* row baselines must
+    /// come back as TWO tables. (Aligned baselines across a gap look like one table's
+    /// column gutter and must not cut — see `wideGridPreservedVsSideBySideSplit`.)
     @Test("horizontal corridor splits side-by-side tables (XY-cut)")
     func regionSplitOnHorizontalCorridor() {
         // Left document: Item | Qty | Price  (x ≈ 0.05–0.38)
@@ -506,21 +505,22 @@ struct TableReconstructionTests {
             source("7.50", x: 0.28, y: 0.35, w: 0.08, h: 0.02),
         ]
 
-        // Wide corridor (~0.20 of page width), then right document: SKU | Desc | Amt
-        // (x ≈ 0.58–0.92). Same Y ranges as the left grid so a naive row-group merges them.
+        // Wide corridor (~0.20 of page width), then right document: SKU | Desc | Amt.
+        // Y positions deliberately offset from the left grid so baselines fail to align —
+        // that is the region-boundary signal (vs a shared table row).
         blocks += [
-            source("SKU", x: 0.58, y: 0.20, w: 0.08, h: 0.02),
-            source("Desc", x: 0.70, y: 0.20, w: 0.10, h: 0.02),
-            source("Amt", x: 0.84, y: 0.20, w: 0.08, h: 0.02),
-            source("A1", x: 0.58, y: 0.25, w: 0.06, h: 0.02),
-            source("Alpha", x: 0.70, y: 0.25, w: 0.10, h: 0.02),
-            source("1.00", x: 0.84, y: 0.25, w: 0.08, h: 0.02),
-            source("B2", x: 0.58, y: 0.30, w: 0.06, h: 0.02),
-            source("Beta", x: 0.70, y: 0.30, w: 0.10, h: 0.02),
-            source("2.00", x: 0.84, y: 0.30, w: 0.08, h: 0.02),
-            source("C3", x: 0.58, y: 0.35, w: 0.06, h: 0.02),
-            source("Gamma", x: 0.70, y: 0.35, w: 0.10, h: 0.02),
-            source("3.00", x: 0.84, y: 0.35, w: 0.08, h: 0.02),
+            source("SKU", x: 0.58, y: 0.22, w: 0.08, h: 0.02),
+            source("Desc", x: 0.70, y: 0.22, w: 0.10, h: 0.02),
+            source("Amt", x: 0.84, y: 0.22, w: 0.08, h: 0.02),
+            source("A1", x: 0.58, y: 0.285, w: 0.06, h: 0.02),
+            source("Alpha", x: 0.70, y: 0.285, w: 0.10, h: 0.02),
+            source("1.00", x: 0.84, y: 0.285, w: 0.08, h: 0.02),
+            source("B2", x: 0.58, y: 0.35, w: 0.06, h: 0.02),
+            source("Beta", x: 0.70, y: 0.35, w: 0.10, h: 0.02),
+            source("2.00", x: 0.84, y: 0.35, w: 0.08, h: 0.02),
+            source("C3", x: 0.58, y: 0.415, w: 0.06, h: 0.02),
+            source("Gamma", x: 0.70, y: 0.415, w: 0.10, h: 0.02),
+            source("3.00", x: 0.84, y: 0.415, w: 0.08, h: 0.02),
         ]
 
         let tables = TableDetector.detect(in: blocks)
@@ -559,6 +559,113 @@ struct TableReconstructionTests {
 
         // Not one merged mega-grid.
         #expect(tables.allSatisfy { $0.columnCount <= 4 })
+    }
+
+    /// Pins the corridor discriminator: a dense 6-column line-item grid (shared baselines
+    /// across every gutter) must stay ONE table, while two independent 3-column grids
+    /// separated by a real region boundary (unrelated baselines) must stay TWO.
+    @Test("wide dense grid preserved; misaligned side-by-side grids split")
+    func wideGridPreservedVsSideBySideSplit() {
+        // --- Case A: one genuine 6-column line-item table (uneven gutters) ---
+        // Columns at ~0.05, 0.18, 0.30, 0.48, 0.62, 0.78 with a wider gap between col3
+        // and col4 (~0.12 mid-X) that a width-only XY-cut would treat as a corridor.
+        let wideGrid: [TableSourceBlock] = [
+            // header
+            source("Pos", x: 0.05, y: 0.15, w: 0.06, h: 0.018),
+            source("Art", x: 0.14, y: 0.15, w: 0.08, h: 0.018),
+            source("Desc", x: 0.26, y: 0.15, w: 0.12, h: 0.018),
+            source("Qty", x: 0.48, y: 0.15, w: 0.06, h: 0.018),
+            source("Price", x: 0.60, y: 0.15, w: 0.08, h: 0.018),
+            source("Amount", x: 0.76, y: 0.15, w: 0.10, h: 0.018),
+            // data rows — shared baselines across all six columns
+            source("1", x: 0.05, y: 0.20, w: 0.04, h: 0.018),
+            source("A100", x: 0.14, y: 0.20, w: 0.08, h: 0.018),
+            source("Widget Pro", x: 0.26, y: 0.20, w: 0.14, h: 0.018),
+            source("2", x: 0.48, y: 0.20, w: 0.04, h: 0.018),
+            source("10.00", x: 0.60, y: 0.20, w: 0.08, h: 0.018),
+            source("20.00", x: 0.76, y: 0.20, w: 0.08, h: 0.018),
+            source("2", x: 0.05, y: 0.25, w: 0.04, h: 0.018),
+            source("B200", x: 0.14, y: 0.25, w: 0.08, h: 0.018),
+            source("Gadget Plus", x: 0.26, y: 0.25, w: 0.14, h: 0.018),
+            source("1", x: 0.48, y: 0.25, w: 0.04, h: 0.018),
+            source("15.50", x: 0.60, y: 0.25, w: 0.08, h: 0.018),
+            source("15.50", x: 0.76, y: 0.25, w: 0.08, h: 0.018),
+            source("3", x: 0.05, y: 0.30, w: 0.04, h: 0.018),
+            source("C300", x: 0.14, y: 0.30, w: 0.08, h: 0.018),
+            source("Cable Kit", x: 0.26, y: 0.30, w: 0.12, h: 0.018),
+            source("4", x: 0.48, y: 0.30, w: 0.04, h: 0.018),
+            source("5.00", x: 0.60, y: 0.30, w: 0.06, h: 0.018),
+            source("20.00", x: 0.76, y: 0.30, w: 0.08, h: 0.018),
+            source("4", x: 0.05, y: 0.35, w: 0.04, h: 0.018),
+            source("D400", x: 0.14, y: 0.35, w: 0.08, h: 0.018),
+            source("Mount Bracket", x: 0.26, y: 0.35, w: 0.16, h: 0.018),
+            source("1", x: 0.48, y: 0.35, w: 0.04, h: 0.018),
+            source("8.00", x: 0.60, y: 0.35, w: 0.06, h: 0.018),
+            source("8.00", x: 0.76, y: 0.35, w: 0.08, h: 0.018),
+        ]
+
+        let wideTables = TableDetector.detect(in: wideGrid)
+        #expect(
+            wideTables.count == 1,
+            "6-col grid must stay one table, got \(wideTables.count): \(wideTables.map { $0.markdown() })"
+        )
+        if let t = wideTables.first {
+            #expect(t.rowCount >= 3, "rows: \(t.markdown())")
+            #expect(
+                t.columnCount >= 5 && t.columnCount <= 6,
+                "expected ~6 cols, got \(t.columnCount): \(t.markdown())"
+            )
+            let density = Double(t.cells.count) / Double(t.rowCount * t.columnCount)
+            #expect(density >= 0.80, "density \(density): \(t.markdown())")
+            let joined = t.cells.map(\.text).joined(separator: " ").lowercased()
+            #expect(joined.contains("widget") && joined.contains("gadget"))
+            #expect(joined.contains("20.00") || joined.contains("15.50"))
+        }
+
+        // --- Case B: two independent 3-column grids, real region boundary ---
+        var sideBySide: [TableSourceBlock] = [
+            source("Item", x: 0.05, y: 0.18, w: 0.10, h: 0.02),
+            source("Qty", x: 0.18, y: 0.18, w: 0.06, h: 0.02),
+            source("Price", x: 0.28, y: 0.18, w: 0.08, h: 0.02),
+            source("Alpha", x: 0.05, y: 0.24, w: 0.10, h: 0.02),
+            source("1", x: 0.18, y: 0.24, w: 0.04, h: 0.02),
+            source("9.00", x: 0.28, y: 0.24, w: 0.08, h: 0.02),
+            source("Beta", x: 0.05, y: 0.30, w: 0.10, h: 0.02),
+            source("2", x: 0.18, y: 0.30, w: 0.04, h: 0.02),
+            source("8.00", x: 0.28, y: 0.30, w: 0.08, h: 0.02),
+            source("Gamma", x: 0.05, y: 0.36, w: 0.10, h: 0.02),
+            source("3", x: 0.18, y: 0.36, w: 0.04, h: 0.02),
+            source("7.00", x: 0.28, y: 0.36, w: 0.08, h: 0.02),
+        ]
+        // Right document: different row Ys (no shared baselines).
+        sideBySide += [
+            source("SKU", x: 0.58, y: 0.20, w: 0.08, h: 0.02),
+            source("Name", x: 0.70, y: 0.20, w: 0.10, h: 0.02),
+            source("Amt", x: 0.84, y: 0.20, w: 0.08, h: 0.02),
+            source("X1", x: 0.58, y: 0.265, w: 0.06, h: 0.02),
+            source("One", x: 0.70, y: 0.265, w: 0.08, h: 0.02),
+            source("1.00", x: 0.84, y: 0.265, w: 0.08, h: 0.02),
+            source("X2", x: 0.58, y: 0.33, w: 0.06, h: 0.02),
+            source("Two", x: 0.70, y: 0.33, w: 0.08, h: 0.02),
+            source("2.00", x: 0.84, y: 0.33, w: 0.08, h: 0.02),
+            source("X3", x: 0.58, y: 0.395, w: 0.06, h: 0.02),
+            source("Three", x: 0.70, y: 0.395, w: 0.10, h: 0.02),
+            source("3.00", x: 0.84, y: 0.395, w: 0.08, h: 0.02),
+        ]
+
+        let splitTables = TableDetector.detect(in: sideBySide)
+        #expect(
+            splitTables.count == 2,
+            "expected two tables across region boundary, got \(splitTables.count): \(splitTables.map { $0.markdown() })"
+        )
+        let hasLeft = splitTables.contains { t in
+            t.cells.map(\.text).joined(separator: " ").localizedCaseInsensitiveContains("Alpha")
+        }
+        let hasRight = splitTables.contains { t in
+            t.cells.map(\.text).joined(separator: " ").localizedCaseInsensitiveContains("Three")
+        }
+        #expect(hasLeft && hasRight, "both grids required: \(splitTables.map { $0.markdown() })")
+        #expect(splitTables.allSatisfy { $0.columnCount == 3 })
     }
 
     /// Phantom mid-description columns that never receive a cell must be dropped, not

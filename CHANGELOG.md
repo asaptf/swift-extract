@@ -38,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or density-rejected to zero), e.g. `hard/invoice_table_detect_img1.jpg`, without
   bisecting single-document line-item tables (Coolblue, Sammy). Unit test covers two
   independent 3-column grids separated by a wide corridor.
+- **XY-cut corridor vs table-gutter discrimination.** Width alone cannot tell a
+  vertical region boundary from a table’s inter-column gutter, so pure XY-cut
+  shattered genuine line-item grids (e.g. Kostenrechnung `4×6` → six half-width
+  fragments; Hetzner `8×4` → `8×2`/`4×2`/`11×2`). A candidate corridor is now kept
+  only when multi-column row baselines across the gap largely fail to align: the cut
+  is refused when the shorter multi-col side’s mid-Y match is ≥ 0.80 (strong
+  co-tabular signal, even if one side has extra chrome rows) or when both directed
+  matches are ≥ 0.50 (balanced shared grid). Side-by-side documents with unrelated
+  line positions still split (`hard/invoice_table_detect_img1.jpg` → `4×4` + `6×5`).
+  On the 90-file `pdf/` set, line-item-shaped grids (rows ≥ 3, cols 3–6, density
+  ≥ 0.80) recover to 36/90 (40%) from 32/90 under pure XY-cut, matching the
+  pre-horizontal-cut tightening rate, while median density stays 1.0, p90 columns
+  5, and `pdf/` avg tables/file 1.79. Unit test pins a dense 6-column grid staying
+  one table against two misaligned 3-column grids staying two.
 
 ## [0.2.0] — 2026-07-29
 

@@ -25,6 +25,7 @@ import Foundation
 /// | Horizontal corridor | mid-X gap ≥ `0.06`, and ≥ `1.25×` each band's max internal mid-X gap | Side-by-side documents / column bands (recursive XY-cut); refuses evenly spaced table gutters. |
 /// | Corridor Y-overlap | ≥ `0.25` of the shorter band's height | Requires true side-by-side layout, not sequential left-then-right stacks. |
 /// | Corridor multi-col | ≥ `2` multi-column rows on **each** band | Both sides must look independently tabular before a horizontal cut is kept. |
+/// | Corridor baseline align | refuse cut if shorter-side multi-col match ≥ `0.80` **or** min(L→R, R→L) ≥ `0.50` | Discriminates table column gutters (shared baselines) from true region boundaries (weak / one-way alignment). |
 /// | XY-cut depth | ≤ `3` | Bounds recursive horizontal + vertical region splits. |
 /// | Min fill density | `0.55` of row×col cells non-empty | Reject sparse merged grids that poison stage-2 prompts. |
 /// | Numeric column | ≥ `50%` of filled cells look like numbers/currency | Strong invoice/receipt signal; relaxes length checks. |
@@ -36,10 +37,20 @@ import Foundation
 /// Before row grouping, a page (or band) is optionally split on a **vertical whitespace
 /// corridor**: the largest gap between successive block mid-X values, kept only when it is
 /// wide relative to each side's internal mid-X structure, both sides have multi-column rows,
-/// and their Y-ranges overlap. Each band is then processed independently — vertical gap
-/// splits (line items vs totals) run inside the band, and horizontal splits may recurse.
-/// This separates side-by-side documents that share Y-ranges (which would otherwise merge
-/// into one sparse mega-grid) without cutting ordinary single-document line-item tables.
+/// their Y-ranges overlap, **and multi-column row baselines across the gap largely fail to
+/// align**. Width alone cannot separate a table's inter-column gutter from a true region
+/// boundary — both are vertical whitespace. The discriminator is baseline co-occurrence on
+/// multi-column rows: cells on either side of a column gutter share data-row Y positions
+/// (every line item has cells at the same mid-Y on both sides), whereas two independent
+/// documents side by side have unrelated line positions. A cut is **refused** when either
+/// (a) the shorter multi-col side's mid-Ys mostly find partners on the other side
+/// (≥ 0.80 — strong co-tabular signal even if the longer side has extra chrome rows), or
+/// (b) both directions match moderately (`min(L→R, R→L) ≥ 0.50` — balanced shared grid).
+/// A corridor becomes a region cut only when both signals fail. Each band is then processed
+/// independently — vertical gap splits (line items vs totals) run inside the band, and
+/// horizontal splits may recurse. This separates side-by-side documents that share Y-ranges
+/// (which would otherwise merge into one sparse mega-grid) without shattering genuine
+/// multi-column line-item grids into half-width fragments.
 ///
 /// ## Known weak spots
 ///
@@ -77,6 +88,12 @@ public enum TableDetector {
     private static let horizontalCorridorInternalFactor: CGFloat = 1.25
     /// Shared vertical extent of the two bands, as a fraction of the shorter band height.
     private static let horizontalCorridorMinYOverlap: CGFloat = 0.25
+    /// Refuse a horizontal cut when the shorter multi-col side's baseline match is at least
+    /// this high (strong co-tabular signal; protects uneven tables with chrome on one side).
+    private static let horizontalCorridorShorterMatchRefuse: CGFloat = 0.80
+    /// Refuse a horizontal cut when both directed multi-col matches are at least this high
+    /// (balanced shared grid, e.g. description | amounts halves of one line-item table).
+    private static let horizontalCorridorMinMatchRefuse: CGFloat = 0.50
     private static let xyCutMaxDepth = 3
     private static let numericColumnFraction = 0.5
     private static let maxProseWordsWithoutNumeric = 6
@@ -177,6 +194,17 @@ public enum TableDetector {
 
     /// Propose a left/right column-band split on the largest mid-X gap, if it looks like
     /// a persistent side-by-side corridor rather than an ordinary table gutter.
+    ///
+    /// Discriminator (beyond width): content across a **table column gutter** shares
+    /// multi-column row baselines — every data row has cells at the same mid-Y on both
+    /// sides of the gap. Content across a **true region boundary** (two documents side by
+    /// side) does not; line positions are unrelated or only weakly/accidentally align.
+    ///
+    /// A corridor is kept only when baselines largely fail to align, i.e. neither of:
+    /// - shorter-side multi-col match ≥ `horizontalCorridorShorterMatchRefuse` (one side's
+    ///   multi-col rows are almost entirely co-tabular with the other — even if the longer
+    ///   side has extra chrome rows), nor
+    /// - `min(L→R, R→L)` ≥ `horizontalCorridorMinMatchRefuse` (balanced shared grid).
     private static func horizontalSplit(
         _ blocks: [TableSourceBlock]
     ) -> ([TableSourceBlock], [TableSourceBlock])? {
@@ -227,7 +255,82 @@ public enum TableDetector {
             return nil
         }
 
+        // Shared multi-col baselines ⇒ one table's column gutter, not a region boundary.
+        if looksLikeSharedTableBaselines(left, right) {
+            return nil
+        }
+
         return (left, right)
+    }
+
+    /// Whether multi-column row mid-Ys across a candidate corridor look co-tabular.
+    ///
+    /// Only multi-column rows (after cell merge) contribute — single-column labels and
+    /// prose dilute the signal. Returns true (refuse the cut) when the shorter side is
+    /// strongly aligned or both directions match moderately.
+    private static func looksLikeSharedTableBaselines(
+        _ left: [TableSourceBlock],
+        _ right: [TableSourceBlock]
+    ) -> Bool {
+        let leftMids = multiColumnRowMidYs(left)
+        let rightMids = multiColumnRowMidYs(right)
+        guard !leftMids.isEmpty, !rightMids.isEmpty else { return false }
+
+        let heights =
+            groupIntoRows(left).map(rowRepresentativeHeight)
+            + groupIntoRows(right).map(rowRepresentativeHeight)
+        let medianH = median(heights) ?? rowMidYFloor
+        let tol = max(medianH * rowMidYFactor, rowMidYFloor)
+
+        let lr = directedBaselineMatch(query: leftMids, reference: rightMids, tol: tol)
+        let rl = directedBaselineMatch(query: rightMids, reference: leftMids, tol: tol)
+        let shorter = leftMids.count <= rightMids.count ? lr : rl
+        let bothWays = min(lr, rl)
+        return shorter >= horizontalCorridorShorterMatchRefuse
+            || bothWays >= horizontalCorridorMinMatchRefuse
+    }
+
+    private static func multiColumnRowMidYs(_ blocks: [TableSourceBlock]) -> [CGFloat] {
+        groupIntoRows(blocks).compactMap { row -> CGFloat? in
+            guard mergeCells(in: row).count >= minColumns else { return nil }
+            return rowRepresentativeMidY(row)
+        }
+    }
+
+    private static func directedBaselineMatch(
+        query: [CGFloat],
+        reference: [CGFloat],
+        tol: CGFloat
+    ) -> CGFloat {
+        guard !query.isEmpty else { return 0 }
+        var matched = 0
+        var used = Set<Int>()
+        for q in query {
+            var bestIdx: Int?
+            var bestDist = CGFloat.greatestFiniteMagnitude
+            for (idx, r) in reference.enumerated() where !used.contains(idx) {
+                let d = abs(r - q)
+                if d <= tol, d < bestDist {
+                    bestDist = d
+                    bestIdx = idx
+                }
+            }
+            if let bestIdx {
+                used.insert(bestIdx)
+                matched += 1
+            }
+        }
+        return CGFloat(matched) / CGFloat(query.count)
+    }
+
+    private static func rowRepresentativeMidY(_ row: [TableSourceBlock]) -> CGFloat {
+        let mids = row.map(\.boundingBox.midY)
+        return median(mids) ?? row.first?.boundingBox.midY ?? 0
+    }
+
+    private static func rowRepresentativeHeight(_ row: [TableSourceBlock]) -> CGFloat {
+        let heights = row.map(\.boundingBox.height)
+        return max(median(heights) ?? rowMidYFloor, rowMidYFloor)
     }
 
     private static func yOverlapFraction(
