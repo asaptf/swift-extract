@@ -23,19 +23,26 @@ public struct ExtractionOptions: Sendable, Equatable {
     /// Generation temperature override. When `nil` (default), uses
     /// ``ExtractionSession/temperature`` so session configuration is honored.
     public var temperature: Double?
+    /// Geometric table reconstruction from positioned blocks (default ``TableDetectionMode/automatic``).
+    ///
+    /// Stage 1 exposes the flag and ``TableDetector``; wiring into prompts is stage 2.
+    /// Callers can set ``TableDetectionMode/off`` to disable detection entirely.
+    public var tableDetection: TableDetectionMode
 
     public init(
         maxRetries: Int = 2,
         chunkingStrategy: ChunkingStrategy = .automatic,
         locale: Locale? = nil,
         softContextCharacterBudget: Int = 12_000,
-        temperature: Double? = nil
+        temperature: Double? = nil,
+        tableDetection: TableDetectionMode = .automatic
     ) {
         self.maxRetries = maxRetries
         self.chunkingStrategy = chunkingStrategy
         self.locale = locale
         self.softContextCharacterBudget = softContextCharacterBudget
         self.temperature = temperature
+        self.tableDetection = tableDetection
     }
 
     /// Resolve sampling temperature: explicit options override, else session.
