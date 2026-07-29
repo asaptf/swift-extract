@@ -170,6 +170,33 @@ public struct ExtractionSchema: Sendable, Equatable, Codable {
         return copy
     }
 
+    // MARK: - Schema shape
+
+    /// Whether this schema contains a collection (array) anywhere in its tree.
+    ///
+    /// True when:
+    /// - this schema’s ``type`` is ``SchemaType/array``, or
+    /// - any object property schema contains a collection, or
+    /// - an array’s ``items`` schema contains a collection (nested arrays).
+    ///
+    /// Empty `properties` / missing `items` yield `false` for non-array types.
+    /// Optional arrays still count: optionality is a description note; the type
+    /// remains ``SchemaType/array``.
+    public var containsCollection: Bool {
+        if type == .array {
+            return true
+        }
+        if let properties {
+            for property in properties.values where property.containsCollection {
+                return true
+            }
+        }
+        if let items, items.containsCollection {
+            return true
+        }
+        return false
+    }
+
     // MARK: - Rendering
 
     /// Pretty-printed JSON Schema document suitable for prompts.

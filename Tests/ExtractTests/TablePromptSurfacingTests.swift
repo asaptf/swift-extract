@@ -145,6 +145,227 @@ struct TablePromptSurfacingTests {
         #expect(withTables.contains("|"))
     }
 
+    // MARK: - Schema collection walk
+
+    @Test("containsCollection: object with no arrays is false")
+    func containsCollectionHeaderOnly() {
+        let schema = ExtractionSchema.object(
+            properties: [
+                "vendor": .string(),
+                "total": .number(),
+                "issueDate": .string(format: "date"),
+            ],
+            required: ["vendor", "total"]
+        )
+        #expect(!schema.containsCollection)
+        #expect(!HeaderOnlyInvoice.extractionSchema.containsCollection)
+    }
+
+    @Test("containsCollection: top-level array property is true")
+    func containsCollectionTopLevelArray() {
+        let schema = ExtractionSchema.object(
+            properties: [
+                "vendor": .string(),
+                "lineItems": .array(
+                    items: .object(
+                        properties: ["description": .string()],
+                        required: ["description"]
+                    )),
+            ],
+            required: ["vendor", "lineItems"]
+        )
+        #expect(schema.containsCollection)
+        #expect(Invoice.extractionSchema.containsCollection)
+    }
+
+    @Test("containsCollection: nested object with array is true")
+    func containsCollectionNestedArray() {
+        let schema = ExtractionSchema.object(
+            properties: [
+                "header": .string(),
+                "details": .object(
+                    properties: [
+                        "rows": .array(items: .string())
+                    ],
+                    required: ["rows"]
+                ),
+            ],
+            required: ["header", "details"]
+        )
+        #expect(schema.containsCollection)
+        #expect(NestedCollectionProbe.extractionSchema.containsCollection)
+    }
+
+    @Test("containsCollection: optional array still counts")
+    func containsCollectionOptionalArray() {
+        // Optionality is a description note; type remains .array.
+        let optionalArray = ExtractionSchema.array(items: .string()).optional()
+        #expect(optionalArray.type == .array)
+        #expect(optionalArray.containsCollection)
+
+        let objectWithOptionalArray = ExtractionSchema.object(
+            properties: [
+                "name": .string(),
+                "tags": optionalArray,
+            ],
+            required: ["name"]
+        )
+        #expect(objectWithOptionalArray.containsCollection)
+    }
+
+    @Test("containsCollection: empty object / scalars are false")
+    func containsCollectionScalars() {
+        #expect(!ExtractionSchema.string().containsCollection)
+        #expect(!ExtractionSchema.number().containsCollection)
+        #expect(
+            !ExtractionSchema.object(properties: [:], required: []).containsCollection
+        )
+    }
+
+    // MARK: - tablesForPrompt policy
+
+    @Test("tablesForPrompt passes through when schema has a collection")
+    func tablesForPromptWithCollection() {
+        let tables = [sampleTable()]
+        let out = Extract.tablesForPrompt(tables, schema: Invoice.extractionSchema)
+        #expect(out.count == 1)
+        #expect(out == tables)
+    }
+
+    @Test("tablesForPrompt returns empty when schema has no collection")
+    func tablesForPromptHeaderOnly() {
+        let tables = [sampleTable()]
+        let out = Extract.tablesForPrompt(tables, schema: HeaderOnlyInvoice.extractionSchema)
+        #expect(out.isEmpty)
+    }
+
+    // MARK: - Extract path: schema-gated prompt injection
+
+    @Test("collection-bearing type gets Detected tables section under automatic")
+    func collectionBearingPromptIncludesTables() async throws {
+        let url = repoFixture("invoice.pdf")
+        let canned = """
+            {
+              "vendor": "Acme Supplies Co.",
+              "dueDate": "2024-07-31",
+              "total": 1250.00,
+              "lineItems": [
+                {"description": "Widget Pro", "amount": 500.00, "quantity": 2}
+              ]
+            }
+            """
+        let prompts = TablePromptCapture()
+        let session = ExtractionSession.mock(
+            MockLanguageModel { _, user, _ in
+                await prompts.append(user)
+                return canned
+            }
+        )
+        let result: ExtractionResult<Invoice> = try await Extract.detailed(
+            from: .fileURL(url),
+            using: session
+        )
+        let all = await prompts.all
+        let prompt = try #require(all.first)
+        #expect(prompt.contains("## Detected tables"))
+        #expect(!result.tables.isEmpty)
+    }
+
+    @Test("header-only type under automatic is byte-identical to off")
+    func headerOnlyPromptByteIdenticalToOff() async throws {
+        let url = repoFixture("invoice.pdf")
+        let canned = """
+            {
+              "vendor": "Acme Supplies Co.",
+              "dueDate": "2024-07-31",
+              "total": 1250.00
+            }
+            """
+        let autoPrompts = TablePromptCapture()
+        let autoSession = ExtractionSession.mock(
+            MockLanguageModel { _, user, _ in
+                await autoPrompts.append(user)
+                return canned
+            }
+        )
+        var autoOptions = ExtractionOptions()
+        autoOptions.tableDetection = .automatic
+        let autoResult: ExtractionResult<HeaderOnlyInvoice> = try await Extract.detailed(
+            from: .fileURL(url),
+            using: autoSession,
+            options: autoOptions
+        )
+
+        let offPrompts = TablePromptCapture()
+        let offSession = ExtractionSession.mock(
+            MockLanguageModel { _, user, _ in
+                await offPrompts.append(user)
+                return canned
+            }
+        )
+        var offOptions = ExtractionOptions()
+        offOptions.tableDetection = .off
+        let offResult: ExtractionResult<HeaderOnlyInvoice> = try await Extract.detailed(
+            from: .fileURL(url),
+            using: offSession,
+            options: offOptions
+        )
+
+        let auto = try #require(await autoPrompts.all.first)
+        let off = try #require(await offPrompts.all.first)
+        #expect(auto == off)
+        #expect(auto.utf8.elementsEqual(off.utf8))
+        #expect(!auto.contains("## Detected tables"))
+        // Detection still ran under automatic; off skips it.
+        #expect(!autoResult.tables.isEmpty)
+        #expect(offResult.tables.isEmpty)
+    }
+
+    @Test("nested collection still injects tables into the prompt")
+    func nestedCollectionPromptIncludesTables() async throws {
+        let document = ExtractedDocument(
+            blocks: [
+                block("Vendor Acme", x: 0.1, y: 0.05, w: 0.3, h: 0.03),
+                block("Widget Pro", x: 0.08, y: 0.20, w: 0.20, h: 0.03),
+                block("qty 2", x: 0.35, y: 0.20, w: 0.08, h: 0.03),
+                block("$500.00", x: 0.55, y: 0.20, w: 0.12, h: 0.03),
+                block("Support Plan", x: 0.08, y: 0.25, w: 0.22, h: 0.03),
+                block("qty 1", x: 0.35, y: 0.25, w: 0.08, h: 0.03),
+                block("$250.00", x: 0.55, y: 0.25, w: 0.12, h: 0.03),
+            ],
+            sourceDescription: "synth"
+        )
+        let tables = TableDetector.detect(documentBlocks: document.blocks, mode: .automatic)
+        #expect(!tables.isEmpty)
+
+        let canned = """
+            {
+              "title": "Order",
+              "payload": {
+                "lines": [
+                  {"description": "Widget Pro", "amount": 500.0}
+                ]
+              }
+            }
+            """
+        let prompts = TablePromptCapture()
+        let session = ExtractionSession.mock(
+            MockLanguageModel { _, user, _ in
+                await prompts.append(user)
+                return canned
+            }
+        )
+        let result: ExtractionResult<NestedCollectionProbe> = try await Extract.extract(
+            from: document,
+            as: NestedCollectionProbe.self,
+            using: session,
+            options: ExtractionOptions()
+        )
+        let prompt = try #require(await prompts.all.first)
+        #expect(prompt.contains("## Detected tables"))
+        #expect(!result.tables.isEmpty)
+    }
+
     // MARK: - Result.tables
 
     @Test("result.tables populated for invoice.pdf with real line items")
@@ -184,6 +405,27 @@ struct TablePromptSurfacingTests {
             rawModelOutput: "{}"
         )
         #expect(bare.tables.isEmpty)
+    }
+
+    @Test("result.tables populated for header-only type under automatic")
+    func resultTablesHeaderOnlyAutomatic() async throws {
+        let url = repoFixture("invoice.pdf")
+        let canned = """
+            {
+              "vendor": "Acme Supplies Co.",
+              "dueDate": "2024-07-31",
+              "total": 1250.00
+            }
+            """
+        let session = ExtractionSession.mock(MockLanguageModel(responses: [canned]))
+        var options = ExtractionOptions()
+        options.tableDetection = .automatic
+        let result: ExtractionResult<HeaderOnlyInvoice> = try await Extract.detailed(
+            from: .fileURL(url),
+            using: session,
+            options: options
+        )
+        #expect(!result.tables.isEmpty, "header-only types still get result.tables")
     }
 
     @Test("tableDetection off produces empty result.tables")
@@ -335,6 +577,46 @@ struct TablePromptSurfacingTests {
         let name: String
     }
 
+    /// Header fields only — no collection; schema-gated prompt must omit tables.
+    @Extractable
+    fileprivate struct HeaderOnlyInvoice {
+        let vendor: String
+        @Guide("ISO 8601 format") let dueDate: Date
+        let total: Decimal
+    }
+
+    /// Collection nested inside a struct property.
+    @Extractable
+    fileprivate struct NestedCollectionProbe {
+        let title: String
+        let payload: Payload
+
+        @Extractable
+        struct Payload {
+            let lines: [Line]
+
+            @Extractable
+            struct Line {
+                let description: String
+                let amount: Double
+            }
+        }
+    }
+
+    private func sampleTable() -> ExtractedTable {
+        ExtractedTable(
+            pageIndex: 0,
+            rowCount: 2,
+            columnCount: 2,
+            cells: [
+                .init(text: "A", row: 0, column: 0),
+                .init(text: "1", row: 0, column: 1),
+                .init(text: "B", row: 1, column: 0),
+                .init(text: "2", row: 1, column: 1),
+            ]
+        )
+    }
+
     private func block(
         _ text: String,
         x: CGFloat,
@@ -358,4 +640,11 @@ struct TablePromptSurfacingTests {
             .appendingPathComponent("fixtures")
             .appendingPathComponent(name)
     }
+}
+
+/// Records user prompts from ``MockLanguageModel`` responders (Sendable).
+private actor TablePromptCapture {
+    private var values: [String] = []
+    func append(_ value: String) { values.append(value) }
+    var all: [String] { values }
 }

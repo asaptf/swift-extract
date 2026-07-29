@@ -274,8 +274,9 @@ public struct ExtractionResult<T: Extractable>: Sendable {
 }
 
 public enum TableDetectionMode: Sendable {
-    case automatic  // run geometric reconstruction when positioned blocks exist
-    case off        // skip detection; prompt stays byte-identical to no-table docs
+    // Detect when geometry exists; prompt injection only if schema has a collection
+    case automatic
+    case off        // skip detection; result.tables empty; no table section in prompt
 }
 
 public struct ExtractedTable: Sendable {
@@ -288,11 +289,14 @@ public struct ExtractedTable: Sendable {
 }
 ```
 
-`tableDetection` defaults to `.automatic`. Detected tables are **appended** to the model
-prompt as a labelled Markdown section; the linearised document text is left unchanged
-(cell merge is lossy, so substituting would drop content). When no tables are found or
-mode is `.off`, the prompt is byte-identical to a build without this feature.
-`result.tables` always reflects full-document detection (not a per-chunk subset).
+`tableDetection` defaults to `.automatic`. Detection runs when positioned blocks exist
+and `result.tables` always reflects full-document detection (not a per-chunk subset),
+including for header-only target types. Tables are **appended** to the model prompt as
+a labelled Markdown section **only when the target schema contains a collection**
+(array property, including nested). Header-only types under `.automatic` therefore get
+a prompt byte-identical to `.off`. The linearised document text is left unchanged either
+way (cell merge is lossy, so substituting would drop content). When no tables are found
+or mode is `.off`, the prompt is also byte-identical to a build without this feature.
 
 ```swift
 public enum ExtractionError: Error {

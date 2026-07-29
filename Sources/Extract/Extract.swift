@@ -185,6 +185,8 @@ public enum Extract {
         if schema.type == .object {
             schema.required = []
         }
+        // Schema-gate prompt injection; detection list on the result is unfiltered.
+        let promptTables = tablesForPrompt(tables, schema: T.extractionSchema)
 
         for attempt in 0..<maxAttempts {
             let repair: PromptBuilder.RepairContext?
@@ -203,7 +205,7 @@ public enum Extract {
                 schema: schema,
                 allowsPartialObject: true,
                 repair: repair,
-                tables: tables
+                tables: promptTables
             )
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
@@ -240,6 +242,8 @@ public enum Extract {
         let maxAttempts = max(1, options.maxRetries + 1)
         let temperature = options.resolvedTemperature(session: session)
         let schema = T.extractionSchema
+        // Schema-gate prompt injection; `tables` on the result stays unfiltered.
+        let promptTables = tablesForPrompt(tables, schema: schema)
 
         for attempt in 0..<maxAttempts {
             let repair: PromptBuilder.RepairContext?
@@ -256,7 +260,7 @@ public enum Extract {
                 document: document,
                 locale: options.locale,
                 repair: repair,
-                tables: tables
+                tables: promptTables
             )
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
@@ -314,6 +318,19 @@ public enum Extract {
             }
             return document.chunks(budget: options.softContextCharacterBudget)
         }
+    }
+
+    /// Tables to pass into ``PromptBuilder`` for a given target schema.
+    ///
+    /// When the schema has no collection (array) property anywhere, returns `[]` so
+    /// the prompt stays free of the detected-tables section (byte-identical to
+    /// ``TableDetectionMode/off``). Detected tables are still reported on
+    /// ``ExtractionResult/tables`` by the caller — this only filters the prompt list.
+    static func tablesForPrompt(
+        _ tables: [ExtractedTable],
+        schema: ExtractionSchema
+    ) -> [ExtractedTable] {
+        schema.containsCollection ? tables : []
     }
 
     /// Map whole tables onto chunks without splitting a table's Markdown.

@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Structural tables surface to the model and callers (stage 2).** Detected tables
-  from geometric reconstruction are appended to the extraction prompt as a labelled
-  Markdown section (linear document text is left unchanged — additive, not a
-  substitute) and returned on `ExtractionResult.tables`. When no tables are found or
+  from geometric reconstruction are returned on `ExtractionResult.tables` and may be
+  appended to the extraction prompt as a labelled Markdown section (linear document
+  text is left unchanged — additive, not a substitute). When no tables are found or
   `tableDetection` is `.off`, the prompt is byte-identical to the pre-feature shape.
   Chunked runs assign whole tables by page (never a half table); if page filtering
   would drop every table, the full set is attached to the first chunk. Docs:
@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Schema-gated table prompt injection under `.automatic`.** Always appending
+  detected tables to the prompt hurt header-field accuracy on types without
+  collections (measured −11.4 pp header accuracy on 76 invoices) while helping
+  line-item structure when the schema has arrays. `.automatic` still runs geometric
+  detection and always exposes grids on `result.tables`; the prompt section is
+  included only when the target `extractionSchema` contains a collection (array)
+  anywhere, including nested. Header-only types get a prompt byte-identical to
+  `.off`. No new enum case; callers who need grids without line items still use
+  `result.tables`.
 - **Table detection precision against real invoices.** `TableDetector` now splits
   multi-column regions on large vertical gaps (line items vs totals), bridges short
   single-column description lines under items, keeps only “spine” rows (numeric /

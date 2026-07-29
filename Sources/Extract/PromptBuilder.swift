@@ -74,7 +74,8 @@ enum PromptBuilder {
         )
 
         // Additive only: when empty, omit entirely so the prompt is byte-identical
-        // to pre-table builds (prose documents and `tableDetection: .off`).
+        // to pre-table builds (prose docs, `tableDetection: .off`, and header-only
+        // schemas under `.automatic` where `Extract.tablesForPrompt` returns []).
         if !tables.isEmpty {
             parts.append(tablesSection(tables))
         }

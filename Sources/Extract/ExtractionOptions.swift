@@ -25,9 +25,12 @@ public struct ExtractionOptions: Sendable, Equatable {
     public var temperature: Double?
     /// Geometric table reconstruction from positioned blocks (default ``TableDetectionMode/automatic``).
     ///
-    /// When automatic, detected tables are appended to the model prompt as Markdown and
-    /// returned on ``ExtractionResult/tables``. Set ``TableDetectionMode/off`` to skip
-    /// detection entirely (prompt stays identical to a no-table document).
+    /// Under ``TableDetectionMode/automatic``, detection still runs when positioned
+    /// blocks exist and detections are always returned on ``ExtractionResult/tables``.
+    /// Tables are appended to the model prompt only when the target type’s schema
+    /// contains a collection (array); header-only types get a prompt byte-identical
+    /// to ``TableDetectionMode/off``. Set ``TableDetectionMode/off`` to skip detection
+    /// entirely.
     public var tableDetection: TableDetectionMode
 
     public init(

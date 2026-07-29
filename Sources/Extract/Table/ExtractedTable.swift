@@ -132,9 +132,22 @@ public struct TableSourceBlock: Sendable, Equatable {
     }
 }
 
-/// Whether table reconstruction runs for an extraction.
+/// Whether table reconstruction runs for an extraction, and how detections feed the prompt.
+///
+/// Measured extraction accuracy: always appending detected tables to the model prompt
+/// hurts header-field accuracy on types without collections (e.g. invoice number, date,
+/// seller, total), while helping line-item structure when the target schema has arrays.
+///
+/// - ``automatic``: run geometric detection when positioned blocks exist; **append
+///   tables to the prompt only when the target schema contains a collection**; always
+///   expose detected tables on ``ExtractionResult/tables`` so callers can use the grids
+///   even for header-only types.
+/// - ``off``: skip detection entirely (`result.tables` is empty; no table section in the prompt).
+///
+/// There is no separate “always prompt” mode: callers who need grids without line items
+/// still have ``ExtractionResult/tables``.
 public enum TableDetectionMode: Sendable, Equatable {
-    /// Run geometric table detection when positioned blocks are available.
+    /// Detect tables when geometry exists; prompt injection is schema-gated (see enum docs).
     case automatic
     /// Skip table detection entirely.
     case off

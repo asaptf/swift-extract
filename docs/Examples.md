@@ -68,8 +68,10 @@ Nested line items usually need a stronger model than a bare total. Prefer
 ### Line items via reconstructed tables
 
 When the source has geometry (text-layer PDF or OCR), Extract reconstructs tables
-and both **shows them to the model as Markdown** (additive section on the prompt)
-and **returns them on the result**:
+and **returns them on the result**. Under `.automatic`, the pipe-table Markdown is
+also **appended to the model prompt when the target schema has a collection**
+(e.g. `lineItems: [LineItem]`); header-only types keep a prompt identical to `.off`,
+but `result.tables` is still populated:
 
 ```swift
 let result: ExtractionResult<Invoice> = try await Extract.detailed(
@@ -77,7 +79,7 @@ let result: ExtractionResult<Invoice> = try await Extract.detailed(
     using: session
 )
 
-// Model already saw the pipe table; you can also read the grid directly:
+// Invoice has line items → model saw the pipe table; you can also read the grid:
 for table in result.tables {
     print(table.markdown())
     for row in 0..<table.rowCount {
@@ -86,7 +88,7 @@ for table in result.tables {
     }
 }
 
-// Disable if you only want linear text (prompt matches a no-table document):
+// Disable if you only want linear text (skips detection entirely):
 var options = ExtractionOptions()
 options.tableDetection = .off
 let linearOnly: Invoice = try await Extract.from(.pdf(pdf), using: session, options: options)
