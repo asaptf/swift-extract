@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field-addressable `InvariantIssue`s. Violations are formatted like decode errors,
   retried on both the single-chunk and chunk-merge paths, and surface as
   `ExtractionError.validationFailed` after retries are exhausted. Money comparisons
-  use `Decimal.isApproximatelyEqual(to:tolerance:)` with an explicit default of
-  `0.01` so legitimate receipt rounding does not thrash the model. Docs:
+  use `Extract.isApproximatelyEqual(_:to:tolerance:)` with an explicit default of
+  `Extract.defaultMoneyTolerance` (`0.01`) so legitimate receipt rounding does not
+  thrash the model. Docs:
   [API](docs/API.md#cross-field-invariants),
   [Examples](docs/Examples.md#9-cross-field-invariants-repair-loop).
 - **Identity-document recognition as a first-class product path.**
@@ -41,18 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     no locale uses one mark for both roles.
   - Public `Extractable.decodeExtracted(from:)` now runs `validateInvariants()`
     so the documented "value implies invariants held" guarantee is true on every
-    decode path, not only the extraction loop.
+    decode path, not only the extraction loop. The extraction loop uses an
+    internal decode-only entry point and validates once, so each returned value
+    is checked exactly once on every path.
   - MRZ expiry century resolution keeps both bounds of the documented
     `[ref−50, ref+50]` window (raw `99…` under a 2026 reference → 1999, not 2099).
-  - MRZ cross-check validates date-only components so impossible days like
-    `2012-04-31` cannot agree via `ISO8601DateFormatter` rollover.
+  - MRZ cross-check / date parsing validates calendar components for bare
+    `yyyy-MM-dd` **and** full ISO timestamps so impossible days like
+    `2012-04-31` / `2012-04-31T00:00:00Z` cannot agree via
+    `ISO8601DateFormatter` rollover.
   - `MRZParser.findAndParse` prefers checksum-valid candidates over earlier
     MRZ-alphabet noise, and windows any run longer than the target format so a
     two-line TD3 after a noise line inside a three-line run is still found.
   - Grounding signals emit an explicit `reformatted` row for nil optional fields
-    (macro `encodeIfPresent` drops the key), keep numeric signs in skeleton
-    matching so opposite-sign amounts are not labelled `normalized`, and cache
-    source normalisation once per `compute` call (was O(N×M) per leaf).
+    (macro `encodeIfPresent` drops the key), keep numeric signs in both raw
+    substring and skeleton matching so opposite-sign amounts are not labelled
+    `verbatim`/`normalized`, and cache source normalisation once per `compute`
+    call (was O(N×M) per leaf).
+  - Money approximate-equality lives on `Extract` (`isApproximatelyEqual` +
+    `defaultMoneyTolerance`) rather than as a public `Decimal` extension, avoiding
+    Foundation-type surface collisions with helpers such as swift-numerics.
 - ReceiptScanner's Xcode project now bundles its sample fixtures. XcodeGen has no `resources:` target key, so that block in `project.yml` was silently ignored and every "Try a sample" tap failed with *"Fixture … is missing from the app bundle."* The fixtures are declared under `sources:` with `buildPhase: resources` instead.
 
 ### Documentation

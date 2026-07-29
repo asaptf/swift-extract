@@ -124,7 +124,14 @@ public enum Extract {
             )
             lastRaw = raw
             do {
-                let value = try T.decodeExtracted(from: raw, locale: options.locale)
+                // Decode without invariants, then validate once. Public
+                // `decodeExtracted` also validates; calling it here would run
+                // validators twice (non-idempotent validators can then fail the
+                // second pass and turn a good extraction into validationFailed).
+                let value = try T.decodeExtractedWithoutInvariants(
+                    from: raw,
+                    locale: options.locale
+                )
                 try value.validateInvariants()
                 let attempts = totalAttempts + attempt + 1
                 let signals = FieldGrounding.compute(
@@ -244,7 +251,11 @@ public enum Extract {
             )
             lastRaw = raw
             do {
-                let value = try T.decodeExtracted(from: raw, locale: options.locale)
+                // Decode without invariants, then validate once (see merge path).
+                let value = try T.decodeExtractedWithoutInvariants(
+                    from: raw,
+                    locale: options.locale
+                )
                 try value.validateInvariants()
                 let attempts = attempt + 1
                 let signals = FieldGrounding.compute(

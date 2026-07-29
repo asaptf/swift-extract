@@ -394,8 +394,12 @@ struct Receipt {
         let itemsSum = items.reduce(Decimal.zero) { $0 + $1.price }
         let expected = itemsSum + tax
         // Receipts legitimately round — never use bare == on money.
-        // Tolerance is always explicit (default: Decimal.defaultMoneyTolerance == 0.01).
-        if !total.isApproximatelyEqual(to: expected, tolerance: .defaultMoneyTolerance) {
+        // Tolerance is always explicit (default: Extract.defaultMoneyTolerance == 0.01).
+        if !Extract.isApproximatelyEqual(
+            total,
+            to: expected,
+            tolerance: Extract.defaultMoneyTolerance
+        ) {
             throw InvariantValidationError(
                 path: "total",
                 expected: "items sum + tax ≈ \(expected)",

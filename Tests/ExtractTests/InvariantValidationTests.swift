@@ -29,10 +29,15 @@ struct InvariantReceipt {
         let itemsSum = items.reduce(Decimal.zero) { $0 + $1.price }
         let expectedTotal = itemsSum + tax
         // Explicit tolerance: receipts round; never use bare == on money.
-        if !total.isApproximatelyEqual(to: expectedTotal, tolerance: .defaultMoneyTolerance) {
+        if !Extract.isApproximatelyEqual(
+            total,
+            to: expectedTotal,
+            tolerance: Extract.defaultMoneyTolerance
+        ) {
             throw InvariantValidationError(
                 path: "total",
-                expected: "items sum + tax ≈ \(expectedTotal) (tolerance \(Decimal.defaultMoneyTolerance))",
+                expected:
+                    "items sum + tax ≈ \(expectedTotal) (tolerance \(Extract.defaultMoneyTolerance))",
                 found: "\(total)"
             )
         }
@@ -47,25 +52,39 @@ struct MoneyToleranceTests {
     func acceptsRounding() {
         let printed = Decimal(string: "12.50")!
         let summed = Decimal(string: "12.499")!
-        #expect(printed.isApproximatelyEqual(to: summed, tolerance: .defaultMoneyTolerance))
-        #expect(printed.isApproximatelyEqual(to: Decimal(string: "12.50")!))
-        #expect(printed.isApproximatelyEqual(to: Decimal(string: "12.51")!))
+        #expect(
+            Extract.isApproximatelyEqual(
+                printed,
+                to: summed,
+                tolerance: Extract.defaultMoneyTolerance
+            )
+        )
+        #expect(Extract.isApproximatelyEqual(printed, to: Decimal(string: "12.50")!))
+        #expect(Extract.isApproximatelyEqual(printed, to: Decimal(string: "12.51")!))
     }
 
     @Test("rejects a genuinely wrong total")
     func rejectsWrong() {
         let printed = Decimal(string: "12.50")!
         let wrong = Decimal(string: "99.99")!
-        #expect(!printed.isApproximatelyEqual(to: wrong, tolerance: .defaultMoneyTolerance))
-        #expect(!printed.isApproximatelyEqual(to: Decimal(string: "12.52")!))
+        #expect(
+            !Extract.isApproximatelyEqual(
+                printed,
+                to: wrong,
+                tolerance: Extract.defaultMoneyTolerance
+            )
+        )
+        #expect(!Extract.isApproximatelyEqual(printed, to: Decimal(string: "12.52")!))
     }
 
     @Test("caller-chosen tolerance is honored")
     func customTolerance() {
         let a = Decimal(string: "10.00")!
         let b = Decimal(string: "10.05")!
-        #expect(!a.isApproximatelyEqual(to: b, tolerance: .defaultMoneyTolerance))
-        #expect(a.isApproximatelyEqual(to: b, tolerance: Decimal(string: "0.10")!))
+        #expect(
+            !Extract.isApproximatelyEqual(a, to: b, tolerance: Extract.defaultMoneyTolerance)
+        )
+        #expect(Extract.isApproximatelyEqual(a, to: b, tolerance: Decimal(string: "0.10")!))
     }
 }
 

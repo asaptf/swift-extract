@@ -92,13 +92,16 @@ public struct InvariantValidationError: Error, Sendable, LocalizedError, Equatab
 
 // MARK: - Money comparison
 
-extension Decimal {
+extension Extract {
     /// Default absolute tolerance for money-like amount comparisons (one cent for
-    /// two-decimal currencies). Callers may pass any other value to
-    /// ``isApproximatelyEqual(to:tolerance:)``.
+    /// two-decimal currencies). Pass any other value to
+    /// ``isApproximatelyEqual(_:to:tolerance:)``.
+    ///
+    /// Kept on ``Extract`` (not as a `Decimal` extension) so dependents do not
+    /// inherit a Foundation-type helper that collides with e.g. swift-numerics.
     public static let defaultMoneyTolerance = Decimal(sign: .plus, exponent: -2, significand: 1)
 
-    /// Compare amounts with an explicit absolute tolerance.
+    /// Compare money-like amounts with an explicit absolute tolerance.
     ///
     /// Receipts and invoices legitimately round: line items can sum to `12.499` against
     /// a printed `12.50`. A naïve `==` on ``Decimal`` therefore fails valid documents and
@@ -109,14 +112,16 @@ extension Decimal {
     /// (``defaultMoneyTolerance`` / `0.01`) is a sensible starting point, not hidden magic.
     ///
     /// - Parameters:
-    ///   - other: The amount to compare against.
+    ///   - value: The amount under test (e.g. printed total).
+    ///   - other: The amount to compare against (e.g. items + tax).
     ///   - tolerance: Maximum absolute difference still considered equal.
-    /// - Returns: `true` when `abs(self - other) <= tolerance`.
-    public func isApproximatelyEqual(
+    /// - Returns: `true` when `abs(value - other) <= tolerance`.
+    public static func isApproximatelyEqual(
+        _ value: Decimal,
         to other: Decimal,
-        tolerance: Decimal = .defaultMoneyTolerance
+        tolerance: Decimal = defaultMoneyTolerance
     ) -> Bool {
-        var difference = self - other
+        var difference = value - other
         if difference < 0 {
             difference = -difference
         }

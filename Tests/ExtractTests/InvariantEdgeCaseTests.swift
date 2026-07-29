@@ -71,7 +71,7 @@ struct MergeInvariantDoc {
 
     func validateInvariants() throws {
         let sum = parts.reduce(Decimal.zero, +)
-        if !total.isApproximatelyEqual(to: sum) {
+        if !Extract.isApproximatelyEqual(total, to: sum) {
             throw InvariantValidationError(
                 path: "total",
                 expected: "sum(parts) ≈ \(sum)",

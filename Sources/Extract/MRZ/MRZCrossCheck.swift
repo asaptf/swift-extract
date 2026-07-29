@@ -170,15 +170,15 @@ enum MRZCrossCheck {
 
     /// Parse ISO-8601 (date-only or full) and a few common human formats into a Date.
     ///
-    /// Impossible calendar days (e.g. `2012-04-31`) are rejected. Foundation's
-    /// `ISO8601DateFormatter` quietly rolls them over (→ May 1), which would
-    /// produce a false agreement against a real MRZ expiry — unacceptable when
-    /// agreement is sold as deterministic evidence. Shared with
-    /// ``LenientDecoding/parseDate(_:locale:)``, which uses the same strict
-    /// date-only path.
+    /// Impossible calendar days (e.g. `2012-04-31`, `2012-04-31T00:00:00Z`) are
+    /// rejected. Foundation's `ISO8601DateFormatter` quietly rolls them over
+    /// (→ May 1), which would produce a false agreement against a real MRZ
+    /// expiry — unacceptable when agreement is sold as deterministic evidence.
+    /// Shared with ``LenientDecoding/parseDate(_:locale:)``.
     static func parseCalendarDay(_ string: String) -> Date? {
-        // LenientDecoding already rejects impossible `yyyy-MM-dd` days before any
-        // rolling ISO formatter can invent a different calendar day.
+        // LenientDecoding rejects impossible `yyyy-MM-dd` days for bare dates
+        // and full ISO timestamps before any rolling ISO formatter can invent
+        // a different calendar day.
         return LenientDecoding.parseDate(string, locale: Locale(identifier: "en_US_POSIX"))
     }
 

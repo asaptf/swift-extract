@@ -29,6 +29,41 @@ private struct ReviewInvariantValue {
     }
 }
 
+/// Counts `validateInvariants` invocations so we can assert the extraction loop
+/// does not double-validate after `decodeExtracted` also started enforcing them.
+private final class ValidationInvocationCounter: @unchecked Sendable {
+    static let shared = ValidationInvocationCounter()
+    private let lock = NSLock()
+    private var _count = 0
+
+    func reset() {
+        lock.lock()
+        _count = 0
+        lock.unlock()
+    }
+
+    func increment() {
+        lock.lock()
+        _count += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _count
+    }
+}
+
+@Extractable
+private struct ReviewCountingInvariant {
+    let token: Int
+
+    func validateInvariants() throws {
+        ValidationInvocationCounter.shared.increment()
+    }
+}
+
 @Extractable
 private struct ReviewSignalValue {
     let note: String?
@@ -121,6 +156,30 @@ struct PreReleaseReviewRegressionTests {
         #expect(ok?.left == 3 && ok?.right == 3)
     }
 
+    // MARK: 5b — extraction validates invariants exactly once
+
+    @Test("finding 5b: extraction path validates invariants exactly once")
+    func extractionValidatesInvariantsExactlyOnce() async throws {
+        ValidationInvocationCounter.shared.reset()
+        let json = #"{"token":1}"#
+        let session = ExtractionSession.mock(MockLanguageModel(responses: [json]))
+        let result: ExtractionResult<ReviewCountingInvariant> = try await Extract.detailed(
+            from: .text("token 1"),
+            using: session,
+            options: ExtractionOptions(maxRetries: 0)
+        )
+        #expect(result.value.token == 1)
+        #expect(
+            ValidationInvocationCounter.shared.count == 1,
+            "expected exactly one validateInvariants call, got \(ValidationInvocationCounter.shared.count)"
+        )
+
+        // Public decodeExtracted still enforces invariants for direct callers.
+        ValidationInvocationCounter.shared.reset()
+        _ = try ReviewCountingInvariant.decodeExtracted(from: json)
+        #expect(ValidationInvocationCounter.shared.count == 1)
+    }
+
     // MARK: 6 — Expiry century stays inside [ref−50, ref+50]
 
     @Test("finding 6: expiry 991231 with 2026 ref is 1999, not 2099")
@@ -171,9 +230,24 @@ struct PreReleaseReviewRegressionTests {
             )
         )
 
-        let result = mrz.crossCheck(against: [.expiryDate: "2012-04-31"])
-        let comparison = result.comparisons.first { $0.field == .expiryDate }
-        #expect(comparison?.agrees == false, "impossible date must not agree via formatter rollover")
+        let dateOnly = mrz.crossCheck(against: [.expiryDate: "2012-04-31"])
+        let dateOnlyComparison = dateOnly.comparisons.first { $0.field == .expiryDate }
+        #expect(
+            dateOnlyComparison?.agrees == false,
+            "impossible date-only must not agree via formatter rollover"
+        )
+
+        // Full ISO timestamps also roll via ISO8601DateFormatter; must reject too.
+        let timestamp = mrz.crossCheck(against: [.expiryDate: "2012-04-31T00:00:00Z"])
+        let timestampComparison = timestamp.comparisons.first { $0.field == .expiryDate }
+        #expect(
+            timestampComparison?.agrees == false,
+            "impossible full timestamp must not agree via formatter rollover"
+        )
+        #expect(LenientDecoding.parseDate("2012-04-31T00:00:00Z", locale: nil) == nil)
+        #expect(LenientDecoding.parseDate("2012-04-31", locale: nil) == nil)
+        // Valid full timestamps still parse.
+        #expect(LenientDecoding.parseDate("2012-05-01T00:00:00Z", locale: nil) != nil)
     }
 
     // MARK: 8 — Prefer checksum-valid MRZ candidate
@@ -241,17 +315,35 @@ struct PreReleaseReviewRegressionTests {
 
     @Test("finding 11: opposite-sign number is reformatted, not normalized")
     func numericSignParticipatesInMatch() {
-        let value = ReviewSignalValue(note: nil, total: Decimal(string: "-12.5")!)
-        let signals = FieldGrounding.compute(
-            value: value,
+        // Negative extracted vs positive source (skeleton path).
+        let negativeExtracted = ReviewSignalValue(note: nil, total: Decimal(string: "-12.5")!)
+        let negativeSignals = FieldGrounding.compute(
+            value: negativeExtracted,
             sourceText: "Total: 12.50",
             attempts: 1,
             chunksUsed: 1
         )
-        let total = signals.fields.first { $0.path == "total" }
-        #expect(total?.grounding == .reformatted, "got \(String(describing: total?.grounding))")
+        let negativeTotal = negativeSignals.fields.first { $0.path == "total" }
+        #expect(
+            negativeTotal?.grounding == .reformatted,
+            "negative vs positive source: got \(String(describing: negativeTotal?.grounding))"
+        )
 
-        // Matching sign still normalizes.
+        // Positive extracted vs negative source (raw substring used to hit inside `-12.50`).
+        let positiveExtracted = ReviewSignalValue(note: nil, total: Decimal(string: "12.5")!)
+        let positiveSignals = FieldGrounding.compute(
+            value: positiveExtracted,
+            sourceText: "Refund: -12.50",
+            attempts: 1,
+            chunksUsed: 1
+        )
+        let positiveTotal = positiveSignals.fields.first { $0.path == "total" }
+        #expect(
+            positiveTotal?.grounding == .reformatted,
+            "positive vs negative source: got \(String(describing: positiveTotal?.grounding))"
+        )
+
+        // Matching sign still normalizes / verbatim.
         let refund = ReviewSignalValue(note: nil, total: Decimal(string: "-12.5")!)
         let refundSignals = FieldGrounding.compute(
             value: refund,
@@ -263,6 +355,19 @@ struct PreReleaseReviewRegressionTests {
         #expect(
             refundTotal?.grounding == .normalized || refundTotal?.grounding == .verbatim,
             "got \(String(describing: refundTotal?.grounding))"
+        )
+
+        let charged = ReviewSignalValue(note: nil, total: Decimal(string: "12.5")!)
+        let chargedSignals = FieldGrounding.compute(
+            value: charged,
+            sourceText: "Total: 12.50",
+            attempts: 1,
+            chunksUsed: 1
+        )
+        let chargedTotal = chargedSignals.fields.first { $0.path == "total" }
+        #expect(
+            chargedTotal?.grounding == .normalized || chargedTotal?.grounding == .verbatim,
+            "got \(String(describing: chargedTotal?.grounding))"
         )
     }
 

@@ -36,24 +36,32 @@ enum LenientDecoding {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return nil }
 
-        // Strict `yyyy-MM-dd` first so `ISO8601DateFormatter` cannot roll an
-        // impossible day (e.g. `2012-04-31` → May 1) into a plausible date.
-        if let strict = parseStrictGregorianDateOnly(trimmed) {
-            return strict
-        }
-        // Bare `yyyy-MM-dd` that failed the strict check is an impossible day —
-        // do not fall through to the rolling ISO formatter.
-        if isISODateOnlyShape(trimmed) {
-            return nil
+        // Any string that opens with `yyyy-MM-dd` (bare date *or* full ISO
+        // timestamp) must survive a strict calendar-day check first.
+        // `ISO8601DateFormatter` quietly rolls impossible days
+        // (`2012-04-31T00:00:00Z` → May 1), which would let a fabricated
+        // expiry agree with a real MRZ date.
+        if let datePrefix = leadingISODatePrefix(trimmed) {
+            guard let strictDay = parseStrictGregorianDateOnly(datePrefix) else {
+                return nil
+            }
+            if isISODateOnlyShape(trimmed) {
+                return strictDay
+            }
+            // Time portion present — fall through to full parsers; day is valid.
         }
 
         let isoFractional = ISO8601DateFormatter()
         isoFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = isoFractional.date(from: trimmed) { return date }
+        if let date = isoFractional.date(from: trimmed) {
+            return dateMatchingClaimedISODay(date, raw: trimmed)
+        }
 
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]
-        if let date = iso.date(from: trimmed) { return date }
+        if let date = iso.date(from: trimmed) {
+            return dateMatchingClaimedISODay(date, raw: trimmed)
+        }
 
         var formats = [
             "yyyy/MM/dd",
@@ -83,6 +91,36 @@ enum LenientDecoding {
             }
         }
         return nil
+    }
+
+    /// Leading `yyyy-MM-dd` when the string is a bare date or an ISO-like
+    /// timestamp (`T` / space separator after the day).
+    private static func leadingISODatePrefix(_ string: String) -> String? {
+        guard string.count >= 10 else { return nil }
+        let prefix = String(string.prefix(10))
+        guard isISODateOnlyShape(prefix) else { return nil }
+        if string.count == 10 { return prefix }
+        let separator = string[string.index(string.startIndex, offsetBy: 10)]
+        if separator == "T" || separator == "t" || separator == " " {
+            return prefix
+        }
+        return nil
+    }
+
+    /// Reject an ISO parse that rolled the claimed calendar day (defense in depth).
+    private static func dateMatchingClaimedISODay(_ date: Date, raw: String) -> Date? {
+        guard let prefix = leadingISODatePrefix(raw) else { return date }
+        let parts = prefix.split(separator: "-")
+        guard let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
+            return nil
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let back = calendar.dateComponents([.year, .month, .day], from: date)
+        guard back.year == year, back.month == month, back.day == day else {
+            return nil
+        }
+        return date
     }
 
     /// `yyyy-MM-dd` shape check (exactly three numeric groups).
@@ -607,9 +645,25 @@ extension Extractable {
     ///
     /// A successfully returned value has already passed any type-declared
     /// cross-field invariants — the same guarantee as both extraction paths.
-    /// Callers that need the raw decode without invariant checks should use
-    /// `JSONDecoder` directly rather than this helper.
+    ///
+    /// The extraction loop uses ``decodeExtractedWithoutInvariants(from:locale:)``
+    /// and then validates once, so a non-idempotent or expensive validator is
+    /// not invoked twice on the same value.
     public static func decodeExtracted(from jsonText: String, locale: Locale? = nil) throws -> Self {
+        let value = try decodeExtractedWithoutInvariants(from: jsonText, locale: locale)
+        try value.validateInvariants()
+        return value
+    }
+
+    /// Lenient decode only — does **not** run ``validateInvariants()``.
+    ///
+    /// Used by the extraction loop so invariants are checked exactly once
+    /// (and can still trigger retries). Direct callers should prefer
+    /// ``decodeExtracted(from:locale:)``, which enforces invariants.
+    static func decodeExtractedWithoutInvariants(
+        from jsonText: String,
+        locale: Locale? = nil
+    ) throws -> Self {
         let cleaned = JSONFenceStripper.strip(jsonText, expectedRoot: extractionSchema.type)
         guard let data = cleaned.data(using: .utf8) else {
             throw DecodingError.dataCorrupted(
@@ -617,9 +671,7 @@ extension Extractable {
             )
         }
         let decoder = LenientDecoding.makeDecoder(locale: locale)
-        let value = try decoder.decode(Self.self, from: data)
-        try value.validateInvariants()
-        return value
+        return try decoder.decode(Self.self, from: data)
     }
 }
 

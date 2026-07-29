@@ -307,14 +307,21 @@ enum FieldGrounding {
     private static func numberGrounding(json: Any, source: SourceIndex) -> Grounding {
         let candidates = numberSearchCandidates(json)
         for candidate in candidates where !candidate.isEmpty {
-            if source.raw.contains(candidate) {
+            // Sign-aware: positive `12.5` must not ground as `.verbatim` against
+            // source `Refund: -12.50` just because the digits sit inside the
+            // signed occurrence.
+            if containsNumericCandidate(source.raw, candidate: candidate) {
                 return .verbatim
             }
         }
         // Currency / grouping variants: compare digit+separator runs (signs kept).
+        // Same sign boundary rule as raw: unsigned skeleton `12.5` must not hit
+        // inside source skeleton `-12.50`.
         for candidate in candidates {
             let skeleton = numericSkeleton(candidate, stats: source.stats)
-            if !skeleton.isEmpty, source.numericSkeleton.contains(skeleton) {
+            if !skeleton.isEmpty,
+                containsNumericCandidate(source.numericSkeleton, candidate: skeleton)
+            {
                 return .normalized
             }
         }
@@ -322,6 +329,38 @@ enum FieldGrounding {
         // spuriously across free text if we flagged missing digits as absent, so a
         // fabricated number is intentionally never reported as absent. See Grounding docs.
         return .reformatted
+    }
+
+    /// Substring match that respects numeric sign boundaries.
+    ///
+    /// An unsigned candidate must not match when the occurrence is immediately
+    /// preceded by a minus (Unicode-aware). A signed candidate already includes
+    /// its leading minus in the search string, so a hit is polarity-correct.
+    private static func containsNumericCandidate(_ source: String, candidate: String) -> Bool {
+        guard !candidate.isEmpty else { return false }
+        let candidateSigned = candidateHasLeadingMinus(candidate)
+        var searchStart = source.startIndex
+        while searchStart < source.endIndex,
+            let range = source.range(of: candidate, range: searchStart..<source.endIndex)
+        {
+            if !candidateSigned, range.lowerBound > source.startIndex {
+                let before = source[source.index(before: range.lowerBound)]
+                if before.unicodeScalars.count == 1,
+                    let scalar = before.unicodeScalars.first,
+                    isMinusScalar(scalar)
+                {
+                    searchStart = range.upperBound
+                    continue
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    private static func candidateHasLeadingMinus(_ candidate: String) -> Bool {
+        guard let first = candidate.unicodeScalars.first else { return false }
+        return isMinusScalar(first)
     }
 
     private static func numberSearchCandidates(_ json: Any) -> [String] {

@@ -90,7 +90,7 @@ struct Receipt {
 
     func validateInvariants() throws {
         let sum = items.reduce(0) { $0 + $1.price } + tax
-        if !total.isApproximatelyEqual(to: sum) {
+        if !Extract.isApproximatelyEqual(total, to: sum) {
             throw InvariantValidationError(
                 path: "total",
                 expected: "items + tax ≈ \(sum)",
@@ -105,7 +105,7 @@ struct Receipt {
 | --- | --- |
 | `InvariantIssue` | One field-addressable complaint (`path`, `expected`, `found`) |
 | `InvariantValidationError` | Thrown from `validateInvariants()`; holds one or more issues |
-| `Decimal.isApproximatelyEqual(to:tolerance:)` | Money comparison with **explicit** tolerance (default `0.01`) |
+| `Extract.isApproximatelyEqual(_:to:tolerance:)` | Money comparison with **explicit** tolerance (default `Extract.defaultMoneyTolerance` / `0.01`) |
 
 **Retry semantics:** a thrown invariant error is treated exactly like a decode failure:
 
