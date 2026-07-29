@@ -80,27 +80,184 @@ enum LenientDecoding {
     }
 
     static func parseDecimal(_ string: String, locale: Locale? = nil) -> Decimal? {
-        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return nil }
 
-        let parenthesizedNegative = trimmed.hasPrefix("(") && trimmed.hasSuffix(")")
+        // Map unambiguous Unicode minus signs to ASCII so "−12" is negative, not +12.
+        for minus in ["\u{2212}", "\u{FE63}", "\u{FF0D}"] {
+            trimmed = trimmed.replacingOccurrences(of: minus, with: "-")
+        }
+
+        // Parenthesised accounting negatives: strip one outer pair, force sign later.
+        // Nested / unbalanced parentheses are rejected (not silently turned into a value).
+        let parenthesizedNegative =
+            trimmed.hasPrefix("(") && trimmed.hasSuffix(")") && trimmed.count >= 2
+        if parenthesizedNegative {
+            let inner = String(trimmed.dropFirst().dropLast())
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if inner.isEmpty || inner.contains("(") || inner.contains(")") {
+                return nil
+            }
+            trimmed = inner
+        }
+
+        // Keep only ASCII digits and structural punctuation. Currency, letters,
+        // emoji, control chars, and non-ASCII digits are dropped. Non-ASCII digit
+        // scripts therefore cannot silently become a value (no ASCII digit left).
+        //
+        // `e` / `E` immediately after a digit is scientific notation — never strip the
+        // letter and concatenate surrounding digits (`"1e10"` must not become `110`).
+        // A leading `E` in currency codes like `EUR 12` is not an exponent marker.
         let allowedPunctuation = CharacterSet(charactersIn: ".,+-")
         var cleaned = ""
+        var sawScientificExponent = false
+        var lastKeptWasDigit = false
         for scalar in trimmed.unicodeScalars {
-            if (48...57).contains(scalar.value) || allowedPunctuation.contains(scalar) {
+            if (48...57).contains(scalar.value) {
                 cleaned.unicodeScalars.append(scalar)
+                lastKeptWasDigit = true
+            } else if allowedPunctuation.contains(scalar) {
+                cleaned.unicodeScalars.append(scalar)
+                lastKeptWasDigit = false
+            } else if (scalar == "e" || scalar == "E") && lastKeptWasDigit {
+                sawScientificExponent = true
+                lastKeptWasDigit = false
+            } else {
+                lastKeptWasDigit = false
             }
         }
         guard cleaned.unicodeScalars.contains(where: { (48...57).contains($0.value) }) else {
             return nil
         }
 
+        // Model output sometimes emits scientific notation as a *string*. Accept only
+        // a strict form; never strip `e` and concatenate surrounding digits.
+        if sawScientificExponent {
+            return parseScientificDecimal(trimmed, forceNegative: parenthesizedNegative)
+        }
+
+        // Lone `e` / `E` (no digit before it) with no other letters — e.g. `"e10"` —
+        // must not become `10` via letter-stripping. Currency words like `"EUR 12"`
+        // contain non-exponent letters and still use the strip path below.
+        let asciiLetters = trimmed.filter { $0.isASCII && $0.isLetter }
+        if !asciiLetters.isEmpty,
+            asciiLetters.allSatisfy({ $0 == "e" || $0 == "E" })
+        {
+            return parseScientificDecimal(trimmed, forceNegative: parenthesizedNegative)
+        }
+
         let normalized = normalizeSeparators(in: cleaned, locale: locale)
-        let signed =
-            parenthesizedNegative && !normalized.hasPrefix("-")
-            ? "-\(normalized)"
-            : normalized
+        guard let signed = validatedDecimalLiteral(normalized, forceNegative: parenthesizedNegative)
+        else {
+            return nil
+        }
+        // `Decimal(string:)` is itself lenient (trailing junk, multi-dot truncation).
+        // We only call it after structural validation so those paths are unreachable.
         return Decimal(string: signed, locale: Locale(identifier: "en_US_POSIX"))
+    }
+
+    /// Strict scientific-notation path for strings like `"1.5e3"` / `"1E-2"`.
+    private static func parseScientificDecimal(
+        _ raw: String,
+        forceNegative: Bool
+    ) -> Decimal? {
+        // Keep digits, sign, dot, and a single exponent letter — drop currency etc.
+        var kept = ""
+        for scalar in raw.unicodeScalars {
+            if (48...57).contains(scalar.value) {
+                kept.unicodeScalars.append(scalar)
+            } else if scalar == "." || scalar == "+" || scalar == "-" || scalar == "e" || scalar == "E" {
+                kept.unicodeScalars.append(scalar)
+            }
+        }
+        // Exactly one exponent marker.
+        let exponentMarkers = kept.filter { $0 == "e" || $0 == "E" }
+        guard exponentMarkers.count == 1,
+            let expIndex = kept.firstIndex(where: { $0 == "e" || $0 == "E" })
+        else {
+            return nil
+        }
+        let mantissa = String(kept[..<expIndex])
+        let exponent = String(kept[kept.index(after: expIndex)...])
+        guard let mantLiteral = validatedDecimalLiteral(mantissa, forceNegative: false),
+            let expLiteral = validatedDecimalLiteral(exponent, forceNegative: false),
+            // Exponent must be an integer (no fractional part).
+            !expLiteral.contains("."),
+            let expInt = Int(expLiteral)
+        else {
+            return nil
+        }
+        guard var value = Decimal(string: mantLiteral, locale: Locale(identifier: "en_US_POSIX"))
+        else {
+            return nil
+        }
+        if expInt > 0 {
+            for _ in 0..<expInt {
+                value *= 10
+            }
+        } else if expInt < 0 {
+            for _ in 0..<(-expInt) {
+                value /= 10
+            }
+        }
+        if forceNegative {
+            value = -value
+        }
+        return value
+    }
+
+    /// Accept only a single optional leading sign and a mantissa of digits with at most
+    /// one decimal point. Rejects multi-sign garbage (`--12`, `+-12`), trailing signs
+    /// (`12-`), and multi-dot forms that Foundation would silently truncate.
+    private static func validatedDecimalLiteral(
+        _ value: String,
+        forceNegative: Bool
+    ) -> String? {
+        var index = value.startIndex
+        var sawSign = false
+        var negative = false
+        while index < value.endIndex {
+            let character = value[index]
+            if character == "+" {
+                if sawSign { return nil }
+                sawSign = true
+                index = value.index(after: index)
+            } else if character == "-" {
+                if sawSign { return nil }
+                sawSign = true
+                negative = true
+                index = value.index(after: index)
+            } else {
+                break
+            }
+        }
+
+        let body = value[index...]
+        guard !body.isEmpty else { return nil }
+        // No additional signs anywhere in the mantissa.
+        if body.contains(where: { $0 == "+" || $0 == "-" }) { return nil }
+
+        var sawDigit = false
+        var sawDot = false
+        for character in body {
+            if character.isNumber && character.isASCII {
+                sawDigit = true
+            } else if character == "." {
+                if sawDot { return nil }
+                sawDot = true
+            } else {
+                return nil
+            }
+        }
+        guard sawDigit else { return nil }
+
+        let isNegative = forceNegative || negative
+        // Avoid producing "--…" if both parenthesised and an inner minus were present:
+        // absolute value with a single leading sign.
+        if isNegative {
+            return "-\(body)"
+        }
+        return String(body)
     }
 
     static func date(fromUnixTimestamp interval: Double) -> Date {
@@ -146,16 +303,27 @@ enum LenientDecoding {
             return value.replacingOccurrences(of: separatorString, with: ".")
         }
         if locale?.groupingSeparator == separatorString {
-            return value.replacingOccurrences(of: separatorString, with: "")
+            // Locale says this mark is grouping, never decimal:
+            // pure grouped integers (`1.234.567`) and a single mark (`12,50` under
+            // en_US → `1250`) strip cleanly. Multi-separator forms that are not
+            // valid groups fall through (may still be `1.234.56` style).
+            if looksLikeGroupedNumber(value, separator: separator) || count == 1 {
+                return value.replacingOccurrences(of: separatorString, with: "")
+            }
         }
         if count > 1 {
             if looksLikeGroupedNumber(value, separator: separator) {
                 return value.replacingOccurrences(of: separatorString, with: "")
             }
-            guard let last = value.lastIndex(of: separator) else { return value }
-            let whole = value[..<last].filter { $0 != separator }
-            let fraction = value[value.index(after: last)...]
-            return "\(whole).\(fraction)"
+            // European-style `1.234.56` (last group is a 1–2 digit fraction; earlier
+            // groups are thousands). Reject ambiguous multi-separator junk (`1.2.3`).
+            if looksLikeGroupedNumberWithDecimalFraction(value, separator: separator) {
+                guard let last = value.lastIndex(of: separator) else { return value }
+                let whole = value[..<last].filter { $0 != separator }
+                let fraction = value[value.index(after: last)...]
+                return "\(whole).\(fraction)"
+            }
+            return value
         }
 
         // Without a locale, keep the JSON/POSIX convention for dots. A lone
@@ -176,11 +344,46 @@ enum LenientDecoding {
     private static func looksLikeGroupedNumber(_ value: String, separator: Character) -> Bool {
         let groups = value.split(separator: separator, omittingEmptySubsequences: false)
         guard groups.count > 1 else { return false }
-        let first = groups[0].filter(\.isNumber)
-        guard (1...3).contains(first.count) else { return false }
+        guard isSignedOrPlainDigitGroup(groups[0], maxDigits: 3) else { return false }
         return groups.dropFirst().allSatisfy { group in
             group.count == 3 && group.allSatisfy(\.isNumber)
         }
+    }
+
+    /// Thousands groups plus a short final fractional group, e.g. `1.234.56`.
+    private static func looksLikeGroupedNumberWithDecimalFraction(
+        _ value: String,
+        separator: Character
+    ) -> Bool {
+        let groups = value.split(separator: separator, omittingEmptySubsequences: false)
+        guard groups.count >= 2 else { return false }
+        let fraction = groups[groups.count - 1]
+        guard (1...2).contains(fraction.count), fraction.allSatisfy(\.isNumber) else {
+            return false
+        }
+        let wholeGroups = groups.dropLast()
+        guard let first = wholeGroups.first,
+            isSignedOrPlainDigitGroup(first, maxDigits: 3)
+        else {
+            return false
+        }
+        return wholeGroups.dropFirst().allSatisfy { group in
+            group.count == 3 && group.allSatisfy(\.isNumber)
+        }
+    }
+
+    private static func isSignedOrPlainDigitGroup<S: StringProtocol>(
+        _ group: S,
+        maxDigits: Int
+    ) -> Bool {
+        var body = String(group)
+        if body.hasPrefix("+") || body.hasPrefix("-") {
+            body = String(body.dropFirst())
+        }
+        guard !body.isEmpty, body.count <= maxDigits, body.allSatisfy(\.isNumber) else {
+            return false
+        }
+        return true
     }
 }
 
@@ -339,6 +542,15 @@ enum JSONFenceStripper {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Upper bound on how many `{` / `[` start positions we will try. Prevents
+    /// O(n²) scans over adversarial megabyte floods of open braces.
+    private static let maxContainerStartAttempts = 64
+
+    /// Inputs larger than this only attempt extraction from the first opener so a
+    /// multi-megabyte preamble + one JSON object stays O(n), while a megabyte of
+    /// `{` characters cannot hang the process.
+    private static let hugeInputUTF8Threshold = 256_000
+
     private static func firstValidContainer(
         in text: String,
         expectedRoot: ExtractionSchema.SchemaType?
@@ -353,18 +565,26 @@ enum JSONFenceStripper {
             allowedOpeners = ["{", "["]
         }
 
+        let huge = text.utf8.count > hugeInputUTF8Threshold
         var searchStart = text.startIndex
+        var attempts = 0
         while searchStart < text.endIndex {
+            guard attempts < maxContainerStartAttempts else { return nil }
             guard
                 let start = text[searchStart...].firstIndex(where: { allowedOpeners.contains($0) })
             else {
                 return nil
             }
+            attempts += 1
             if let candidate = balancedContainer(in: text, from: start),
                 isValidJSON(candidate)
             {
                 return candidate
             }
+            // On huge inputs, only the first opener is tried: either the document
+            // embeds a complete value starting at the first `{`/`[`, or we give up
+            // without walking every subsequent brace (quadratic hang).
+            if huge { return nil }
             searchStart = text.index(after: start)
         }
         return nil
