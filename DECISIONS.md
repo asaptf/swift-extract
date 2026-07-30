@@ -176,3 +176,41 @@ ExtractionSchema.array → array node with items
 
 When that lands, `Extract` can short-circuit the JSON parse path for backends
 that return typed `Generable` values directly.
+
+## Measured negatives (things we tried and did not ship)
+
+Recording these so they are not retried blind.
+
+### Tuning `@Guide` wording to fix seller-vs-buyer confusion — no effect
+
+On German letter layouts the letterhead and the address window interleave in the
+extracted text, and the model can return the addressee where the seller was asked
+for. We A/B-tested three `@Guide` phrasings for the seller field — the existing one
+plus two candidates naming the seller as the issuing party / letterhead and
+explicitly excluding the recipient — over 76 Factur-X invoices with embedded EN16931
+ground truth, Qwen2.5 7B 4-bit via MLX, `temperature = 0`, everything else held.
+
+Result: **the returned seller string was identical across all three arms on every
+file.** Wording moved nothing. One candidate also cost 2.7 pp on `invoice_number`,
+so it would have been a net loss. Nothing shipped.
+
+Inspecting the three remaining seller misses individually mattered more than the
+aggregate:
+
+| Case | What actually happened |
+| --- | --- |
+| Both party names printed | Model returned the buyer — a genuine confusion |
+| Ground-truth seller absent from the page | Model returned the printed letterhead; the XML names a company the document never prints, so this was never a model error |
+| Hallucinated a supplier name | Returned a name not present in the source at all — the kind of thing `ExtractionResult.signals` flags as `absent` |
+
+So measured seller accuracy is ~97% rather than the 96% the raw score suggested, and
+the residue is not a prompt-wording problem.
+
+### General caution on this corpus
+
+Several synthetic ZUGFeRD/Factur-X samples disagree with their own visual layer: a
+1997 invoice prints `Währung DEM` while its XML says `EUR`; credit notes typed
+EN16931 code 381 carry positive amounts in the XML against negatives on the page.
+A document-reading library that follows the page is *correct* in those cases, so
+ground-truth mismatches cap measurable accuracy and should be reported separately
+rather than chased as defects.
