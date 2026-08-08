@@ -59,3 +59,40 @@ jobs:
             echo "error: swift-format is required for CI and is not available" >&2
             exit 1
           fi
+
+  # Hermetic harness: fixtures + mock only. Keeps measurement code from rotting.
+  # Does not download the private corpus or enable MLX.
+  eval-harness:
+    name: Eval harness (fixtures, mock)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build eval harness
+        working-directory: Tools/EvalHarness
+        run: swift build
+
+      - name: Survey + accuracy over fixtures (mock, anchors)
+        working-directory: Tools/EvalHarness
+        run: |
+          set -euo pipefail
+          swift run extract-eval --mode survey \
+            --repo-root ../.. \
+            --fixtures ../../fixtures \
+            --backend mock \
+            --output /tmp/eval-survey
+          swift run extract-eval --mode accuracy \
+            --repo-root ../.. \
+            --fixtures ../../fixtures \
+            --backend mock \
+            --output /tmp/eval-accuracy
+          test -f /tmp/eval-survey/survey.md
+          test -f /tmp/eval-survey/anchors.md
+          test -f /tmp/eval-accuracy/accuracy.md
+          test -f /tmp/eval-accuracy/anchors.md

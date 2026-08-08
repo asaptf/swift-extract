@@ -400,7 +400,7 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
 - [ ] Audio input (Speech framework)
 - [ ] Streaming partials for `@Extractable`
 - [ ] Per-field provenance (bounding boxes)
-- [ ] Evaluation harness
+- [x] Evaluation harness (`Tools/EvalHarness/` — survey, Factur-X accuracy, A/B, anchors)
 - [ ] First-class guided-generation bridge when AnyLanguageModel passes schemas through
 
 Architecture notes: [`DECISIONS.md`](DECISIONS.md).
@@ -416,6 +416,16 @@ swift run extract-cli fixtures/invoice.pdf --schema Examples/schemas/Invoice.swi
 swift run extract-cli fixtures/identity_document.txt --type IdentityDocument --mock
 swift format lint --configuration .swift-format --recursive Sources Tests
 ```
+
+**Evaluation harness** (separate package — not built by root `swift build`):
+
+```bash
+cd Tools/EvalHarness
+swift run extract-eval --mode survey --repo-root ../.. --fixtures ../../fixtures --backend mock
+swift run extract-eval --mode accuracy --repo-root ../.. --fixtures ../../fixtures --backend mock
+```
+
+See [`Tools/EvalHarness/README.md`](Tools/EvalHarness/README.md) for corpus setup, anchors, A/B, and MLX.
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
 

@@ -26,6 +26,7 @@ enum PDFAdapter {
         }
 
         var blocks: [ExtractedDocument.Block] = []
+        var usedOCRFallback = false
 
         for index in 0..<pageCount {
             guard let page = document.page(at: index) else { continue }
@@ -36,6 +37,7 @@ enum PDFAdapter {
                 let ocrBlocks = try OCRAdapter.ocrPDFPage(page, pageIndex: index)
                 if !ocrBlocks.isEmpty {
                     blocks.append(contentsOf: ocrBlocks)
+                    usedOCRFallback = true
                     continue
                 }
             }
@@ -59,7 +61,11 @@ enum PDFAdapter {
             }
         }
 
-        return ExtractedDocument(blocks: blocks, sourceDescription: sourceDescription)
+        return ExtractedDocument(
+            blocks: blocks,
+            sourceDescription: sourceDescription,
+            usedOCRFallback: usedOCRFallback
+        )
     }
 
     /// Extract per-word blocks with normalized top-left bounding boxes from a PDF text layer.

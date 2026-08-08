@@ -12,6 +12,8 @@ struct ExtractedDocument: Sendable, Equatable {
 
     var blocks: [Block]
     var sourceDescription: String
+    /// True when a PDF used Vision OCR because the text layer was too sparse.
+    var usedOCRFallback: Bool
 
     var isEmpty: Bool {
         fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -114,12 +116,13 @@ struct ExtractedDocument: Sendable, Equatable {
         return abs(a.midY - b.midY) <= tol
     }
 
-    init(blocks: [Block], sourceDescription: String) {
+    init(blocks: [Block], sourceDescription: String, usedOCRFallback: Bool = false) {
         self.blocks = blocks
         self.sourceDescription = sourceDescription
+        self.usedOCRFallback = usedOCRFallback
     }
 
-    init(text: String, sourceDescription: String = "text") {
+    init(text: String, sourceDescription: String = "text", usedOCRFallback: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             self.blocks = []
@@ -127,6 +130,7 @@ struct ExtractedDocument: Sendable, Equatable {
             self.blocks = [Block(text: trimmed, pageIndex: nil, boundingBox: nil)]
         }
         self.sourceDescription = sourceDescription
+        self.usedOCRFallback = usedOCRFallback
     }
 
     /// Split into character-budget chunks, preferring page boundaries.
@@ -166,7 +170,8 @@ struct ExtractedDocument: Sendable, Equatable {
             result.append(
                 ExtractedDocument(
                     blocks: currentBlocks,
-                    sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)"
+                    sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)",
+                    usedOCRFallback: usedOCRFallback
                 )
             )
             currentBlocks = []
@@ -186,7 +191,8 @@ struct ExtractedDocument: Sendable, Equatable {
                     result.append(
                         ExtractedDocument(
                             blocks: [Block(text: slice, pageIndex: item.page, boundingBox: nil)],
-                            sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)"
+                            sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)",
+                            usedOCRFallback: usedOCRFallback
                         )
                     )
                     start = end

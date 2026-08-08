@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Evaluation harness** (`Tools/EvalHarness/`). Separate SPM package (not linked
+  from the root package) that path-depends on `Extract` so library consumers never
+  pull measurement code into their graph. Modes: **survey** (ingest timing, char
+  counts, OCR fallback, table shape/density, line-item-shaped share), **accuracy**
+  (Factur-X / ZUGFeRD EN16931 CII ground truth via `mutool extract`, pairing guard,
+  overall + present-in-text field accuracy), **A/B compare** (named configs only),
+  and **anchors** (named documents with required properties — the defence against
+  aggregate metrics improving while tables fragment). Default backend is the
+  deterministic mock; MLX is opt-in via package trait and fails loudly rather than
+  falling back to mock. Corpus path from `--corpus` / `EXTRACT_EVAL_CORPUS` (never
+  committed); reports are metrics-only unless `--include-content`. Seed anchors
+  cover `fixtures/invoice.pdf` and `fixtures/receipt.png`; corpus anchors skip
+  cleanly when the corpus is absent. Public `Extract.inspect` + `DocumentInspection`
+  expose ingestion metrics and geometric tables without a model call (minimal
+  surface for the harness). CI runs survey + accuracy over `fixtures/` with mock
+  and anchors. See [`Tools/EvalHarness/README.md`](Tools/EvalHarness/README.md).
+
 ## [0.3.0] — 2026-07-30
 
 Structural tables: documents are no longer flattened before the model sees them.

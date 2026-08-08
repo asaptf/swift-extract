@@ -21,3 +21,7 @@ Package.resolved
 
 # Ad-hoc measurement output (corpus harnesses); never commit build artifacts
 scratchpad/
+
+# Eval harness run output
+Tools/EvalHarness/eval-out/
+eval-out/

@@ -1,0 +1,90 @@
+{
+  "anchors": [
+    {
+      "id": "fixtures-invoice-widget-support",
+      "path": "fixtures/invoice.pdf",
+      "requiresCorpus": false,
+      "note": "Synthetic Acme invoice — line-item table must keep Widget Pro / Support Plan together.",
+      "checks": [
+        {
+          "type": "tableContainsCells",
+          "values": ["Widget Pro", "Support Plan"]
+        },
+        {
+          "type": "minTableCount",
+          "count": 1
+        },
+        {
+          "type": "textContains",
+          "values": ["Acme Supplies Co."]
+        }
+      ]
+    },
+    {
+      "id": "fixtures-receipt-latte-croissant",
+      "path": "fixtures/receipt.png",
+      "requiresCorpus": false,
+      "note": "Café receipt OCR — item column must retain Latte / Croissant.",
+      "checks": [
+        {
+          "type": "tableContainsCells",
+          "values": ["Latte", "Croissant"]
+        },
+        {
+          "type": "textContains",
+          "values": ["Latte", "Croissant"]
+        }
+      ]
+    },
+    {
+      "id": "corpus-coolblue-line-items",
+      "path": "coolblue",
+      "requiresCorpus": true,
+      "note": "Coolblue invoice — line-item recall must survive region splits. Match any path containing 'coolblue'.",
+      "checks": [
+        {
+          "type": "minTableCount",
+          "count": 1
+        },
+        {
+          "type": "hasLineItemShapedTable"
+        }
+      ]
+    },
+    {
+      "id": "corpus-sammy-maystone",
+      "path": "sammy",
+      "requiresCorpus": true,
+      "note": "Sammy Maystone — description lines under items must not split the table away.",
+      "checks": [
+        {
+          "type": "minTableCount",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "corpus-invoice-table-detect-img1",
+      "path": "invoice_table_detect_img1",
+      "requiresCorpus": true,
+      "note": "Side-by-side hard case — XY-cut should yield multiple tables, not one sparse mega-grid.",
+      "checks": [
+        {
+          "type": "minTableCount",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "corpus-xy-cut-shatter-guard",
+      "path": "kostenrechnung",
+      "requiresCorpus": true,
+      "note": "One of the four files pure XY-cut shattered — must keep a wide line-item-shaped grid.",
+      "checks": [
+        {
+          "type": "hasLineItemShapedTable"
+        }
+      ]
+    }
+  ]
+}
