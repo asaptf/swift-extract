@@ -105,34 +105,6 @@ enum PromptBuilder {
         return parts.joined(separator: "\n\n")
     }
 
-    static func mergePrompt<T: Extractable>(
-        type: T.Type,
-        partialJSONObjects: [String],
-        locale: Locale?
-    ) -> String {
-        let schema = T.extractionSchema.renderJSONSchema(prettyPrinted: true)
-        var parts: [String] = []
-        parts.append("## Task\nMerge the following partial JSON extractions into one complete object.")
-        parts.append("## Target type\n\(String(describing: type))")
-        parts.append("## JSON Schema\n```json\n\(schema)\n```")
-        if let locale {
-            parts.append("## Locale hint\n\(locale.identifier)")
-        }
-        for (index, json) in partialJSONObjects.enumerated() {
-            parts.append("## Partial \(index + 1)\n```json\n\(json)\n```")
-        }
-        parts.append(
-            """
-            Rules:
-            - Prefer non-null values over null.
-            - Concatenate arrays and de-duplicate when clearly identical.
-            - Resolve conflicts by choosing the more complete / higher-confidence value.
-            - Respond with a single JSON object only.
-            """
-        )
-        return parts.joined(separator: "\n\n")
-    }
-
     struct RepairContext: Sendable {
         var previousOutput: String
         var errorDescription: String

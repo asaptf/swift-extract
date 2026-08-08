@@ -2,7 +2,7 @@ import Foundation
 
 /// Strategy for documents that may exceed the model context window.
 public enum ChunkingStrategy: Sendable, Equatable {
-    /// Split large documents into chunks, extract each, then merge.
+    /// Split large documents into chunks, extract each, then merge deterministically.
     case automatic
     /// Never chunk; send the full document (may fail on huge inputs).
     case none

@@ -128,17 +128,32 @@ public struct FieldSignal: Sendable, Equatable {
 /// lists **string** leaves. Fabricated numbers and unmatched dates are reported as
 /// ``Grounding/reformatted``, not ``absent`` — see ``Grounding``.
 public struct ExtractionSignals: Sendable, Equatable {
-    /// Total generation attempts used for this result (including repairs / merge).
+    /// Total model generation attempts used for this result (partials + repairs).
+    /// Deterministic chunk merge does not count as an attempt.
     public let attempts: Int
     /// Number of document chunks that contributed to the result.
     public let chunksUsed: Int
     /// Per-leaf grounding facts, in schema / encode walk order.
     public let fields: [FieldSignal]
+    /// Scalar disagreements between chunk partials that were **equally grounded**.
+    ///
+    /// Empty on single-chunk runs. When candidates differ in grounding rank (verbatim /
+    /// normalized / ungrounded against the full document), the better-grounded value
+    /// wins without a conflict row. Equal ranks keep the first occurrence and append a
+    /// ``MergeConflict`` (path + competing compact JSON values; no confidence score).
+    /// Inspect these rather than treating the winner as authoritative.
+    public let mergeConflicts: [MergeConflict]
 
-    public init(attempts: Int, chunksUsed: Int, fields: [FieldSignal]) {
+    public init(
+        attempts: Int,
+        chunksUsed: Int,
+        fields: [FieldSignal],
+        mergeConflicts: [MergeConflict] = []
+    ) {
         self.attempts = attempts
         self.chunksUsed = chunksUsed
         self.fields = fields
+        self.mergeConflicts = mergeConflicts
     }
 
     /// Paths whose values were not found in the source text.
@@ -920,5 +935,142 @@ enum FieldGrounding {
             formatter.timeZone = TimeZone(secondsFromGMT: 0)
             try container.encode(formatter.string(from: date))
         }
+    }
+
+    // MARK: - Merge arbitration (package)
+
+    /// How well a scalar JSON value is grounded for chunk-merge winner selection.
+    ///
+    /// Higher wins. Equal ranks fall back to first-occurrence (deterministic) and
+    /// record a ``MergeConflict``. This is **not** the public ``Grounding`` signal
+    /// enum: merge only needs a total order, and short numerics are demoted (see
+    /// ``isDistinctiveNumericCandidate(_:)``).
+    enum MergeRank: Int, Sendable, Comparable {
+        /// No usable source match (or weak short-numeric match).
+        case ungrounded = 0
+        /// Found after normalisation / numeric skeleton.
+        case normalized = 1
+        /// Exact substring / sign-aware numeric hit in the chunk text.
+        case verbatim = 2
+
+        static func < (lhs: MergeRank, rhs: MergeRank) -> Bool {
+            lhs.rawValue < rhs.rawValue
+        }
+    }
+
+    /// Rank a scalar JSON value against a chunk (or document) text for merge arbitration.
+    ///
+    /// Objects and arrays return ``MergeRank/ungrounded`` (they are merged structurally,
+    /// not ranked). Bools and nulls are not text-groundable → ungrounded.
+    static func mergeRank(forJSONValue value: Any, in sourceText: String) -> MergeRank {
+        if value is NSNull { return .ungrounded }
+        if let string = value as? String {
+            return stringMergeRank(string, in: sourceText)
+        }
+        if let number = value as? NSNumber {
+            // Bool bridges as NSNumber; not text-groundable.
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .ungrounded }
+            return numberMergeRank(number, in: sourceText)
+        }
+        return .ungrounded
+    }
+
+    /// Whether an array entry should survive merge.
+    ///
+    /// Keep when any non-empty string leaf is supported by the full document:
+    /// - **verbatim** / **normalized** containment (same as scalar merge rank), or
+    /// - **token coverage**: at least half of the significant tokens (length ≥ 3 after
+    ///   the usual search normalisation) appear in the normalised source.
+    ///
+    /// Token coverage is deliberately lenient so a slightly rephrased or re-spaced
+    /// line description is not dropped, while pure hallucinations (tokens nowhere in
+    /// the source) still fail. Entries with no non-empty string leaves (pure numbers /
+    /// bools) are **kept** — numeric-only filtering is too weak for short quantities.
+    /// Tax-table debris that literally appears in the source can still survive; there
+    /// is no line-item-context classifier.
+    static func isArrayEntryTextGrounded(_ entry: Any, in sourceText: String) -> Bool {
+        let strings = collectNonEmptyStringLeaves(entry)
+        if strings.isEmpty { return true }
+        let normalizedSource = normalizeForSearch(sourceText)
+        return strings.contains { string in
+            if stringMergeRank(string, in: sourceText) > .ungrounded { return true }
+            return tokenCoverageGrounded(string, normalizedSource: normalizedSource)
+        }
+    }
+
+    /// Significant-token overlap against an already-normalised source.
+    private static func tokenCoverageGrounded(_ value: String, normalizedSource: String) -> Bool {
+        let normalizedValue = normalizeForSearch(value)
+        guard !normalizedValue.isEmpty, !normalizedSource.isEmpty else { return false }
+        let tokens = normalizedValue.split(separator: " ").map(String.init).filter { $0.count >= 3 }
+        // No significant tokens (e.g. "S ( )" → "s"): require a real substring rank instead.
+        guard !tokens.isEmpty else { return false }
+        let hits = tokens.filter { normalizedSource.contains($0) }.count
+        return hits * 2 >= tokens.count  // ≥ 50%
+    }
+
+    /// Short bare integers match almost any document. For **merge arbitration only**,
+    /// a numeric candidate counts as grounded evidence only when it is distinctive:
+    ///
+    /// - at least **3 digit characters**, or
+    /// - contains a decimal separator (`.` / `,`) and at least one digit
+    ///
+    /// Examples: `2` / `19` → not distinctive; `119` / `12.5` / `2,50` → distinctive.
+    /// Public per-leaf ``Grounding`` signals are unchanged (still never `absent` for numbers).
+    static func isDistinctiveNumericCandidate(_ candidate: String) -> Bool {
+        let digits = candidate.filter(\.isNumber)
+        guard !digits.isEmpty else { return false }
+        if digits.count >= 3 { return true }
+        if candidate.contains(".") || candidate.contains(",") { return true }
+        return false
+    }
+
+    private static func stringMergeRank(_ value: String, in sourceText: String) -> MergeRank {
+        if value.isEmpty { return .ungrounded }
+        if sourceText.contains(value) { return .verbatim }
+        let normalizedValue = normalizeForSearch(value)
+        if !normalizedValue.isEmpty {
+            let normalizedSource = normalizeForSearch(sourceText)
+            if normalizedSource.contains(normalizedValue) { return .normalized }
+        }
+        return .ungrounded
+    }
+
+    private static func numberMergeRank(_ number: NSNumber, in sourceText: String) -> MergeRank {
+        let candidates = numberSearchCandidates(number).filter(isDistinctiveNumericCandidate)
+        guard !candidates.isEmpty else { return .ungrounded }
+
+        for candidate in candidates where !candidate.isEmpty {
+            if containsNumericCandidate(sourceText, candidate: candidate) {
+                return .verbatim
+            }
+        }
+        let skeletonSource = numericSkeleton(sourceText)
+        for candidate in candidates {
+            let skeleton = numericSkeleton(candidate)
+            if !skeleton.isEmpty,
+                isDistinctiveNumericCandidate(skeleton),
+                containsNumericCandidate(skeletonSource, candidate: skeleton)
+            {
+                return .normalized
+            }
+        }
+        return .ungrounded
+    }
+
+    private static func collectNonEmptyStringLeaves(_ value: Any) -> [String] {
+        if value is NSNull { return [] }
+        if value is NSNumber { return [] }
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [string]
+        }
+        if let object = value as? [String: Any] {
+            return object.values.flatMap { collectNonEmptyStringLeaves($0) }
+        }
+        if let array = value as? [Any] {
+            return array.flatMap { collectNonEmptyStringLeaves($0) }
+        }
+        return []
     }
 }

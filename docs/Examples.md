@@ -367,7 +367,15 @@ let result = try await Extract.detailed(
     options: options
 )
 print("chunks:", result.chunksUsed, "attempts:", result.attempts)
+
+// Equally-grounded scalar disagreements (better-grounded side already won silently):
+for conflict in result.signals.mergeConflicts {
+    print("merge conflict at", conflict.path, conflict.values)
+}
 ```
+
+Partials are merged **deterministically** (no LLM merge). See
+[API → Chunk merge](API.md#chunk-merge-deterministic).
 
 ---
 

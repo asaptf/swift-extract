@@ -116,7 +116,10 @@ struct Receipt {
    `InvariantValidationError` as `lastError` and the raw model output.
 
 Both the single-chunk path and the chunk-merge path run `validateInvariants()` on the
-fully decoded value (partials from individual chunks are not invariant-checked).
+fully decoded value (partials from individual chunks are not invariant-checked). On the
+chunk path, partial JSON objects are **merged deterministically** (see
+[Chunk merge](#chunk-merge-deterministic)) before that decode + invariant step; if the
+merged tree fails, the usual repair loop still runs against the full document.
 
 **Useful consequence:** if a type declares invariants and you got a value back, those
 invariants held on that value. That is arithmetic, not inference — unlike
@@ -224,7 +227,8 @@ Extract.from(fileURL, using: session)              // URL → .fileURL
 4. Strip markdown fences → lenient decode
 5. Run ``Extractable/validateInvariants()`` (default no-op)
 6. On decode **or** invariant failure: repair prompt with field-level errors; retry up to `maxRetries`
-7. Large docs: chunk extract → merge pass (invariants checked on the merged value)
+7. Large docs: chunk extract → **deterministic** JSON-tree merge → decode + invariants
+   (repair loop on the full document if the merged tree fails)
 
 ---
 
@@ -343,16 +347,43 @@ public struct FieldSignal: Sendable {
     public let provenance: FieldProvenance?  // nil when reformatted / absent / no geometry
 }
 
+public struct MergeConflict: Sendable {
+    public let path: String       // e.g. "total", "seller.name"
+    public let values: [String]   // competing compact JSON fragments, chunk order
+}
+
 public struct ExtractionSignals: Sendable {
     public let attempts: Int
     public let chunksUsed: Int
     public let fields: [FieldSignal]
+    public let mergeConflicts: [MergeConflict]  // empty on single-chunk runs
     public var absentFieldPaths: [String] { get }
 }
 ```
 
 Each ``FieldSignal`` carries both **whether** the value was found (`grounding`) and
 **where** (`provenance`). There is no parallel array to zip by index.
+
+### Merge conflicts
+
+When a document is split into chunks, each chunk returns a partial JSON object. Those
+partials are merged **structurally** (no model call): objects key-wise, arrays by
+concatenation with an ungrounded-entry drop and equality de-dupe, scalars by agreement
+or **grounding rank**. If two chunks disagree on a scalar, the better-grounded value
+(against **its own chunk** text) wins silently. Only **equal** grounding ranks are a
+genuine conflict: the library keeps the first equally-grounded occurrence and appends a
+``MergeConflict`` with the field path and the competing JSON values. There is no
+confidence number — inspect `result.signals.mergeConflicts` the same way you inspect
+`absent` grounding.
+
+```swift
+for conflict in result.signals.mergeConflicts {
+    print(conflict.path, "candidates:", conflict.values)
+}
+```
+
+A partial that is root `null` or a non-object contributes nothing (it does not fail the
+run). See [Chunk merge](#chunk-merge-deterministic).
 
 ### Coordinate convention
 
@@ -441,6 +472,73 @@ for field in result.signals.fields {
 
 Signals are computed on every extraction (substring search over the document text, plus
 geometry location when boxes exist). There is no opt-out flag.
+
+---
+
+## Chunk merge (deterministic)
+
+Long documents (`.automatic` over the soft budget, or `.fixed(characterBudget:)`) are
+split into chunks, each extracted as a partial JSON object. **Merging is not delegated
+to the model.** The library merges the raw JSON trees, then runs the same lenient
+decode + `validateInvariants()` + repair path used for a single-chunk result.
+
+| Rule | Behaviour |
+| --- | --- |
+| Objects | Key-wise recursive merge |
+| Arrays | Concatenate → drop entries whose text is not in the full document → equality de-dupe |
+| Scalars | Agree → take it; disagree → **better grounding wins**; equal rank → first + ``MergeConflict`` |
+| Null field | Yields to a non-null without conflict |
+| Root `null` / non-object partial | Contributes nothing (`{}`) |
+
+### Scalar arbitration (grounding as arbiter)
+
+Each disagreeing scalar is ranked against the **full document** text (the same source
+``FieldGrounding`` uses for public signals after a chunked run — not a per-chunk slice,
+and not by chunk position):
+
+1. **verbatim** — exact substring (or sign-aware numeric hit)
+2. **normalized** — found after the same folding used for field signals / numeric skeleton
+3. **ungrounded** — no usable match
+
+Higher rank wins. Equal ranks keep the **first** candidate and record a
+``MergeConflict``. This deliberately does **not** encode domain layout rules such as
+“totals are at the bottom”; it only prefers values the document can support over pure
+hallucinations. (Ranking per-chunk was measured to demote correct early values whose
+supporting text sits in a later slice.)
+
+**Short numerics.** Bare 1–2 digit integers (`2`, `19`) match almost any document, so
+for **merge ranking only** a numeric candidate counts as grounded when it is
+*distinctive*: at least **3 digit characters**, or a decimal separator (`.` / `,`)
+with at least one digit. Examples: `2` / `19` → ungrounded for arbitration; `119` /
+`12.5` / `2,50` → may rank as verbatim/normalized. Public per-leaf ``Grounding``
+signals are unchanged (numbers still never report `absent`).
+
+### Array entry filter
+
+After concatenation, an entry that has at least one non-empty **string** leaf is kept
+if **some** of those strings are supported by the **full document**: verbatim or
+normalized containment, **or** ≥50% of significant tokens (length ≥ 3 after the usual
+search normalisation) appear in the normalised source. Token coverage keeps slightly
+rephrased line descriptions. Pure numeric / bool entries (no text to ground) are kept
+so legitimate bare rows are not deleted. Tax-table debris that literally appears in the
+source can still survive — there is no line-item-context classifier.
+
+**Array de-dupe** then collapses entries that match on every field after string trim
+(the same light normalisation the decoder applies before type conversion). Two line
+items that share a description but differ in amount are kept. Truly identical rows in
+the source can collapse — that is the tradeoff for suppressing cross-chunk duplicates.
+
+**Table assignment:** whole tables attach to a chunk only when every non-empty cell
+string appears in that chunk’s text (no page-index broadcast onto hard-split slices,
+no “attach all tables to chunk 0” fallback). Linear document text still carries the
+content when a table matches no chunk.
+
+**Hard-split boundaries:** when a single page exceeds the budget, the cut prefers a
+newline, then any whitespace, within a window around the budget — never mid-token when
+a boundary exists in that window.
+
+`attempts` counts model generations (partials + any post-merge repairs). Deterministic
+merge itself is free. `chunksUsed` is the number of document chunks in the run.
 
 ---
 

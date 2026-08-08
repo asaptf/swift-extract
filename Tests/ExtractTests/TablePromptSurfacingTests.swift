@@ -505,24 +505,12 @@ struct TablePromptSurfacingTests {
         // Tables are not lost entirely across the chunked assignment.
         #expect(assigned.contains { !$0.isEmpty })
 
-        // End-to-end extract with forced chunking.
+        // End-to-end extract with forced chunking (deterministic merge of partials).
         let cannedPartial = """
             {"vendor":"Acme","dueDate":"2024-07-31","total":1250,"lineItems":[]}
             """
-        let cannedMerge = """
-            {
-              "vendor": "Acme Supplies Co.",
-              "dueDate": "2024-07-31",
-              "total": 1250.00,
-              "lineItems": [
-                {"description": "Widget Pro", "amount": 500.00, "quantity": 2},
-                {"description": "Support Plan", "amount": 250.00, "quantity": 1}
-              ]
-            }
-            """
-        // Provide enough responses for partials + merge.
-        var responses = Array(repeating: cannedPartial, count: max(chunks.count, 2))
-        responses.append(cannedMerge)
+        // One response per chunk; no LLM merge call.
+        let responses = Array(repeating: cannedPartial, count: max(chunks.count, 2))
         let session = ExtractionSession.mock(MockLanguageModel(responses: responses))
         var options = ExtractionOptions()
         options.chunkingStrategy = .fixed(characterBudget: 200)
@@ -536,11 +524,11 @@ struct TablePromptSurfacingTests {
         )
         #expect(result.chunksUsed >= 2)
         #expect(!result.tables.isEmpty)
-        #expect(result.value.vendor == "Acme Supplies Co.")
+        #expect(result.value.vendor == "Acme")
     }
 
-    @Test("hard-split fallback attaches full tables to first chunk when page match fails")
-    func hardSplitFallbackKeepsTables() {
+    @Test("tables attach only when all cell text appears in the chunk (no chunk-0 fallback)")
+    func cellTextAssignmentNoFallback() {
         let table = ExtractedTable(
             pageIndex: 0,
             rowCount: 2,
@@ -552,8 +540,7 @@ struct TablePromptSurfacingTests {
                 .init(text: "2", row: 1, column: 1),
             ]
         )
-        // Chunks with page indices that do not match the table's page, and text
-        // that does not contain all cells → filter would empty; fallback to chunk 0.
+        // Neither chunk contains every cell → table attaches to no chunk.
         let chunks = [
             ExtractedDocument(
                 blocks: [.init(text: "only half of nothing", pageIndex: 5, boundingBox: nil)],
@@ -565,9 +552,39 @@ struct TablePromptSurfacingTests {
             ),
         ]
         let assigned = Extract.assignTablesToChunks([table], chunks: chunks)
-        #expect(assigned[0].count == 1)
+        #expect(assigned[0].isEmpty)
         #expect(assigned[1].isEmpty)
-        #expect(assigned[0][0].markdown() == table.markdown())
+    }
+
+    @Test("table attaches to the hard-split slice that contains its cell text")
+    func cellTextAssignmentOnHardSplit() {
+        let table = ExtractedTable(
+            pageIndex: 0,
+            rowCount: 1,
+            columnCount: 2,
+            cells: [
+                .init(text: "WidgetProSKU", row: 0, column: 0),
+                .init(text: "999.00", row: 0, column: 1),
+            ]
+        )
+        // Same pageIndex on both hard-split chunks; only the second has the cell text.
+        let chunks = [
+            ExtractedDocument(
+                blocks: [
+                    .init(text: String(repeating: "padding ", count: 20), pageIndex: 0, boundingBox: nil)
+                ],
+                sourceDescription: "c1"
+            ),
+            ExtractedDocument(
+                blocks: [
+                    .init(text: "line WidgetProSKU qty 1 999.00", pageIndex: 0, boundingBox: nil)
+                ],
+                sourceDescription: "c2"
+            ),
+        ]
+        let assigned = Extract.assignTablesToChunks([table], chunks: chunks)
+        #expect(assigned[0].isEmpty)
+        #expect(assigned[1].count == 1)
     }
 
     // MARK: - Helpers

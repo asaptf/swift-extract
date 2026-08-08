@@ -216,18 +216,17 @@ struct ExtractionLoopTests {
 
     @Test("chunk-merge path")
     func chunkMerge() async throws {
-        // First two calls are per-chunk; third is merge.
+        // Per-chunk only; merge is deterministic (no third model call).
+        // balance 1 vs 99: both short / ungrounded in this text → equal rank, first wins + conflict.
+        // null homepage yields to URL.
         let partial1 = """
             {"name":"Eve","age":30,"balance":1,"birthday":"1990-01-01","active":true,"homepage":null}
             """
         let partial2 = """
             {"name":"Eve","age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":"https://eve.test"}
             """
-        let merged = """
-            {"name":"Eve","age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":"https://eve.test"}
-            """
         let session = ExtractionSession.mock(
-            MockLanguageModel(responses: [partial1, partial2, merged])
+            MockLanguageModel(responses: [partial1, partial2])
         )
         // Build a document large enough to force chunking with a tiny budget.
         let pageA = String(repeating: "Section A about Eve. ", count: 20)
@@ -243,9 +242,12 @@ struct ExtractionLoopTests {
             options: options
         )
         #expect(result.value.name == "Eve")
-        #expect(result.value.balance == Decimal(99))
+        #expect(result.value.balance == Decimal(1))
         #expect(result.value.homepage?.host == "eve.test")
         #expect(result.chunksUsed >= 2)
+        #expect(result.signals.mergeConflicts.contains { $0.path == "balance" })
+        let balanceConflict = result.signals.mergeConflicts.first { $0.path == "balance" }
+        #expect(balanceConflict?.values.count == 2)
     }
 
     @Test("chunks may contain incomplete objects")
@@ -256,11 +258,8 @@ struct ExtractionLoopTests {
         let partial2 = """
             {"age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":"https://eve.test"}
             """
-        let merged = """
-            {"name":"Eve","age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":"https://eve.test"}
-            """
         let session = ExtractionSession.mock(
-            MockLanguageModel(responses: [partial1, partial2, merged])
+            MockLanguageModel(responses: [partial1, partial2])
         )
         let options = ExtractionOptions(
             maxRetries: 0,
@@ -275,7 +274,32 @@ struct ExtractionLoopTests {
         #expect(result.value.name == "Eve")
         #expect(result.value.balance == Decimal(99))
         #expect(result.chunksUsed == 2)
-        #expect(result.attempts == 3)
+        // Two partial generations; deterministic merge does not count as an attempt.
+        #expect(result.attempts == 2)
+        #expect(result.signals.mergeConflicts.isEmpty)
+    }
+
+    @Test("null partial chunk contributes nothing and does not fail the run")
+    func nullPartialIgnored() async throws {
+        let partial1 = "null"
+        let partial2 = """
+            {"name":"Eve","age":30,"balance":99,"birthday":"1990-01-01","active":true,"homepage":null}
+            """
+        let session = ExtractionSession.mock(
+            MockLanguageModel(responses: [partial1, partial2])
+        )
+        let options = ExtractionOptions(
+            maxRetries: 0,
+            chunkingStrategy: .fixed(characterBudget: 40)
+        )
+        let result: ExtractionResult<SimplePerson> = try await Extract.detailed(
+            from: .text(String(repeating: "document ", count: 8)),
+            using: session,
+            options: options
+        )
+        #expect(result.value.name == "Eve")
+        #expect(result.value.balance == Decimal(99))
+        #expect(result.chunksUsed == 2)
     }
 
     @Test("trims strings")

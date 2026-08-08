@@ -88,9 +88,15 @@ private final class XMLInvoiceParser: NSObject, XMLParserDelegate {
             }
         } else {
             switch local {
-            case "ID" where p.contains("ExchangedDocument") && !p.contains("TypeCode"):
+            case "ID"
+                where p.contains("ExchangedDocument")
+                    && !p.contains("ExchangedDocumentContext")
+                    && !p.contains("TypeCode")
+                    && !p.contains("Line"):
                 // Header invoice number — first ExchangedDocument/ID wins.
-                if truth.invoiceNumber == nil, !value.isEmpty, !p.contains("Line") {
+                // Exclude ExchangedDocumentContext (profile URNs like urn:cen.eu:en16931:2017
+                // were incorrectly captured because the path substring matched).
+                if truth.invoiceNumber == nil, !value.isEmpty, !value.hasPrefix("urn:") {
                     truth.invoiceNumber = value
                 }
             case "DateTimeString" where p.contains("IssueDateTime"):

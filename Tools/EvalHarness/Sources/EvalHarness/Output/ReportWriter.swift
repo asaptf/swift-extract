@@ -235,6 +235,300 @@ public enum ReportWriter {
         try mdLines.joined(separator: "\n").write(to: md, atomically: true, encoding: .utf8)
     }
 
+    public static func writeChunkMerge(
+        _ summary: ChunkMergeSummary,
+        outputDir: URL
+    ) throws {
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        let jsonl = outputDir.appendingPathComponent("chunk-merge.jsonl")
+        let md = outputDir.appendingPathComponent("chunk-merge.md")
+
+        var lines: [String] = []
+        for r in summary.records {
+            var obj: [String: Any] = [
+                "file": r.relativePath,
+                "characterCount": r.characterCount,
+                "pageCountEstimate": r.pageCountEstimate,
+                "tableCount": r.tableCount,
+                "tablePageIndices": r.tablePageIndices,
+                "hasGroundTruth": r.hasGroundTruth,
+                "paired": r.paired,
+                "diagnosticsCount": r.diagnostics.count,
+            ]
+            if let u = r.unpairedReason { obj["unpairedReason"] = u }
+            if let a = r.armA {
+                obj["armA"] = armMetrics(a)
+            }
+            if let b = r.armB {
+                obj["armB"] = armMetrics(b)
+            }
+            lines.append(jsonObjectLine(obj))
+        }
+        try lines.joined(separator: "\n").appending("\n").write(
+            to: jsonl, atomically: true, encoding: .utf8
+        )
+
+        func acc(_ pair: (correct: Int, total: Int)) -> String {
+            guard pair.total > 0 else { return "n/a" }
+            return pct(Double(pair.correct) / Double(pair.total))
+                + " (\(pair.correct)/\(pair.total))"
+        }
+        func deltaPP(_ a: (Int, Int), _ b: (Int, Int)) -> String {
+            guard a.1 > 0, b.1 > 0 else { return "n/a" }
+            let da = Double(a.0) / Double(a.1)
+            let db = Double(b.0) / Double(b.1)
+            return fmtSigned((db - da) * 100.0)
+        }
+
+        var mdLines: [String] = [
+            "# Chunk-merge experiment (A vs B)",
+            "",
+            summary.backendLabel,
+            "",
+            "| Arm | softContextCharacterBudget | role |",
+            "| --- | ---: | --- |",
+            "| **A** | \(summary.budgetA) | baseline (single chunk when doc fits) |",
+            "| **B** | \(summary.budgetB) | forced chunking |",
+            "",
+            "## Aggregate",
+            "",
+            "| Metric | Value |",
+            "| --- | ---: |",
+            "| Files total | \(summary.filesTotal) |",
+            "| With Factur-X GT | \(summary.withGroundTruth) |",
+            "| Unpaired | \(summary.unpaired) |",
+            "| Scored (paired, extracted) | \(summary.scored) |",
+            "| Arm B files with chunksUsed > 1 | \(summary.chunkedB) |",
+            "| Failures A / B | \(summary.failuresA) / \(summary.failuresB) |",
+            "| Mean attempts A / B | \(fmt(summary.meanAttemptsA)) / \(fmt(summary.meanAttemptsB)) |",
+            "| Mean chunksUsed A / B | \(fmt(summary.meanChunksA)) / \(fmt(summary.meanChunksB)) |",
+            "| Overall accuracy A | \(acc(summary.overallA)) |",
+            "| Overall accuracy B | \(acc(summary.overallB)) |",
+            "| Overall Δ (B−A, pp) | \(deltaPP(summary.overallA, summary.overallB)) |",
+            "| Header fields A | \(acc(summary.headerFieldsA)) |",
+            "| Header fields B | \(acc(summary.headerFieldsB)) |",
+            "| Header Δ pp | \(deltaPP(summary.headerFieldsA, summary.headerFieldsB)) |",
+            "| Line description A | \(acc(summary.lineDescA)) |",
+            "| Line description B | \(acc(summary.lineDescB)) |",
+            "| Line description Δ pp | \(deltaPP(summary.lineDescA, summary.lineDescB)) |",
+            "| Line amount A | \(acc(summary.lineAmtA)) |",
+            "| Line amount B | \(acc(summary.lineAmtB)) |",
+            "| Line amount Δ pp | \(deltaPP(summary.lineAmtA, summary.lineAmtB)) |",
+            "| Line count exact A / B | \(summary.lineCountExactA) / \(summary.lineCountExactB) of \(summary.lineCountScored) |",
+            "| Lost line items (B, sum) | \(summary.lostItemsTotalB) |",
+            "| Extra line items (B, sum) | \(summary.extraItemsTotalB) |",
+            "| Duplicate predicted descs (B, sum) | \(summary.dupItemsTotalB) |",
+            "| Provenance rate A / B | \(pct(summary.provenanceRateA)) / \(pct(summary.provenanceRateB)) |",
+            "| Grounded (verbatim/norm) without provenance A / B | \(summary.groundedWithoutProvA) / \(summary.groundedWithoutProvB) |",
+            "| Mean wall-clock s A / B | \(fmt(summary.meanSecondsA)) / \(fmt(summary.meanSecondsB)) |",
+            "| Sum wall-clock s A / B | \(fmt(summary.sumSecondsA)) / \(fmt(summary.sumSecondsB)) |",
+            "",
+            "## Invariant / repair (EvalInvoice: lineItems + tax ≈ grandTotal)",
+            "",
+            "| Metric | A | B |",
+            "| --- | ---: | ---: |",
+            "| Files with ≥1 invariant violation | \(summary.invariantTriggeredA) | \(summary.invariantTriggeredB) |",
+            "| Of those: extraction recovered (returned value) | \(summary.invariantRecoveredA) | \(summary.invariantRecoveredB) |",
+            "| Of those: still `validationFailed` (invariant) | \(summary.invariantStillFailedA) | \(summary.invariantStillFailedB) |",
+            "| Recovered + grandTotal correct vs GT | \(summary.invariantRecoveredGrandTotalCorrectA) | \(summary.invariantRecoveredGrandTotalCorrectB) |",
+            "",
+            "## Per-field accuracy (paired successful scores)",
+            "",
+            "| Field | A | B | Δ pp |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+
+        let allFields = Set(summary.perFieldA.keys).union(summary.perFieldB.keys).sorted()
+        for field in allFields {
+            let a = summary.perFieldA[field] ?? (0, 0)
+            let b = summary.perFieldB[field] ?? (0, 0)
+            mdLines.append(
+                "| \(field) | \(acc(a)) | \(acc(b)) | \(deltaPP(a, b)) |"
+            )
+        }
+
+        mdLines.append(contentsOf: [
+            "",
+            "## Files where line items diverged (B vs truth or A)",
+            "",
+        ])
+
+        var lossExamples = 0
+        for r in summary.records where r.paired {
+            guard let a = r.armA, let b = r.armB else { continue }
+            let lineChanged =
+                a.predictedLineItemCount != b.predictedLineItemCount
+                || !b.lostDescriptions.isEmpty
+                || !b.extraDescriptions.isEmpty
+                || b.duplicatePredictedDescriptions > 0
+                || a.extractionError != nil
+                || b.extractionError != nil
+            guard lineChanged else { continue }
+            lossExamples += 1
+            mdLines.append("### \(r.relativePath)")
+            mdLines.append("")
+            mdLines.append(
+                "- chars=\(r.characterCount) pages≈\(r.pageCountEstimate) tables=\(r.tableCount) chunks A/B=\(a.chunksUsed)/\(b.chunksUsed) attempts A/B=\(a.attempts)/\(b.attempts) s A/B=\(String(format: "%.1f", a.extractionSeconds))/\(String(format: "%.1f", b.extractionSeconds))"
+            )
+            if a.invariantTriggered || b.invariantTriggered {
+                mdLines.append(
+                    "- invariants: A viol=\(a.invariantViolations)/checks=\(a.invariantChecks) skip=\(a.invariantSkips)\(a.invariantValidationFailed ? " validationFailed" : a.extractionError == nil && a.invariantTriggered ? " recovered" : ""); B viol=\(b.invariantViolations)/checks=\(b.invariantChecks) skip=\(b.invariantSkips)\(b.invariantValidationFailed ? " validationFailed" : b.extractionError == nil && b.invariantTriggered ? " recovered" : "")"
+                )
+            }
+            if let e = a.extractionError {
+                mdLines.append("- **A error:** \(shortError(e))")
+            }
+            if let e = b.extractionError {
+                mdLines.append("- **B error:** \(shortError(e))")
+            }
+            mdLines.append(
+                "- truth line count=\(b.truthLineItemCount); predicted A=\(a.predictedLineItemCount) B=\(b.predictedLineItemCount) (ΔB=\(b.lineItemCountDelta))"
+            )
+            mdLines.append(
+                "- B dups=\(b.duplicatePredictedDescriptions) lost=\(b.lostDescriptions.count) extra=\(b.extraDescriptions.count)"
+            )
+            // Concrete values (short): needed to judge merge loss; keep to line-item fields.
+            if !b.truthDescriptions.isEmpty {
+                mdLines.append(
+                    "- truth descs: \(b.truthDescriptions.map(quote).joined(separator: " | "))"
+                )
+            }
+            if !a.predictedDescriptions.isEmpty {
+                mdLines.append(
+                    "- A pred descs: \(a.predictedDescriptions.map(quote).joined(separator: " | "))"
+                )
+            }
+            if !b.predictedDescriptions.isEmpty {
+                mdLines.append(
+                    "- B pred descs: \(b.predictedDescriptions.map(quote).joined(separator: " | "))"
+                )
+            }
+            if !b.lostDescriptions.isEmpty {
+                mdLines.append(
+                    "- **lost on B:** \(b.lostDescriptions.map(quote).joined(separator: " | "))"
+                )
+            }
+            if !b.extraDescriptions.isEmpty {
+                mdLines.append(
+                    "- **extra on B:** \(b.extraDescriptions.map(quote).joined(separator: " | "))"
+                )
+            }
+            // Header field flips
+            let fa = Dictionary(uniqueKeysWithValues: a.fieldScores.map { ($0.field, $0) })
+            let fb = Dictionary(uniqueKeysWithValues: b.fieldScores.map { ($0.field, $0) })
+            for field in Set(fa.keys).union(fb.keys).sorted() {
+                let ca = fa[field]
+                let cb = fb[field]
+                guard let ca, let cb, ca.correct != cb.correct else { continue }
+                mdLines.append(
+                    "- field \(field): A=\(ca.correct ? "ok" : "miss") B=\(cb.correct ? "ok" : "miss") truth=\(quote(ca.truthValue ?? "")) Apred=\(quote(ca.predictedValue ?? "nil")) Bpred=\(quote(cb.predictedValue ?? "nil"))"
+                )
+            }
+            mdLines.append(
+                "- provenance fields A \(a.signalsWithProvenance)/\(a.signalsFieldCount); B \(b.signalsWithProvenance)/\(b.signalsFieldCount)"
+            )
+            if !b.sampleProvenancePaths.isEmpty {
+                mdLines.append(
+                    "- B sample provenance paths: \(b.sampleProvenancePaths.joined(separator: ", "))"
+                )
+            }
+            mdLines.append("")
+        }
+        if lossExamples == 0 {
+            mdLines.append("_No line-item divergences recorded._")
+            mdLines.append("")
+        }
+
+        mdLines.append(contentsOf: [
+            "## Layout diagnostics (pre-model, budget B)",
+            "",
+        ])
+        var diagCount = 0
+        for r in summary.records {
+            let interesting = r.diagnostics.filter {
+                $0.contains("hard-split") || $0.contains("table") || $0.contains("WARNING")
+                    || $0.contains("cell texts absent")
+            }
+            guard !interesting.isEmpty else { continue }
+            diagCount += 1
+            mdLines.append("### \(r.relativePath)")
+            for d in interesting.prefix(12) {
+                mdLines.append("- \(d)")
+            }
+            if interesting.count > 12 {
+                mdLines.append("- … +\(interesting.count - 12) more")
+            }
+            mdLines.append("")
+        }
+        if diagCount == 0 {
+            mdLines.append("_No hard-split / table-assignment notes._")
+            mdLines.append("")
+        }
+
+        mdLines.append(contentsOf: [
+            "## Code-path notes (invariants / merge repair)",
+            "",
+            "`EvalInvoice.validateInvariants()` checks line-item `lineTotal` sum + tax ≈ `grandTotal`",
+            "within `Extract.defaultMoneyTolerance` (0.01). Skips when line items are missing, grandTotal",
+            "is nil, or any line lacks `lineTotal`. Missing tax is treated as zero.",
+            "Library merge path (Extract.swift): after partials, `ChunkJSONMerger` merges JSON trees",
+            "deterministically (grounding-arbitrated scalars; ungrounded array text dropped; no LLM merge).",
+            "On decode/invariant failure the single-chunk-style repair prompt is used against the full",
+            "document. Equal-rank merge conflicts surface on `result.signals.mergeConflicts`.",
+            "Invariants are validated once after each decode attempt (merge decode + each model repair).",
+            "",
+            "Grounding / provenance: `FieldGrounding.compute` is called with the **full** document",
+            "`sourceText` and full-document `blocks`/`tables` even when `chunksUsed > 1`.",
+            "",
+            "Honest interpretation: invariants are **caller-supplied**. Recovery here measures the",
+            "safety net on this schema, not a free accuracy gain in the library merge path alone.",
+            "",
+        ])
+
+        try mdLines.joined(separator: "\n").write(to: md, atomically: true, encoding: .utf8)
+    }
+
+    private static func armMetrics(_ a: ChunkMergeArmRecord) -> [String: Any] {
+        var m: [String: Any] = [
+            "softBudget": a.softBudget,
+            "chunksUsed": a.chunksUsed,
+            "attempts": a.attempts,
+            "extractionSeconds": round6(a.extractionSeconds),
+            "predictedLineItemCount": a.predictedLineItemCount,
+            "truthLineItemCount": a.truthLineItemCount,
+            "lineItemCountDelta": a.lineItemCountDelta,
+            "duplicatePredictedDescriptions": a.duplicatePredictedDescriptions,
+            "lostCount": a.lostDescriptions.count,
+            "extraCount": a.extraDescriptions.count,
+            "signalsFieldCount": a.signalsFieldCount,
+            "signalsWithProvenance": a.signalsWithProvenance,
+            "groundedWithoutProvenance": a.groundedWithoutProvenance,
+            "groundingCounts": a.groundingCounts,
+            "fieldCorrect": a.fieldScores.filter(\.correct).count,
+            "fieldTotal": a.fieldScores.count,
+            "invariantChecks": a.invariantChecks,
+            "invariantViolations": a.invariantViolations,
+            "invariantSkips": a.invariantSkips,
+            "invariantTriggered": a.invariantTriggered,
+            "invariantValidationFailed": a.invariantValidationFailed,
+        ]
+        if let e = a.extractionError { m["extractionError"] = shortError(e) }
+        return m
+    }
+
+    private static func shortError(_ e: String) -> String {
+        if e.count <= 240 { return e }
+        return String(e.prefix(240)) + "…"
+    }
+
+    private static func quote(_ s: String) -> String {
+        let t = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        if t.count <= 80 { return "\"\(t)\"" }
+        return "\"\(t.prefix(77))…\""
+    }
+
     public static func writeAnchors(
         _ summary: AnchorRunSummary,
         outputDir: URL

@@ -112,12 +112,23 @@ func validateInvariants() throws {
 }
 ```
 
+**Know what an invariant costs before you write one.** It couples the fields it mentions, so the
+least reliable one decides the fate of all of them. Measured on 75 invoices: this exact
+sum-equals-total check turned a single-pass run that got the total right 96% of the time into one
+that got it right 61% of the time, because a correct `total` was thrown out whenever the line items
+came back messy — the check did its job and refused to reconcile, and a usable extract died with it.
+On chunked runs the same check helps a great deal (totals roughly double), because there the total
+itself is what goes wrong. Couple fields of similar reliability, expect extra attempts, and decide
+deliberately whether a partial answer or no answer serves your caller better.
+
 **Evidence — `result.signals`.** Per field, whether the value was actually found in the source text
-(`verbatim`, `normalized`, `reformatted`, `absent`), plus attempt and chunk counts. There is
-deliberately **no confidence score**: nothing behind one would be calibrated, and a single number
-gets thresholded for auto-accept. Note the limit — `absent` only fires for text fields, since a
-`quantity: 2` matches almost any document. A confidently wrong *number* is caught by invariants,
-not by grounding.
+(`verbatim`, `normalized`, `reformatted`, `absent`), plus attempt and chunk counts. On chunked
+runs, equally-grounded scalar disagreements appear as `mergeConflicts` (path + competing JSON
+values); a better-grounded candidate wins without a conflict row, and there is no invented
+confidence. There is deliberately **no confidence score**: nothing behind one would be
+calibrated, and a single number gets thresholded for auto-accept. Note the limit — `absent`
+only fires for text fields, since a `quantity: 2` matches almost any document. A confidently
+wrong *number* is caught by invariants, not by grounding.
 
 **Provenance — `field.provenance`.** When a leaf was found in positioned geometry (PDF text layer
 or Vision OCR), the same signal row carries a **page index and normalised bounding box** so a
@@ -397,7 +408,17 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
   document text is always kept — tables are additive, never a substitute.
 - Grounding reports `absent` only for text fields; numeric and date fields never do. Use
   [invariants](#how-much-can-you-trust-a-result) to catch a wrong number.
-- Chunk-and-merge on long documents is the least exercised path in the library.
+- Chunk-and-merge on long documents: partials are merged **deterministically** (tree
+  merge, not an LLM pass). Disagreeing scalars prefer the better-grounded chunk value;
+  equal ranks keep the first and surface on `result.signals.mergeConflicts`. Array
+  entries whose text is absent from the document are dropped; identical rows de-dupe
+  after trim. **Chunking still costs real accuracy and you should avoid it when the
+  document fits.** Measured on 75 invoices, forcing chunks moved identity fields barely
+  (invoice number 99% → 97%) but totals badly (96% → 19%), because no single chunk
+  contains both the line items and the totals block, and merging cannot recover
+  information the partials never had. Supplying invariants roughly doubles totals back,
+  at the cost of extra attempts. Measure your own case with
+  `extract-eval --mode chunk-merge`.
 - Prompts and built-in guides are English-first (document content can still be multilingual — see [Languages & scripts](#languages--scripts)).
 - Guided generation uses schema-in-prompt (AnyLanguageModel’s `respond(to:schema:)` is not used; see `DECISIONS.md`).
 - CLI does not JIT-compile arbitrary `.swift` schema files; use embedded types matching `Examples/schemas/`.

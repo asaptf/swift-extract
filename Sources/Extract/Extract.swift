@@ -88,9 +88,9 @@ public enum Extract {
             )
         }
 
-        // Per-chunk extraction then merge. Assign whole tables to chunks by page;
-        // never emit a half table. Fallback: if page filtering drops every table,
-        // attach the full set to the first chunk so the section is not lost.
+        // Per-chunk extraction, then deterministic structural merge of partial JSON.
+        // Tables attach by cell-text containment (never a half table, no page-index
+        // broadcast onto hard-split sub-chunks).
         let tablesByChunk = assignTablesToChunks(tables, chunks: chunks)
         var partials: [String] = []
         var totalAttempts = 0
@@ -106,32 +106,46 @@ public enum Extract {
             totalAttempts += result.attempts
         }
 
-        let mergeUser = PromptBuilder.mergePrompt(
-            type: type,
+        let merged = ChunkJSONMerger.merge(
             partialJSONObjects: partials,
-            locale: options.locale
+            fullDocumentText: sourceText
         )
         let temperature = options.resolvedTemperature(session: session)
         let schema = T.extractionSchema
-        var lastError: Error = ExtractionError.mergeFailed("unknown")
-        var lastRaw = ""
-        let maxAttempts = max(1, options.maxRetries + 1)
+        // Schema-gate prompt injection for repair; result.tables stays full-document.
+        let promptTables = tablesForPrompt(tables, schema: schema)
+        var lastError: Error = ExtractionError.mergeFailed("deterministic merge produced undecodable JSON")
+        var lastRaw = merged.json
+        var modelRepairAttempts = 0
+        let maxRepairAttempts = max(0, options.maxRetries)
 
-        for attempt in 0..<maxAttempts {
-            let user: String
+        // Attempt 0: decode the deterministically merged tree (no model call).
+        // Further attempts: Instructor-style repair against the full document, same as
+        // the single-chunk path — invariants and the lenient decoder still run once per try.
+        for attempt in 0...maxRepairAttempts {
+            let raw: String
             if attempt == 0 {
-                user = mergeUser
+                raw = merged.json
             } else {
-                user =
-                    mergeUser
-                    + "\n\n## Previous merge failed\n\(ValidationErrorFormatter.describe(lastError))\n\n### Previous output\n\(lastRaw)"
+                let repair = PromptBuilder.RepairContext(
+                    previousOutput: lastRaw,
+                    errorDescription: ValidationErrorFormatter.describe(lastError)
+                )
+                let user = PromptBuilder.userPrompt(
+                    type: type,
+                    document: document,
+                    locale: options.locale,
+                    repair: repair,
+                    tables: promptTables
+                )
+                raw = try await session.generate(
+                    system: PromptBuilder.systemInstructions,
+                    user: user,
+                    temperature: temperature,
+                    schema: schema
+                )
+                modelRepairAttempts += 1
             }
-            let raw = try await session.generate(
-                system: PromptBuilder.systemInstructions,
-                user: user,
-                temperature: temperature,
-                schema: schema
-            )
             lastRaw = raw
             do {
                 // Decode without invariants, then validate once. Public
@@ -143,14 +157,20 @@ public enum Extract {
                     locale: options.locale
                 )
                 try value.validateInvariants()
-                let attempts = totalAttempts + attempt + 1
-                let signals = FieldGrounding.compute(
+                let attempts = totalAttempts + modelRepairAttempts
+                let grounded = FieldGrounding.compute(
                     value: value,
                     sourceText: sourceText,
                     attempts: attempts,
                     chunksUsed: chunks.count,
                     blocks: document.blocks,
                     tables: tables
+                )
+                let signals = ExtractionSignals(
+                    attempts: grounded.attempts,
+                    chunksUsed: grounded.chunksUsed,
+                    fields: grounded.fields,
+                    mergeConflicts: merged.conflicts
                 )
                 return ExtractionResult(
                     value: value,
@@ -166,7 +186,7 @@ public enum Extract {
         }
 
         throw ExtractionError.validationFailed(
-            attempts: totalAttempts + maxAttempts,
+            attempts: totalAttempts + modelRepairAttempts,
             lastError: lastError,
             rawOutput: lastRaw
         )
@@ -217,7 +237,14 @@ public enum Extract {
             )
             lastRaw = raw
             do {
-                return (try PartialJSONValidator.validate(raw, expectedRoot: schema.type), attempt + 1)
+                // Root null / non-object is not a partial result: contribute nothing
+                // (`{}`) so a single empty chunk cannot fail the whole multi-chunk run.
+                let json = try PartialJSONValidator.validate(
+                    raw,
+                    expectedRoot: schema.type,
+                    emptyContributionOnNullOrNonObject: true
+                )
+                return (json, attempt + 1)
             } catch {
                 lastError = error
             }
@@ -339,10 +366,12 @@ public enum Extract {
 
     /// Map whole tables onto chunks without splitting a table's Markdown.
     ///
-    /// Prefer page-index membership. When a chunk has no page indices (rare unpaged
-    /// hard splits), require every non-empty cell text to appear in the chunk so we
-    /// never attach a table that mostly lives elsewhere. If filtering would drop all
-    /// tables, attach the full set to the first chunk (graceful fallback).
+    /// Assignment is by **cell-text containment**: a table attaches to a chunk only when
+    /// every non-empty cell string appears in that chunk's text. This avoids the old
+    /// page-index broadcast that attached every table on a page to every hard-split
+    /// sub-chunk of that page (including slices that contain none of the table text).
+    /// Tables that match no chunk are omitted from all prompts (linear document text
+    /// still carries the content); there is no "attach everything to chunk 0" fallback.
     static func assignTablesToChunks(
         _ tables: [ExtractedTable],
         chunks: [ExtractedDocument]
@@ -351,32 +380,24 @@ public enum Extract {
             return Array(repeating: [], count: chunks.count)
         }
 
-        var assigned: [[ExtractedTable]] = chunks.map { chunk in
-            let pages = Set(chunk.blocks.compactMap(\.pageIndex))
-            if pages.isEmpty {
-                let text = chunk.fullText
-                return tables.filter { table in
-                    let cells = table.cells.map(\.text).filter {
-                        !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    }
-                    guard !cells.isEmpty else { return false }
-                    return cells.allSatisfy { text.contains($0) }
+        return chunks.map { chunk in
+            let text = chunk.fullText
+            return tables.filter { table in
+                let cells = table.cells.map(\.text).filter {
+                    !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
+                guard !cells.isEmpty else { return false }
+                return cells.allSatisfy { text.contains($0) }
             }
-            return tables.filter { pages.contains($0.pageIndex) }
         }
-
-        if assigned.allSatisfy(\.isEmpty) {
-            assigned[0] = tables
-        }
-        return assigned
     }
 }
 
 private enum PartialJSONValidator {
     static func validate(
         _ raw: String,
-        expectedRoot: ExtractionSchema.SchemaType
+        expectedRoot: ExtractionSchema.SchemaType,
+        emptyContributionOnNullOrNonObject: Bool = false
     ) throws -> String {
         let cleaned = JSONFenceStripper.strip(raw, expectedRoot: expectedRoot)
         guard let data = cleaned.data(using: .utf8) else {
@@ -385,7 +406,14 @@ private enum PartialJSONValidator {
             )
         }
         let value = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-        if expectedRoot == .object, !(value is [String: Any]) {
+        if expectedRoot == .object {
+            if value is [String: Any] {
+                return cleaned
+            }
+            if emptyContributionOnNullOrNonObject {
+                // Bare null / array / scalar: not a usable partial object.
+                return "{}"
+            }
             throw DecodingError.typeMismatch(
                 [String: Any].self,
                 .init(codingPath: [], debugDescription: "Expected a partial JSON object")

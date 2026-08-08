@@ -6,6 +6,8 @@ public enum HarnessMode: String, Sendable {
     case accuracy
     case compare
     case anchors
+    /// Arm A normal budget vs Arm B forced chunking (same model / GT).
+    case chunkMerge = "chunk-merge"
 }
 
 public struct HarnessOptions: Sendable {
@@ -22,6 +24,12 @@ public struct HarnessOptions: Sendable {
     public var configA: RunConfig?
     public var configB: RunConfig?
     public var runAnchors: Bool
+    /// Soft budget for Arm A (chunk-merge mode). Default 12_000.
+    public var chunkBudgetA: Int
+    /// Soft budget for Arm B forced chunking (chunk-merge mode). Default 400.
+    public var chunkBudgetB: Int
+    /// Optional max files for expensive model runs (chunk-merge / accuracy smoke).
+    public var fileLimit: Int?
 
     public init(
         mode: HarnessMode,
@@ -36,7 +44,10 @@ public struct HarnessOptions: Sendable {
         includeContent: Bool = false,
         configA: RunConfig? = nil,
         configB: RunConfig? = nil,
-        runAnchors: Bool = true
+        runAnchors: Bool = true,
+        chunkBudgetA: Int = ChunkMergeRunner.defaultBudgetA,
+        chunkBudgetB: Int = ChunkMergeRunner.defaultBudgetB,
+        fileLimit: Int? = nil
     ) {
         self.mode = mode
         self.corpus = corpus
@@ -51,6 +62,9 @@ public struct HarnessOptions: Sendable {
         self.configA = configA
         self.configB = configB
         self.runAnchors = runAnchors
+        self.chunkBudgetA = chunkBudgetA
+        self.chunkBudgetB = chunkBudgetB
+        self.fileLimit = fileLimit
     }
 }
 
@@ -123,6 +137,30 @@ public enum Harness {
             try ReportWriter.writeCompare(summary, outputDir: options.outputDir)
             messages.append(
                 "Compare \(a.name) vs \(b.name): overall Δ \(String(format: "%+.2f", summary.overallDeltaPP)) pp; changed files \(summary.changedFiles.count)"
+            )
+
+        case .chunkMerge:
+            let root = options.corpus ?? options.fixtures ?? options.repoRoot
+            let summary = try await ChunkMergeRunner.run(
+                files: files,
+                rootForRelative: root,
+                backend: options.backend,
+                modelId: options.modelId,
+                tableDetection: options.tableDetection,
+                budgetA: options.chunkBudgetA,
+                budgetB: options.chunkBudgetB,
+                limit: options.fileLimit,
+                includeContent: options.includeContent
+            )
+            try ReportWriter.writeChunkMerge(summary, outputDir: options.outputDir)
+            let oa =
+                summary.overallA.total == 0
+                ? 0 : Double(summary.overallA.correct) / Double(summary.overallA.total)
+            let ob =
+                summary.overallB.total == 0
+                ? 0 : Double(summary.overallB.correct) / Double(summary.overallB.total)
+            messages.append(
+                "Chunk-merge: budget A=\(summary.budgetA) B=\(summary.budgetB); scored \(summary.scored); chunkedB \(summary.chunkedB); overall A \(String(format: "%.1f%%", oa * 100)) B \(String(format: "%.1f%%", ob * 100)); fail A/B \(summary.failuresA)/\(summary.failuresB); line-count exact A/B \(summary.lineCountExactA)/\(summary.lineCountExactB) of \(summary.lineCountScored)"
             )
 
         case .anchors:

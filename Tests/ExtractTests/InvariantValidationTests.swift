@@ -220,15 +220,14 @@ struct InvariantValidationTests {
 
     @Test("invariants are enforced on the chunk-merge path")
     func chunkMergeEnforcesInvariants() async throws {
-        // Exactly two chunks → two partial generations, then merge (bad), then merge repair.
+        // Two partials merge deterministically to a wrong total; model repair fixes it.
         let partial1 = """
-            {"merchant":"Cafe","total":13.50,"tax":1.00,"items":[{"name":"Tea","price":5.00}]}
+            {"merchant":"Cafe","total":99.99,"tax":1.00,"items":[{"name":"Tea","price":5.00}]}
             """
         let partial2 = """
             {"merchant":"Cafe","items":[{"name":"Cake","price":7.50}]}
             """
-        let badMerge = Self.wrongTotalJSON
-        let goodMerge = Self.correctJSON
+        let goodRepair = Self.correctJSON
 
         let prompts = PromptCapture()
         let session = ExtractionSession.mock(
@@ -237,8 +236,7 @@ struct InvariantValidationTests {
                 switch index {
                 case 0: return partial1
                 case 1: return partial2
-                case 2: return badMerge
-                default: return goodMerge
+                default: return goodRepair
                 }
             }
         )
@@ -256,18 +254,17 @@ struct InvariantValidationTests {
 
         #expect(result.value.total == Decimal(string: "13.50")!)
         #expect(result.chunksUsed == 2)
-        // Two partials (1 each) + failed merge + successful repair merge.
-        #expect(result.attempts == 4)
+        // Two partials + one document repair generation (deterministic merge is free).
+        #expect(result.attempts == 3)
 
         let all = await prompts.all
-        #expect(all.count == 4)
-        // Merge repair prompt should mention the invariant (merge path uses a different
-        // header: "Previous merge failed").
-        let mergeRepair = all[3]
-        #expect(mergeRepair.contains("Previous merge failed"))
-        #expect(mergeRepair.contains("field `total`"))
-        #expect(mergeRepair.contains("invariant violated"))
-        #expect(mergeRepair.contains("99.99"))
+        #expect(all.count == 3)
+        // Repair reuses the single-chunk-style "Previous attempt failed" prompt on the full doc.
+        let repair = all[2]
+        #expect(repair.contains("Previous attempt failed") || repair.contains("Validation errors"))
+        #expect(repair.contains("field `total`"))
+        #expect(repair.contains("invariant violated"))
+        #expect(repair.contains("99.99"))
     }
 
     @Test("InvariantIssue description matches repair formatting")

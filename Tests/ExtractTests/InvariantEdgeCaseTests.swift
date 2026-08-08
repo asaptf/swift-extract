@@ -193,13 +193,14 @@ struct InvariantEdgeCaseTests {
 
     @Test("chunk-merge path enforces sum invariant and can repair")
     func chunkMergeSumInvariant() async throws {
+        // Deterministic merge of partials yields total 9.99 vs parts 1+2 → invariant fails;
+        // first model call is a document repair that fixes total.
         let partial1 = #"{"name":"Doc","parts":[1.00,2.00]}"#
         let partial2 = #"{"total":9.99}"#
-        let badMerge = #"{"name":"Doc","total":9.99,"parts":[1.00,2.00]}"#
-        let goodMerge = #"{"name":"Doc","total":3.00,"parts":[1.00,2.00]}"#
+        let goodRepair = #"{"name":"Doc","total":3.00,"parts":[1.00,2.00]}"#
 
         let session = ExtractionSession.mock(
-            MockLanguageModel(responses: [partial1, partial2, badMerge, goodMerge])
+            MockLanguageModel(responses: [partial1, partial2, goodRepair])
         )
         let options = ExtractionOptions(
             maxRetries: 2,
@@ -212,17 +213,18 @@ struct InvariantEdgeCaseTests {
         )
         #expect(result.value.total == Decimal(string: "3.00"))
         #expect(result.chunksUsed == 2)
-        #expect(result.attempts == 4)
+        // Two partials + one repair generation.
+        #expect(result.attempts == 3)
     }
 
     @Test("chunk-merge path surfaces exotic invariant errors")
     func chunkMergeExoticError() async {
+        // Deterministic merge yields THROW_EXOTIC; maxRetries 0 → no repair, fail.
         let partial1 = #"{"name":"THROW_EXOTIC","parts":[1]}"#
         let partial2 = #"{"total":1}"#
-        let merge = #"{"name":"THROW_EXOTIC","total":1,"parts":[1]}"#
 
         let session = ExtractionSession.mock(
-            MockLanguageModel(responses: [partial1, partial2, merge, merge])
+            MockLanguageModel(responses: [partial1, partial2])
         )
         let options = ExtractionOptions(
             maxRetries: 0,
@@ -248,12 +250,13 @@ struct InvariantEdgeCaseTests {
 
     @Test("chunk-merge exhausts retries when invariant stays broken")
     func chunkMergeExhaustsInvariant() async {
+        // Deterministic merge is wrong; each repair model call still returns bad JSON.
         let partial1 = #"{"name":"Doc","parts":[5]}"#
         let partial2 = #"{"total":1}"#
-        let badMerge = #"{"name":"Doc","total":1,"parts":[5]}"#
+        let badRepair = #"{"name":"Doc","total":1,"parts":[5]}"#
 
         let session = ExtractionSession.mock(
-            MockLanguageModel(responses: [partial1, partial2, badMerge, badMerge, badMerge])
+            MockLanguageModel(responses: [partial1, partial2, badRepair, badRepair, badRepair])
         )
         let options = ExtractionOptions(
             maxRetries: 1,
@@ -273,8 +276,8 @@ struct InvariantEdgeCaseTests {
             }
             #expect(last is InvariantValidationError)
             #expect(raw.contains("total") || raw.contains("1"))
-            // two partials + (maxRetries+1) merge attempts = 2 + 2 = 4
-            #expect(attempts == 4)
+            // two partials + maxRetries model repairs (1) = 3
+            #expect(attempts == 3)
         } catch {
             Issue.record("unexpected \(error)")
         }

@@ -138,6 +138,10 @@ struct ExtractedDocument: Sendable, Equatable {
     }
 
     /// Split into character-budget chunks, preferring page boundaries.
+    ///
+    /// When a single page exceeds the budget it is hard-split. Split points prefer a
+    /// line boundary (newline), then any whitespace, within a window around the budget
+    /// cut — never mid-token when a boundary exists in that window.
     func chunks(budget: Int) -> [ExtractedDocument] {
         guard budget > 0 else { return [self] }
         let text = fullText
@@ -185,13 +189,7 @@ struct ExtractedDocument: Sendable, Equatable {
         for item in pageTexts {
             if item.text.count > budget {
                 flush()
-                // Hard-split oversized page.
-                var start = item.text.startIndex
-                while start < item.text.endIndex {
-                    let end =
-                        item.text.index(start, offsetBy: budget, limitedBy: item.text.endIndex)
-                        ?? item.text.endIndex
-                    let slice = String(item.text[start..<end])
+                for slice in Self.hardSplit(item.text, budget: budget) {
                     result.append(
                         ExtractedDocument(
                             blocks: [Block(text: slice, pageIndex: item.page, boundingBox: nil)],
@@ -199,7 +197,6 @@ struct ExtractedDocument: Sendable, Equatable {
                             usedOCRFallback: usedOCRFallback
                         )
                     )
-                    start = end
                 }
                 continue
             }
@@ -211,5 +208,132 @@ struct ExtractedDocument: Sendable, Equatable {
         }
         flush()
         return result.isEmpty ? [self] : result
+    }
+
+    /// Characters searched either side of the budget cut when choosing a split point.
+    private static let hardSplitBoundaryWindow = 80
+
+    /// Split `text` into slices of at most `budget` characters, preferring line then
+    /// whitespace boundaries so tokens are not cut mid-word when avoidable.
+    static func hardSplit(_ text: String, budget: Int) -> [String] {
+        guard budget > 0 else { return [text] }
+        guard text.count > budget else { return text.isEmpty ? [] : [text] }
+
+        var slices: [String] = []
+        var start = text.startIndex
+        while start < text.endIndex {
+            let hardEnd =
+                text.index(start, offsetBy: budget, limitedBy: text.endIndex) ?? text.endIndex
+            if hardEnd == text.endIndex {
+                let rest = String(text[start..<hardEnd])
+                if !rest.isEmpty { slices.append(rest) }
+                break
+            }
+
+            let end = preferredSplitEnd(in: text, start: start, hardEnd: hardEnd, budget: budget)
+            let slice = String(text[start..<end])
+            if slice.isEmpty {
+                // Pathological: no progress (e.g. budget 0 already guarded). Force one char.
+                let forced =
+                    text.index(start, offsetBy: 1, limitedBy: text.endIndex) ?? text.endIndex
+                slices.append(String(text[start..<forced]))
+                start = forced
+            } else {
+                slices.append(slice)
+                start = end
+            }
+        }
+        return slices
+    }
+
+    /// Choose a split index in `(start, hardEnd]` (or slightly past `hardEnd`) that lands
+    /// on a line or whitespace boundary when one exists near the budget cut.
+    private static func preferredSplitEnd(
+        in text: String,
+        start: String.Index,
+        hardEnd: String.Index,
+        budget: Int
+    ) -> String.Index {
+        let window = min(hardSplitBoundaryWindow, budget)
+        let backLo = text.index(hardEnd, offsetBy: -window, limitedBy: start) ?? start
+        let forwardHi =
+            text.index(hardEnd, offsetBy: window, limitedBy: text.endIndex) ?? text.endIndex
+
+        // Prefer the last newline at or before hardEnd within the back window.
+        if let idx = lastBoundary(
+            in: text,
+            range: backLo..<hardEnd,
+            predicate: { $0.isNewline },
+            afterStart: start
+        ) {
+            return idx
+        }
+        // Else first newline at/after hardEnd within the forward window.
+        if let idx = firstBoundary(
+            in: text,
+            range: hardEnd..<forwardHi,
+            predicate: { $0.isNewline }
+        ) {
+            return idx
+        }
+
+        // Whitespace (not newline — already checked): back then forward.
+        if let idx = lastBoundary(
+            in: text,
+            range: backLo..<hardEnd,
+            predicate: { $0.isWhitespace },
+            afterStart: start
+        ) {
+            return idx
+        }
+        if let idx = firstBoundary(
+            in: text,
+            range: hardEnd..<forwardHi,
+            predicate: { $0.isWhitespace }
+        ) {
+            return idx
+        }
+
+        // No boundary in the window: hard cut (token longer than the window).
+        return hardEnd
+    }
+
+    /// Index just after the last character in `range` matching `predicate`, if that
+    /// index is strictly after `afterStart`.
+    private static func lastBoundary(
+        in text: String,
+        range: Range<String.Index>,
+        predicate: (Character) -> Bool,
+        afterStart: String.Index
+    ) -> String.Index? {
+        var best: String.Index?
+        var i = range.lowerBound
+        while i < range.upperBound {
+            let ch = text[i]
+            let next = text.index(after: i)
+            if predicate(ch), next > afterStart {
+                best = next
+            }
+            i = next
+        }
+        return best
+    }
+
+    /// Index just after the first character in `range` matching `predicate`.
+    private static func firstBoundary(
+        in text: String,
+        range: Range<String.Index>,
+        predicate: (Character) -> Bool
+    ) -> String.Index? {
+        var i = range.lowerBound
+        while i < range.upperBound {
+            let ch = text[i]
+            let next = text.index(after: i)
+            if predicate(ch) {
+                return next
+            }
+            i = next
+        }
+        return nil
     }
 }

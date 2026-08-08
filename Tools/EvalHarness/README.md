@@ -62,6 +62,7 @@ Fixtures under `fixtures/` are enough for smoke runs and CI.
 | `accuracy` | Yes | Field accuracy vs embedded Factur-X / ZUGFeRD EN16931 CII ground truth |
 | `compare` | Yes | Two named configs; per-field Δ pp and the list of files that changed |
 | `anchors` | No (inspect only) | Named pass/fail checks |
+| `chunk-merge` | Yes | Same model + GT; Arm A normal `softContextCharacterBudget` vs Arm B forced chunking |
 
 ### Ground truth & pairing
 
@@ -207,10 +208,40 @@ Custom file:
 swift run extract-eval --mode anchors --anchors ./my-anchors.json --repo-root ../..
 ```
 
+## Chunk-merge experiment
+
+Isolates the chunk-and-merge path: **same document, same model, same ground truth —
+only the context budget differs.**
+
+- **Arm A** — baseline soft budget (default `12000`; single chunk on ordinary invoices)
+- **Arm B** — forced chunking (default `400`; typically ~3–6 chunks on median ~1.7k-char corpus PDFs)
+
+Scores Factur-X fields like accuracy mode (pairing guard retained). Also reports
+`chunksUsed`, `attempts`, line-item count / lost / extra / duplicate descriptions,
+and provenance rates. Layout diagnostics flag residual mid-token hard-splits and
+table-to-chunk cell-text containment (tables attach only when every non-empty cell
+string appears in the chunk).
+
+```bash
+swift run --traits MLX extract-eval --mode chunk-merge \
+  --corpus "$EXTRACT_EVAL_CORPUS" \
+  --backend mlx \
+  --model mlx-community/Qwen2.5-7B-Instruct-4bit \
+  --table-detection automatic \
+  --chunk-budget 400 \
+  --output /tmp/eval-chunk-merge
+```
+
+Optional: `--baseline-budget 12000`, `--limit N` for a smoke subset. Anchors are
+skipped; fixtures are not auto-included (corpus-only unless `--fixtures` is set).
+
+Reports: `chunk-merge.jsonl` (metrics) and `chunk-merge.md` (aggregates + concrete
+line-item loss examples).
+
 ## A/B comparison
 
 Only named configuration fields may differ: backend, model id, table detection,
-temperature / retries. Nothing else varies silently.
+temperature / retries, soft context budget. Nothing else varies silently.
 
 ```bash
 swift run extract-eval --mode compare \

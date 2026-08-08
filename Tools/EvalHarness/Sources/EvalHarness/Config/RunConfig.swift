@@ -11,6 +11,10 @@ public struct RunConfig: Sendable, Equatable {
     public var tableDetection: TableDetectionMode
     public var temperature: Double
     public var maxRetries: Int
+    /// Soft character budget before automatic chunking (default matches library 12_000).
+    public var softContextCharacterBudget: Int
+    /// Chunking strategy (default `.automatic`).
+    public var chunkingStrategy: ChunkingStrategy
 
     public init(
         name: String,
@@ -18,7 +22,9 @@ public struct RunConfig: Sendable, Equatable {
         modelId: String? = nil,
         tableDetection: TableDetectionMode = .automatic,
         temperature: Double = 0,
-        maxRetries: Int = 1
+        maxRetries: Int = 1,
+        softContextCharacterBudget: Int = 12_000,
+        chunkingStrategy: ChunkingStrategy = .automatic
     ) {
         self.name = name
         self.backend = backend
@@ -26,11 +32,15 @@ public struct RunConfig: Sendable, Equatable {
         self.tableDetection = tableDetection
         self.temperature = temperature
         self.maxRetries = maxRetries
+        self.softContextCharacterBudget = softContextCharacterBudget
+        self.chunkingStrategy = chunkingStrategy
     }
 
     public var extractionOptions: ExtractionOptions {
         ExtractionOptions(
             maxRetries: maxRetries,
+            chunkingStrategy: chunkingStrategy,
+            softContextCharacterBudget: softContextCharacterBudget,
             temperature: temperature,
             tableDetection: tableDetection
         )
@@ -70,6 +80,7 @@ public enum CLIParseError: Error, CustomStringConvertible {
     case missingValue(String)
     case unknownOption(String)
     case invalidMode(String)
+    case invalidInteger(String, String)
 
     public var description: String {
         switch self {
@@ -80,7 +91,9 @@ public enum CLIParseError: Error, CustomStringConvertible {
         case .unknownOption(let o):
             return "Unknown option \(o)"
         case .invalidMode(let m):
-            return "Invalid mode '\(m)' (use survey|accuracy|compare|anchors)"
+            return "Invalid mode '\(m)' (use survey|accuracy|compare|anchors|chunk-merge)"
+        case .invalidInteger(let o, let v):
+            return "Invalid integer for \(o): '\(v)'"
         }
     }
 }

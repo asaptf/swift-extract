@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Deterministic chunk merge (no LLM merge pass).** Multi-chunk runs still extract each
+  partial with the model, then merge raw JSON trees structurally: objects key-wise;
+  arrays concatenate, drop entries whose text is unsupported by the full document
+  (verbatim/normalized match or ≥50% significant-token coverage), then equality de-dupe
+  (string trim + structural equality — not soft description match); scalars take the
+  sole / agreeing value. Disagreeing scalars are arbitrated by **grounding rank against
+  the full document** (`verbatim` > `normalized` > ungrounded) — same source text as
+  public field signals. Only equal ranks keep the first occurrence and record a
+  ``MergeConflict`` on ``ExtractionSignals/mergeConflicts`` (path + competing compact
+  JSON values; no confidence score). Short 1–2 digit integers are treated as ungrounded
+  for this ranking only (they match free text too freely); distinctive numerics need
+  ≥3 digits or a decimal separator. Root `null` / non-object partials contribute nothing
+  instead of failing the run. The lenient decoder, invariant check, and repair loop still
+  run once on the merged tree (repair uses the full document). Table-to-chunk assignment
+  uses **cell-text containment** (drops the page-index broadcast and the “attach all
+  tables to chunk 0” fallback). Hard-splits prefer line boundaries, then whitespace,
+  within a window so tokens are not cut mid-word when avoidable. Docs:
+  [API](docs/API.md#chunk-merge-deterministic), README limitations.
+
 ### Added
 
 - **Per-field provenance** on `FieldSignal.provenance` (`FieldProvenance`: page index +

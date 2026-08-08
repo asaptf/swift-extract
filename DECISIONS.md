@@ -88,7 +88,16 @@ Custom `init(from:)` generated in an extension (preserves memberwise init):
 5. On failure: retry with previous output + machine-generated field errors
    (Instructor-style), up to `maxRetries`.
 6. Chunking (`.automatic`): if estimated tokens exceed a soft budget, extract
-   per chunk then a final merge pass. Correctness over cleverness.
+   per chunk then **deterministically merge** partial JSON trees (objects key-wise,
+   arrays concat → drop text entries unsupported by the full document → dedupe,
+   scalar conflicts → grounding rank against the full document, equal rank → first
+   wins + `MergeConflict`). An LLM merge pass was measured to invent line items and
+   drop headers; structural merge keeps the repair loop only for decode/invariant
+   failure on the merged tree. “First occurrence wins” alone was measured to prefer
+   early-chunk totals that never saw the real figure; grounding arbitration prefers
+   document-supported values over hallucinations without encoding layout rules like
+   “totals are at the bottom”. Per-chunk ranking was measured to demote correct early
+   values; full-document rank matches public field signals.
 
 ## Adapters
 

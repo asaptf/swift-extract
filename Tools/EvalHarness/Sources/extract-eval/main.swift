@@ -33,6 +33,9 @@ struct ExtractEvalMain {
         var configASpec: String?
         var configBSpec: String?
         var repoRootOverride: String?
+        var chunkBudgetA: Int = ChunkMergeRunner.defaultBudgetA
+        var chunkBudgetB: Int = ChunkMergeRunner.defaultBudgetB
+        var fileLimit: Int?
 
         var args = arguments
         while let arg = args.first {
@@ -68,6 +71,24 @@ struct ExtractEvalMain {
                 configBSpec = try take(&args, for: arg)
             case "--repo-root":
                 repoRootOverride = try take(&args, for: arg)
+            case "--chunk-budget", "--budget-b":
+                let raw = try take(&args, for: arg)
+                guard let v = Int(raw), v > 0 else {
+                    throw CLIParseError.invalidInteger(arg, raw)
+                }
+                chunkBudgetB = v
+            case "--baseline-budget", "--budget-a":
+                let raw = try take(&args, for: arg)
+                guard let v = Int(raw), v > 0 else {
+                    throw CLIParseError.invalidInteger(arg, raw)
+                }
+                chunkBudgetA = v
+            case "--limit":
+                let raw = try take(&args, for: arg)
+                guard let v = Int(raw), v > 0 else {
+                    throw CLIParseError.invalidInteger(arg, raw)
+                }
+                fileLimit = v
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -91,7 +112,7 @@ struct ExtractEvalMain {
         let fixturesURL: URL?
         if let fixtures {
             fixturesURL = URL(fileURLWithPath: fixtures)
-        } else if mode != .compare {
+        } else if mode != .compare && mode != .chunkMerge {
             // Default smoke root: repo fixtures when no explicit corpus-only intent.
             let def = repoRoot.appendingPathComponent("fixtures")
             fixturesURL = FileManager.default.fileExists(atPath: def.path) ? def : nil
@@ -130,7 +151,10 @@ struct ExtractEvalMain {
             includeContent: includeContent,
             configA: configA,
             configB: configB,
-            runAnchors: runAnchors || mode == .anchors
+            runAnchors: (runAnchors || mode == .anchors) && mode != .chunkMerge,
+            chunkBudgetA: chunkBudgetA,
+            chunkBudgetB: chunkBudgetB,
+            fileLimit: fileLimit
         )
 
         let result = try await Harness.run(options)
@@ -188,13 +212,14 @@ struct ExtractEvalMain {
         extract-eval — evaluation harness for swift-extract
 
         Usage:
-          extract-eval --mode survey|accuracy|compare|anchors [options]
+          extract-eval --mode survey|accuracy|compare|anchors|chunk-merge [options]
 
         Modes:
-          survey     Ingest only: timing, char counts, OCR fallback, table shapes/density
-          accuracy   Extract + score against Factur-X/ZUGFeRD ground truth
-          compare    A/B two named configs over the same files
-          anchors    Evaluate named anchor checks only
+          survey       Ingest only: timing, char counts, OCR fallback, table shapes/density
+          accuracy     Extract + score against Factur-X/ZUGFeRD ground truth
+          compare      A/B two named configs over the same files
+          anchors      Evaluate named anchor checks only
+          chunk-merge  Same model/GT; Arm A normal budget vs Arm B forced chunking
 
         Inputs (corpus is never committed):
           --corpus <path>       Document corpus (or EXTRACT_EVAL_CORPUS)
@@ -213,6 +238,12 @@ struct ExtractEvalMain {
         A/B:
           --config-a name:backend=mock,tableDetection=off
           --config-b name:backend=mock,tableDetection=automatic
+
+        Chunk-merge:
+          --chunk-budget <n>    Arm B softContextCharacterBudget (default 400)
+          --baseline-budget <n> Arm A budget (default 12000)
+          --limit <n>           Max files (expensive model runs)
+          Anchors are skipped. Fixtures are not auto-included (pass --fixtures if needed).
 
         Output:
           --output <dir>        Default: eval-out

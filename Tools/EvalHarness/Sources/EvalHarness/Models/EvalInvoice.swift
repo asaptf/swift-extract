@@ -45,6 +45,85 @@ public struct EvalInvoice {
         self.lineItems = lineItems
     }
 
+    /// Arithmetic check: sum(lineTotals) + tax ≈ grandTotal within money tolerance.
+    ///
+    /// Skips (does not fail) when the pieces needed are missing — empty/absent line
+    /// items, a nil grand total, or any line item without a `lineTotal`. Missing
+    /// `taxTotal` is treated as zero (tax-exempt / zero-VAT invoices). Not
+    /// corpus-specific; same spirit as the documented Receipt example.
+    public func validateInvariants() throws {
+        guard let items = lineItems, !items.isEmpty else {
+            InvariantProbe.recordSkip()
+            return
+        }
+        guard let total = grandTotal else {
+            InvariantProbe.recordSkip()
+            return
+        }
+
+        var itemsSum = Decimal.zero
+        for item in items {
+            guard let lineTotal = item.lineTotal else {
+                InvariantProbe.recordSkip()
+                return
+            }
+            itemsSum += lineTotal
+        }
+
+        let tax = taxTotal ?? Decimal.zero
+        let expected = itemsSum + tax
+        if !Extract.isApproximatelyEqual(
+            total,
+            to: expected,
+            tolerance: Extract.defaultMoneyTolerance
+        ) {
+            InvariantProbe.recordCheck(violated: true)
+            throw InvariantValidationError(
+                path: "grandTotal",
+                expected:
+                    "line items sum + tax ≈ \(expected) (tolerance \(Extract.defaultMoneyTolerance))",
+                found: "\(total)"
+            )
+        }
+        InvariantProbe.recordCheck(violated: false)
+    }
+
+    /// Process-local counters so the harness can measure how often the invariant
+    /// fires and whether repair recovers. Reset per arm extraction.
+    public enum InvariantProbe: Sendable {
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var checks = 0
+        nonisolated(unsafe) private static var violations = 0
+        nonisolated(unsafe) private static var skips = 0
+
+        public static func reset() {
+            lock.lock()
+            checks = 0
+            violations = 0
+            skips = 0
+            lock.unlock()
+        }
+
+        public static func recordSkip() {
+            lock.lock()
+            skips += 1
+            lock.unlock()
+        }
+
+        public static func recordCheck(violated: Bool) {
+            lock.lock()
+            checks += 1
+            if violated { violations += 1 }
+            lock.unlock()
+        }
+
+        public static func snapshot() -> (checks: Int, violations: Int, skips: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (checks, violations, skips)
+        }
+    }
+
     @Extractable
     public struct EvalLineItem {
         public var description: String?
