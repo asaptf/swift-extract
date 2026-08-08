@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-08
+
+Measurement, provenance, and a merge that no longer asks a model to do arithmetic.
+
+The theme is verifiability. The evaluation harness moves into the repository, so the
+numbers in these notes can be reproduced rather than trusted. Per-field provenance says
+*where* on the page each value came from, so a human can check a result instead of
+re-reading the document. And chunked extraction merges deterministically.
+
+Two design rules of mine were measured and thrown out along the way, and the most
+useful finding is about a feature shipped in 0.2.0 — see the invariant note under
+**Changed**. Where something did not improve, it says so.
+
 ### Changed
 
 - **Deterministic chunk merge (no LLM merge pass).** Multi-chunk runs still extract each
@@ -27,6 +40,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tables to chunk 0” fallback). Hard-splits prefer line boundaries, then whitespace,
   within a window so tokens are not cut mid-word when avoidable. Docs:
   [API](docs/API.md#chunk-merge-deterministic), README limitations.
+
+  Measured on 75 Factur-X invoices, Qwen2.5 7B 4-bit, `temperature = 0`, chunking forced
+  with a 400-character budget:
+
+  | | single pass | LLM merge | deterministic |
+  | --- | ---: | ---: | ---: |
+  | invoice number | 98.7% | 26.5% | **97.3%** |
+  | issue date | 93.2% | 32.8% | **91.8%** |
+  | grand total | 96.0% | 45.6% | 18.9% |
+  | duplicate line descriptions | 2 | 25 | **14** |
+  | hard failures | 0 | 7 | **0** |
+
+  Stated plainly because it is the part that matters: **chunking costs real accuracy and
+  no merge rule recovers it.** Totals collapse because no single chunk holds both the line
+  items and the totals block, and a merge can only choose among what the partials produced.
+  Two rules were measured and discarded on the way here — "keep the first occurrence" is
+  deterministic but reliably wrong, since totals print at the end and the first chunk's
+  guess wins; grounding as arbiter fails too, because the dominant error is a wrong number
+  that genuinely appears in the document (a line amount used as a total). Avoid chunking
+  when the document fits.
+
+- **Documented what an invariant costs.** `validateInvariants()` couples the fields it
+  names, so the least reliable one decides the fate of all of them — and the README only
+  told the flattering half of that ("if you got a value, the invariants held"). Measured
+  with the documented sum-equals-total check on the same 75 invoices: on **chunked** runs
+  it roughly doubles correct totals (18.9% → 38.7%), because the total is what goes wrong
+  there. On **single-pass** runs it makes matters worse in absolute terms — grand total
+  96.0% → 61.3%, with 24 outright failures where there had been none — because a correct
+  total is discarded whenever the line items come back messy. The check is behaving
+  exactly as designed; the cost is that a usable extract dies with it. No behaviour change,
+  only honest documentation: couple fields of comparable reliability, expect extra
+  attempts, and decide deliberately whether a partial answer beats no answer.
 
 ### Added
 
