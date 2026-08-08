@@ -332,9 +332,15 @@ public enum Grounding: String, Sendable {
     case absent        // not found in source (inferred or hallucinated) — look, don't auto-reject
 }
 
+public struct FieldProvenance: Sendable {
+    public let pageIndex: Int     // 0-based
+    public let boundingBox: CGRect  // normalised top-left (see coordinate convention)
+}
+
 public struct FieldSignal: Sendable {
     public let path: String       // e.g. "total", "items[0].name"
     public let grounding: Grounding
+    public let provenance: FieldProvenance?  // nil when reformatted / absent / no geometry
 }
 
 public struct ExtractionSignals: Sendable {
@@ -344,6 +350,39 @@ public struct ExtractionSignals: Sendable {
     public var absentFieldPaths: [String] { get }
 }
 ```
+
+Each ``FieldSignal`` carries both **whether** the value was found (`grounding`) and
+**where** (`provenance`). There is no parallel array to zip by index.
+
+### Coordinate convention
+
+PDF text-layer geometry and Vision OCR both convert into **one** space before boxes
+leave the adapters:
+
+| Property | Convention |
+| --- | --- |
+| Origin | **Top-left** of the page (PDF media box) or image |
+| X axis | Increases to the **right** |
+| Y axis | Increases **downward** |
+| Units | **Normalised** to page/image size (`x`, `y`, `width`, `height` ∈ `[0, 1]`) |
+| Page | `pageIndex` is **0-based**; one provenance = one page |
+
+Map to pixels (top-left image origin): `(x * W, y * H, width * W, height * H)`.
+
+### Multi-block and multi-page values
+
+- **Same page:** multi-word / multi-line matches use the **axis-aligned union** of the
+  matching blocks’ boxes.
+- **Across pages:** a single `CGRect` cannot span pages. Provenance reports the
+  **lowest `pageIndex`** that contributes matching blocks and unions **only that
+  page’s** boxes; later pages are omitted (not guessed).
+- **Table cells:** when the value matches a reconstructed cell, the **cell** rect is
+  preferred over a wider enclosing text block.
+
+`provenance` is `nil` for `reformatted` and `absent` leaves, for plain-text sources
+without boxes, and whenever a textual match cannot be tied to a rectangle — never a
+guessed box. The library returns geometry only; it does not draw or ship an
+image-rendering API.
 
 ### How grounding is computed
 
@@ -355,12 +394,15 @@ public struct ExtractionSignals: Sendable {
    case-folds, strips diacritics, treats punctuation as word boundaries, and collapses
    whitespace — so a comma-joined address still matches the same content printed across
    newlines.
-5. Leaves with `format == "date-time"` and numeric leaves are reported as
+5. When grounding is `verbatim` or `normalized` and the document has positioned blocks
+   (and optional table cells), the same match is localised per block / cell to fill
+   `provenance` (cell preferred; multi-block union as above).
+6. Leaves with `format == "date-time"` and numeric leaves are reported as
    **`reformatted`** when they do not appear literally — the model routinely rewrites
    `15 MAR 1990` → `1990-03-15` and `12.50` / `$12.50` → `12.5`. Treating those as
-   `absent` would make the signal pure noise.
-6. Booleans and nulls are not groundable against free text; they are reported as
-   `reformatted`.
+   `absent` would make the signal pure noise. Those leaves carry no provenance.
+7. Booleans and nulls are not groundable against free text; they are reported as
+   `reformatted` with no provenance.
 
 ### When `absent` can fire
 
@@ -388,10 +430,17 @@ for field in result.signals.fields where field.grounding == .absent {
     print("Review:", field.path)
 }
 print(result.signals.absentFieldPaths)
+
+// Highlight boxes in a review UI (coordinates: top-left normalised — see above).
+for field in result.signals.fields {
+    if let box = field.provenance {
+        print(field.path, "page", box.pageIndex, box.boundingBox)
+    }
+}
 ```
 
-Signals are computed on every extraction (substring search over the document text). There
-is no opt-out flag.
+Signals are computed on every extraction (substring search over the document text, plus
+geometry location when boxes exist). There is no opt-out flag.
 
 ---
 

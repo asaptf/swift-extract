@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // MARK: - Public signal types
@@ -47,16 +48,72 @@ public enum Grounding: String, Sendable, Equatable, CaseIterable {
     case absent
 }
 
+/// Where an extracted leaf was located on the source page or image.
+///
+/// Present only when the value was found in positioned geometry (PDF text layer or
+/// Vision OCR). ``FieldSignal/provenance`` is `nil` for ``Grounding/reformatted`` and
+/// ``Grounding/absent`` leaves, for plain-text sources without boxes, and whenever a
+/// textual match cannot be localised to a rectangle — never a guessed box.
+///
+/// ## Coordinate convention
+///
+/// Both PDF text-layer ingestion and Vision OCR convert into **one** space:
+///
+/// | Property | Convention |
+/// | --- | --- |
+/// | Origin | **Top-left** of the page (PDF media box) or image |
+/// | X axis | Increases to the **right** |
+/// | Y axis | Increases **downward** |
+/// | Units | **Normalised** to the page/image size: `x`, `y`, `width`, `height` ∈ `[0, 1]` |
+/// | Page | ``pageIndex`` is **0-based**; each provenance refers to a **single** page |
+///
+/// PDFKit’s native character bounds use a bottom-left origin in points; the PDF adapter
+/// flips and normalises them. Vision’s `boundingBox` is bottom-left normalised; the OCR
+/// adapter flips Y the same way. Callers can map a box to pixels as
+/// `(x * W, y * H, width * W, height * H)` with a top-left image origin.
+///
+/// ## Multi-block and multi-page values
+///
+/// A value that spans several blocks on the **same** page (multi-word PDF fragments,
+/// multi-line address lines) resolves to the **axis-aligned union** of those blocks’
+/// boxes on that page.
+///
+/// When a value spans **pages**, a single `CGRect` cannot represent the full extent.
+/// Provenance then uses the **lowest ``pageIndex``** that contributes matching blocks
+/// and unions **only that page’s** boxes; later pages are omitted rather than guessed.
+/// Prefer table-cell geometry when the value matches a reconstructed cell — cell rects
+/// are tighter than the enclosing text blocks.
+public struct FieldProvenance: Sendable, Equatable {
+    /// Zero-based page index (images are page `0`).
+    public let pageIndex: Int
+    /// Normalised top-left bounding box (see type docs).
+    public let boundingBox: CGRect
+
+    public init(pageIndex: Int, boundingBox: CGRect) {
+        self.pageIndex = pageIndex
+        self.boundingBox = boundingBox
+    }
+}
+
 /// Grounding evidence for one leaf field of an extraction result.
+///
+/// One row carries both **whether** the value was found (``grounding``) and **where**
+/// (``provenance``). Callers must not zip two parallel lists by index.
 public struct FieldSignal: Sendable, Equatable {
     /// Dotted / indexed path, e.g. `total`, `items[0].name`.
     public let path: String
     /// How this leaf relates to the source document text.
     public let grounding: Grounding
+    /// Page + box when the value was localised in positioned geometry; otherwise `nil`.
+    ///
+    /// Always `nil` for ``Grounding/reformatted`` and ``Grounding/absent``. Also `nil`
+    /// when the source has no boxes or the match could not be tied to a rectangle.
+    public let provenance: FieldProvenance?
 
-    public init(path: String, grounding: Grounding) {
+    public init(path: String, grounding: Grounding, provenance: FieldProvenance? = nil) {
         self.path = path
         self.grounding = grounding
+        self.provenance = provenance
     }
 }
 
@@ -128,6 +185,15 @@ enum FieldGrounding {
         }
     }
 
+    /// Positioned fragment used for provenance location.
+    private struct PositionedFragment {
+        let text: String
+        let pageIndex: Int
+        let box: CGRect
+        /// True when this fragment is a reconstructed table cell (preferred over blocks).
+        let isTableCell: Bool
+    }
+
     /// Precomputed source views shared across every leaf of one ``compute`` call.
     ///
     /// Without this, each string leaf re-folds the full source (case / diacritic /
@@ -139,13 +205,67 @@ enum FieldGrounding {
         let normalized: String
         let numericSkeleton: String
         let stats: ComputeStats?
+        /// Table cells first, then blocks, for location. Empty when no geometry.
+        let fragments: [PositionedFragment]
+        /// Blocks (non-cell) grouped by page in reading order for multi-block unions.
+        let blocksByPage: [Int: [PositionedFragment]]
 
-        init(sourceText: String, stats: ComputeStats?) {
+        init(
+            sourceText: String,
+            stats: ComputeStats?,
+            blocks: [ExtractedDocument.Block],
+            tables: [ExtractedTable]
+        ) {
             raw = sourceText
             self.stats = stats
             normalized = FieldGrounding.normalizeForSearch(sourceText, stats: stats)
             numericSkeleton = FieldGrounding.numericSkeleton(sourceText, stats: stats)
+
+            var cells: [PositionedFragment] = []
+            for table in tables {
+                for cell in table.cells {
+                    guard let box = cell.boundingBox else { continue }
+                    let text = cell.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { continue }
+                    cells.append(
+                        PositionedFragment(
+                            text: text,
+                            pageIndex: table.pageIndex,
+                            box: box,
+                            isTableCell: true
+                        )
+                    )
+                }
+            }
+
+            var blockFragments: [PositionedFragment] = []
+            for block in blocks {
+                guard let box = block.boundingBox, let page = block.pageIndex else { continue }
+                let text = block.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                blockFragments.append(
+                    PositionedFragment(
+                        text: text,
+                        pageIndex: page,
+                        box: box,
+                        isTableCell: false
+                    )
+                )
+            }
+
+            // Prefer cells when locating: they appear first in `fragments`.
+            fragments = cells + blockFragments
+            blocksByPage = Dictionary(grouping: blockFragments, by: \.pageIndex).mapValues {
+                FieldGrounding.sortedReadingOrder($0)
+            }
         }
+
+        var hasGeometry: Bool { !fragments.isEmpty }
+    }
+
+    private struct LeafOutcome {
+        let grounding: Grounding
+        let provenance: FieldProvenance?
     }
 
     /// Compute per-leaf grounding of `value` against `sourceText`.
@@ -155,7 +275,35 @@ enum FieldGrounding {
         attempts: Int,
         chunksUsed: Int
     ) -> ExtractionSignals {
-        compute(value: value, sourceText: sourceText, attempts: attempts, chunksUsed: chunksUsed, stats: nil)
+        compute(
+            value: value,
+            sourceText: sourceText,
+            attempts: attempts,
+            chunksUsed: chunksUsed,
+            blocks: [],
+            tables: [],
+            stats: nil
+        )
+    }
+
+    /// Compute grounding with optional positioned geometry for provenance.
+    static func compute<T: Extractable>(
+        value: T,
+        sourceText: String,
+        attempts: Int,
+        chunksUsed: Int,
+        blocks: [ExtractedDocument.Block],
+        tables: [ExtractedTable]
+    ) -> ExtractionSignals {
+        compute(
+            value: value,
+            sourceText: sourceText,
+            attempts: attempts,
+            chunksUsed: chunksUsed,
+            blocks: blocks,
+            tables: tables,
+            stats: nil
+        )
     }
 
     /// Package-test helper: same as ``compute(value:sourceText:attempts:chunksUsed:)``
@@ -165,6 +313,27 @@ enum FieldGrounding {
         sourceText: String,
         attempts: Int,
         chunksUsed: Int,
+        stats: ComputeStats?
+    ) -> ExtractionSignals {
+        compute(
+            value: value,
+            sourceText: sourceText,
+            attempts: attempts,
+            chunksUsed: chunksUsed,
+            blocks: [],
+            tables: [],
+            stats: stats
+        )
+    }
+
+    /// Full compute entry used by ``Extract`` and tests.
+    static func compute<T: Extractable>(
+        value: T,
+        sourceText: String,
+        attempts: Int,
+        chunksUsed: Int,
+        blocks: [ExtractedDocument.Block],
+        tables: [ExtractedTable],
         stats: ComputeStats?
     ) -> ExtractionSignals {
         let encoder = JSONEncoder()
@@ -177,7 +346,12 @@ enum FieldGrounding {
             return ExtractionSignals(attempts: attempts, chunksUsed: chunksUsed, fields: [])
         }
 
-        let source = SourceIndex(sourceText: sourceText, stats: stats)
+        let source = SourceIndex(
+            sourceText: sourceText,
+            stats: stats,
+            blocks: blocks,
+            tables: tables
+        )
         var fields: [FieldSignal] = []
         walk(
             json: root,
@@ -212,7 +386,7 @@ enum FieldGrounding {
                 // an explicit row so callers can distinguish considered-null from
                 // a missing signal.
                 guard let childJSON = object[key], !(childJSON is NSNull) else {
-                    fields.append(FieldSignal(path: childPath, grounding: .reformatted))
+                    fields.append(FieldSignal(path: childPath, grounding: .reformatted, provenance: nil))
                     seen.insert(key)
                     continue
                 }
@@ -223,7 +397,7 @@ enum FieldGrounding {
                 guard let childSchema = properties[key] else { continue }
                 let childPath = path.isEmpty ? key : "\(path).\(key)"
                 if childJSON is NSNull {
-                    fields.append(FieldSignal(path: childPath, grounding: .reformatted))
+                    fields.append(FieldSignal(path: childPath, grounding: .reformatted, provenance: nil))
                 } else {
                     walk(json: childJSON, schema: childSchema, path: childPath, source: source, fields: &fields)
                 }
@@ -239,79 +413,113 @@ enum FieldGrounding {
 
         case .string:
             if schema.format == "date-time" {
-                fields.append(FieldSignal(path: path, grounding: dateGrounding(json: json, source: source)))
+                let outcome = dateGrounding(json: json, source: source)
+                fields.append(
+                    FieldSignal(path: path, grounding: outcome.grounding, provenance: outcome.provenance)
+                )
             } else if let string = json as? String {
-                fields.append(FieldSignal(path: path, grounding: stringGrounding(string, source: source)))
+                let outcome = stringGrounding(string, source: source)
+                fields.append(
+                    FieldSignal(path: path, grounding: outcome.grounding, provenance: outcome.provenance)
+                )
             } else {
                 // Encoded non-string for a string schema (unusual) — treat as reformatted.
-                fields.append(FieldSignal(path: path, grounding: .reformatted))
+                fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil))
             }
 
         case .number, .integer:
-            fields.append(FieldSignal(path: path, grounding: numberGrounding(json: json, source: source)))
+            let outcome = numberGrounding(json: json, source: source)
+            fields.append(
+                FieldSignal(path: path, grounding: outcome.grounding, provenance: outcome.provenance)
+            )
 
         case .boolean:
             // Booleans are not groundable against free text; report reformatted.
-            fields.append(FieldSignal(path: path, grounding: .reformatted))
+            fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil))
 
         case .null:
             // Explicit null is not groundable; report reformatted.
-            fields.append(FieldSignal(path: path, grounding: .reformatted))
+            fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil))
         }
     }
 
     // MARK: Leaf grounding
 
-    private static func stringGrounding(_ value: String, source: SourceIndex) -> Grounding {
+    private static func stringGrounding(_ value: String, source: SourceIndex) -> LeafOutcome {
         if value.isEmpty {
             // Empty string has no informative substring; treat as absent.
-            return .absent
+            return LeafOutcome(grounding: .absent, provenance: nil)
         }
         if source.raw.contains(value) {
-            return .verbatim
+            let provenance = locate(
+                value: value,
+                mode: .verbatim,
+                source: source
+            )
+            return LeafOutcome(grounding: .verbatim, provenance: provenance)
         }
         let normalizedValue = normalizeForSearch(value, stats: source.stats)
         if !normalizedValue.isEmpty, source.normalized.contains(normalizedValue) {
-            return .normalized
+            let provenance = locate(
+                value: value,
+                mode: .normalized,
+                source: source
+            )
+            return LeafOutcome(grounding: .normalized, provenance: provenance)
         }
-        return .absent
+        return LeafOutcome(grounding: .absent, provenance: nil)
     }
 
-    private static func dateGrounding(json: Any, source: SourceIndex) -> Grounding {
+    private static func dateGrounding(json: Any, source: SourceIndex) -> LeafOutcome {
         // Prefer string encodings produced by our custom date encoder.
         if let string = json as? String {
             if source.raw.contains(string) {
-                return .verbatim
+                return LeafOutcome(
+                    grounding: .verbatim,
+                    provenance: locate(value: string, mode: .verbatim, source: source)
+                )
             }
             // Also try date-only prefix of an ISO timestamp.
             if string.count >= 10 {
                 let prefix = String(string.prefix(10))
                 if prefix.contains("-"), source.raw.contains(prefix) {
-                    return .verbatim
+                    return LeafOutcome(
+                        grounding: .verbatim,
+                        provenance: locate(value: prefix, mode: .verbatim, source: source)
+                    )
                 }
             }
             let normalized = normalizeForSearch(string, stats: source.stats)
             if !normalized.isEmpty, source.normalized.contains(normalized) {
-                return .normalized
+                return LeafOutcome(
+                    grounding: .normalized,
+                    provenance: locate(value: string, mode: .normalized, source: source)
+                )
             }
         } else if let number = json as? NSNumber {
             let string = number.stringValue
             if source.raw.contains(string) {
-                return .verbatim
+                return LeafOutcome(
+                    grounding: .verbatim,
+                    provenance: locate(value: string, mode: .verbatim, source: source)
+                )
             }
         }
         // Schema-declared date-time: model reformats human dates → ISO. Not absent.
-        return .reformatted
+        return LeafOutcome(grounding: .reformatted, provenance: nil)
     }
 
-    private static func numberGrounding(json: Any, source: SourceIndex) -> Grounding {
+    private static func numberGrounding(json: Any, source: SourceIndex) -> LeafOutcome {
         let candidates = numberSearchCandidates(json)
         for candidate in candidates where !candidate.isEmpty {
             // Sign-aware: positive `12.5` must not ground as `.verbatim` against
             // source `Refund: -12.50` just because the digits sit inside the
             // signed occurrence.
             if containsNumericCandidate(source.raw, candidate: candidate) {
-                return .verbatim
+                return LeafOutcome(
+                    grounding: .verbatim,
+                    provenance: locateNumeric(candidate: candidate, mode: .verbatim, source: source)
+                )
             }
         }
         // Currency / grouping variants: compare digit+separator runs (signs kept).
@@ -322,13 +530,254 @@ enum FieldGrounding {
             if !skeleton.isEmpty,
                 containsNumericCandidate(source.numericSkeleton, candidate: skeleton)
             {
-                return .normalized
+                return LeafOutcome(
+                    grounding: .normalized,
+                    provenance: locateNumeric(candidate: candidate, mode: .normalized, source: source)
+                )
             }
         }
         // Unmatched numbers are reformatted, never absent. Small integers would match
         // spuriously across free text if we flagged missing digits as absent, so a
         // fabricated number is intentionally never reported as absent. See Grounding docs.
-        return .reformatted
+        return LeafOutcome(grounding: .reformatted, provenance: nil)
+    }
+
+    // MARK: Provenance location
+
+    private enum LocateMode {
+        case verbatim
+        case normalized
+    }
+
+    /// Locate `value` in positioned geometry. Prefers table cells, then single blocks,
+    /// then multi-block unions (same page). Cross-page matches report the first page only.
+    private static func locate(
+        value: String,
+        mode: LocateMode,
+        source: SourceIndex
+    ) -> FieldProvenance? {
+        guard source.hasGeometry, !value.isEmpty else { return nil }
+
+        // 1. Table cells (exact equality preferred — tighter rect than blocks).
+        if let cell = bestCellMatch(value: value, mode: mode, fragments: source.fragments) {
+            return FieldProvenance(pageIndex: cell.pageIndex, boundingBox: cell.box)
+        }
+
+        // 2. Single block contains the value.
+        if let block = bestSingleBlockMatch(value: value, mode: mode, source: source) {
+            return FieldProvenance(pageIndex: block.pageIndex, boundingBox: block.box)
+        }
+
+        // 3. Multi-block window on each page (reading order); first page wins.
+        if let multi = multiBlockMatch(value: value, mode: mode, source: source) {
+            return multi
+        }
+
+        // 4. Cross-page span: union only the first page's contributing boxes.
+        return crossPageMatch(value: value, mode: mode, source: source)
+    }
+
+    private static func locateNumeric(
+        candidate: String,
+        mode: LocateMode,
+        source: SourceIndex
+    ) -> FieldProvenance? {
+        // Prefer raw candidate location; for normalized also try digit skeleton forms.
+        if let found = locate(value: candidate, mode: mode, source: source) {
+            return found
+        }
+        if mode == .normalized {
+            // Currency in source often looks like "$12.50" while candidate is "12.5".
+            // Block text may still contain the digits; try normalized locate with
+            // skeleton-friendly variants already covered by multi-block contains.
+            let skeleton = numericSkeleton(candidate, stats: source.stats)
+            if !skeleton.isEmpty, skeleton != candidate {
+                return locate(value: skeleton, mode: .normalized, source: source)
+            }
+        }
+        return nil
+    }
+
+    private static func bestCellMatch(
+        value: String,
+        mode: LocateMode,
+        fragments: [PositionedFragment]
+    ) -> PositionedFragment? {
+        let cells = fragments.filter(\.isTableCell)
+        // Exact equality first.
+        for cell in cells {
+            if textMatches(cell.text, value: value, mode: mode, requireFullEquality: true) {
+                return cell
+            }
+        }
+        // Then cell text contains value (or value contains cell for short cells).
+        for cell in cells {
+            if textMatches(cell.text, value: value, mode: mode, requireFullEquality: false) {
+                return cell
+            }
+        }
+        return nil
+    }
+
+    private static func bestSingleBlockMatch(
+        value: String,
+        mode: LocateMode,
+        source: SourceIndex
+    ) -> PositionedFragment? {
+        let blocks = source.fragments.filter { !$0.isTableCell }
+        // Prefer the smallest box among matches (tightest highlight).
+        var best: PositionedFragment?
+        var bestArea = CGFloat.greatestFiniteMagnitude
+        for block in blocks {
+            guard textMatches(block.text, value: value, mode: mode, requireFullEquality: false)
+            else { continue }
+            let area = block.box.width * block.box.height
+            if area < bestArea {
+                bestArea = area
+                best = block
+            }
+        }
+        return best
+    }
+
+    private static func multiBlockMatch(
+        value: String,
+        mode: LocateMode,
+        source: SourceIndex
+    ) -> FieldProvenance? {
+        let pages = source.blocksByPage.keys.sorted()
+        for page in pages {
+            guard let blocks = source.blocksByPage[page], blocks.count >= 2 else { continue }
+            if let box = smallestMatchingWindow(blocks: blocks, value: value, mode: mode) {
+                return FieldProvenance(pageIndex: page, boundingBox: box)
+            }
+        }
+        return nil
+    }
+
+    private static func crossPageMatch(
+        value: String,
+        mode: LocateMode,
+        source: SourceIndex
+    ) -> FieldProvenance? {
+        let pages = source.blocksByPage.keys.sorted()
+        guard pages.count >= 2 else { return nil }
+
+        // Flatten in page order; each fragment remembers its page.
+        var ordered: [PositionedFragment] = []
+        for page in pages {
+            ordered.append(contentsOf: source.blocksByPage[page] ?? [])
+        }
+        guard ordered.count >= 2 else { return nil }
+
+        // Find the smallest window whose joined text matches; report first page only.
+        let n = ordered.count
+        var bestStart: Int?
+        var bestEnd: Int?
+        var bestSpan = Int.max
+
+        for start in 0..<n {
+            var joined = ""
+            for end in start..<n {
+                if end > start { joined += " " }
+                joined += ordered[end].text
+                if textMatches(joined, value: value, mode: mode, requireFullEquality: false) {
+                    let span = end - start
+                    if span < bestSpan {
+                        bestSpan = span
+                        bestStart = start
+                        bestEnd = end
+                    }
+                    break  // smallest end for this start
+                }
+                let maxLen = max(value.count * 4, value.count + 80)
+                if joined.count > maxLen { break }
+            }
+        }
+
+        guard let start = bestStart, let end = bestEnd else { return nil }
+        let window = Array(ordered[start...end])
+        let firstPage = window.map(\.pageIndex).min() ?? window[0].pageIndex
+        let pageBoxes = window.filter { $0.pageIndex == firstPage }.map(\.box)
+        guard let first = pageBoxes.first else { return nil }
+        let union = pageBoxes.dropFirst().reduce(first) { $0.union($1) }
+        return FieldProvenance(pageIndex: firstPage, boundingBox: union)
+    }
+
+    /// Smallest consecutive reading-order window on one page whose joined text matches.
+    private static func smallestMatchingWindow(
+        blocks: [PositionedFragment],
+        value: String,
+        mode: LocateMode
+    ) -> CGRect? {
+        let n = blocks.count
+        var bestBox: CGRect?
+        var bestSpan = Int.max
+
+        for start in 0..<n {
+            var joined = ""
+            var union: CGRect?
+            for end in start..<n {
+                if end > start { joined += " " }
+                joined += blocks[end].text
+                union = union.map { $0.union(blocks[end].box) } ?? blocks[end].box
+
+                if textMatches(joined, value: value, mode: mode, requireFullEquality: false) {
+                    let span = end - start
+                    if span < bestSpan, let union {
+                        bestSpan = span
+                        bestBox = union
+                    }
+                    break
+                }
+
+                let maxLen = max(value.count * 4, value.count + 80)
+                if joined.count > maxLen { break }
+            }
+        }
+        return bestBox
+    }
+
+    private static func textMatches(
+        _ haystack: String,
+        value: String,
+        mode: LocateMode,
+        requireFullEquality: Bool
+    ) -> Bool {
+        switch mode {
+        case .verbatim:
+            if requireFullEquality {
+                return haystack == value
+            }
+            return haystack.contains(value)
+        case .normalized:
+            let nh = normalizeForSearch(haystack, stats: nil)
+            let nv = normalizeForSearch(value, stats: nil)
+            guard !nh.isEmpty, !nv.isEmpty else { return false }
+            if requireFullEquality {
+                return nh == nv
+            }
+            return nh.contains(nv)
+        }
+    }
+
+    private static func sortedReadingOrder(_ fragments: [PositionedFragment]) -> [PositionedFragment] {
+        fragments.sorted { a, b in
+            if !sameReadingLine(a.box, b.box) {
+                return a.box.minY < b.box.minY
+            }
+            return a.box.minX < b.box.minX
+        }
+    }
+
+    private static func sameReadingLine(_ a: CGRect, _ b: CGRect) -> Bool {
+        let overlap = max(0, min(a.maxY, b.maxY) - max(a.minY, b.minY))
+        let minH = min(a.height, b.height)
+        if minH > 0, overlap / minH >= 0.25 {
+            return true
+        }
+        let tol = max(max(a.height, b.height) * 0.6, 0.008)
+        return abs(a.midY - b.midY) <= tol
     }
 
     /// Substring match that respects numeric sign boundaries.

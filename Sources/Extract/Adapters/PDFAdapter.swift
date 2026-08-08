@@ -68,11 +68,15 @@ enum PDFAdapter {
         )
     }
 
-    /// Extract per-word blocks with normalized top-left bounding boxes from a PDF text layer.
+    /// Extract per-word blocks with normalised top-left bounding boxes from a PDF text layer.
     ///
     /// Uses `PDFDocument` character-index selections (more reliable than
     /// `PDFPage.characterBounds(at:)` alone on many commercial PDFs). Words are split on
     /// whitespace / newlines in `page.string`, which is aligned with `numberOfCharacters`.
+    ///
+    /// Boxes are converted from PDFKit’s bottom-left **points** space into the library
+    /// convention documented on ``FieldProvenance`` (top-left origin, y down, normalised
+    /// `0...1` per page).
     static func wordBlocksFromTextLayer(
         page: PDFPage,
         pageIndex: Int,
@@ -137,7 +141,8 @@ enum PDFAdapter {
         return blocks
     }
 
-    /// PDFKit uses bottom-left origin; adapters expose top-left normalized boxes.
+    /// PDFKit uses bottom-left origin in points; expose top-left normalised boxes
+    /// (``FieldProvenance`` convention).
     private static func normalizedTopLeft(_ rect: CGRect, pageBounds: CGRect) -> CGRect {
         let x = (rect.minX - pageBounds.minX) / pageBounds.width
         let y = 1.0 - ((rect.maxY - pageBounds.minY) / pageBounds.height)

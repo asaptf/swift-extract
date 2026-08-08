@@ -148,7 +148,9 @@ public enum Extract {
                     value: value,
                     sourceText: sourceText,
                     attempts: attempts,
-                    chunksUsed: chunks.count
+                    chunksUsed: chunks.count,
+                    blocks: document.blocks,
+                    tables: tables
                 )
                 return ExtractionResult(
                     value: value,
@@ -281,7 +283,9 @@ public enum Extract {
                     value: value,
                     sourceText: sourceText,
                     attempts: attempts,
-                    chunksUsed: chunksUsed
+                    chunksUsed: chunksUsed,
+                    blocks: document.blocks,
+                    tables: tables
                 )
                 return ExtractionResult(
                     value: value,

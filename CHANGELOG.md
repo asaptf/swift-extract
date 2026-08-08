@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-field provenance** on `FieldSignal.provenance` (`FieldProvenance`: page index +
+  bounding box). Extends the existing grounding row so each leaf answers both *was it
+  found* and *where* — no parallel array to zip. Geometry is resolved per positioned
+  block (and prefers a reconstructed **table-cell** rect when the value matches a cell).
+  Multi-block values on one page use the axis-aligned **union**; cross-page values report
+  the **first page only** (a single `CGRect` cannot span pages). `reformatted` / `absent`
+  leaves and sources without boxes carry `nil` provenance rather than a guess. Coordinate
+  convention (PDF text layer and Vision OCR): **top-left origin, y down, normalised
+  `0…1`, per page** — documented on `FieldProvenance` and in [API](docs/API.md). Debug
+  PNGs (test / harness helpers only, not public library API) can overlay boxes on
+  `fixtures/invoice.pdf` and `fixtures/receipt.png`. Docs: README trust section,
+  [API signals](docs/API.md#extraction-signals-grounding).
+
 - **Evaluation harness** (`Tools/EvalHarness/`). Separate SPM package (not linked
   from the root package) that path-depends on `Extract` so library consumers never
   pull measurement code into their graph. Modes: **survey** (ingest timing, char

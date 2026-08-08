@@ -91,7 +91,7 @@ The last row is the point: those are not features we shipped, they are types a u
 ### How much can you trust a result?
 
 Structured extraction fails at the validation boundary, not on the happy path. A malformed
-response is easy to catch; a well-typed wrong one is the problem. Three answers, in descending
+response is easy to catch; a well-typed wrong one is the problem. Four answers, in descending
 order of how much they actually prove:
 
 **Arithmetic — `MRZParser`.** Where a document has a machine-readable zone, the fields are parsed
@@ -118,6 +118,15 @@ deliberately **no confidence score**: nothing behind one would be calibrated, an
 gets thresholded for auto-accept. Note the limit — `absent` only fires for text fields, since a
 `quantity: 2` matches almost any document. A confidently wrong *number* is caught by invariants,
 not by grounding.
+
+**Provenance — `field.provenance`.** When a leaf was found in positioned geometry (PDF text layer
+or Vision OCR), the same signal row carries a **page index and normalised bounding box** so a
+review UI can highlight the source rectangle instead of asking the operator to re-read the
+document. Coordinates use one convention for both ingestion paths: **top-left origin, y down,
+normalised `0…1`, per page**. Multi-line values union their blocks; cross-page values report the
+first page only. Table-cell matches prefer the tighter cell rect. `reformatted` / `absent` leaves
+and plain-text sources carry `nil` provenance — never a guess. The library returns geometry only;
+it does not draw. See [API → Extraction signals](docs/API.md#extraction-signals-grounding).
 
 ### Identity documents & sensitive data
 
@@ -399,7 +408,7 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
 
 - [ ] Audio input (Speech framework)
 - [ ] Streaming partials for `@Extractable`
-- [ ] Per-field provenance (bounding boxes)
+- [x] Per-field provenance (bounding boxes on `FieldSignal.provenance`)
 - [x] Evaluation harness (`Tools/EvalHarness/` — survey, Factur-X accuracy, A/B, anchors)
 - [ ] First-class guided-generation bridge when AnyLanguageModel passes schemas through
 

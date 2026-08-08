@@ -94,7 +94,8 @@ enum OCRAdapter {
             let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             let box = observation.boundingBox
-            // Convert to top-left normalized coords for provenance.
+            // Vision uses bottom-left normalised coords; convert to the library
+            // convention (top-left origin, y down, normalised) — see FieldProvenance.
             let topLeft = CGRect(
                 x: box.minX,
                 y: 1.0 - box.maxY,

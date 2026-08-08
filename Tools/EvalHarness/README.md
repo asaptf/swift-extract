@@ -91,6 +91,22 @@ Share of successfully ingested files that yield at least one table with:
 This is the metric that exposed pure XY-cut fragmentation (36/90 on the pdf/
 slice after the corridor discriminator).
 
+## Provenance overlays (debug)
+
+`ProvenanceOverlayRenderer` draws `FieldSignal.provenance` rectangles on a page
+raster and writes a PNG. It is **harness-only** — the Extract library returns
+geometry and does not render images.
+
+Root `swift test` also writes smoke overlays for the two ingestion paths to:
+
+```
+Tools/EvalHarness/eval-out/provenance/invoice-pdf-text-layer.png
+Tools/EvalHarness/eval-out/provenance/receipt-vision-ocr.png
+```
+
+Open those after a test run to verify PDF text-layer and Vision OCR boxes agree
+on the documented top-left normalised convention.
+
 ## Backends
 
 | Backend | Default | Notes |

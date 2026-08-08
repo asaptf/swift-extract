@@ -6,7 +6,11 @@ struct ExtractedDocument: Sendable, Equatable {
     struct Block: Sendable, Equatable {
         var text: String
         var pageIndex: Int?
-        /// Normalized bounding box in page/image coordinates (origin top-left), if known.
+        /// Normalised page/image box when known.
+        ///
+        /// Convention (shared by PDF text-layer and Vision OCR adapters): origin at the
+        /// **top-left**, x right / y down, components in `0...1` relative to the page
+        /// media box or image size. See ``FieldProvenance``.
         var boundingBox: CGRect?
     }
 
