@@ -118,6 +118,26 @@ on the documented top-left normalised convention.
 **If a backend cannot initialise, the harness fails loudly.** It never silently
 falls back to mock — mock accuracy numbers look precise and mean nothing.
 
+### Guided generation (`guided=true|false`)
+
+Opt-in token-level constrained JSON decoding via AnyLanguageModel’s
+`ConstrainedJSONGenerator` (MLX). Default **`false`** — same free-form prompt
+path as production.
+
+| Key | Values | Notes |
+| --- | --- | --- |
+| `guided` | `true` / `false` | Session/backend switch (not `ExtractionOptions`) |
+
+- **MLX + `guided=true`**: runtime `ExtractionSchema` → `GenerationSchema`, constrained
+  decode. Fails loudly if the model cannot honour a schema (no silent fallback).
+- **Mock + `guided=true`**: **ignored** (mock has no schema engine). The compare
+  report prints an explicit `mock-ignores-guided` / WARNING so a mock A/B can
+  never be mistaken for a real measurement.
+
+Requires a patched AnyLanguageModel (see
+`experiments/anylanguagemodel-runtime-schema-constrained-generation.patch`) wired
+with `swift package edit` for local experiment builds.
+
 ### MLX / xcodebuild
 
 MLX is **not** a silent requirement of the default build.
@@ -241,7 +261,11 @@ line-item loss examples).
 ## A/B comparison
 
 Only named configuration fields may differ: backend, model id, table detection,
-temperature / retries, soft context budget. Nothing else varies silently.
+temperature / retries, soft context budget, **guided**. Nothing else varies
+silently.
+
+Config spec keys: `backend=`, `model=`, `tables=` / `tableDetection=`,
+`guided=true|false`.
 
 ```bash
 swift run extract-eval --mode compare \
@@ -249,6 +273,17 @@ swift run extract-eval --mode compare \
   --config-a off:backend=mlx,tableDetection=off,model=mlx-community/Qwen2.5-7B-Instruct-4bit \
   --config-b auto:backend=mlx,tableDetection=automatic,model=mlx-community/Qwen2.5-7B-Instruct-4bit \
   --output /tmp/eval-ab
+```
+
+Guided vs prompt-only (MLX measurement arm):
+
+```bash
+swift run --traits MLX extract-eval --mode compare \
+  --corpus "$EXTRACT_EVAL_CORPUS" \
+  --fixtures ../../fixtures \
+  --config-a "baseline:backend=mlx,guided=false,model=mlx-community/Qwen2.5-1.5B-Instruct-4bit" \
+  --config-b "guided:backend=mlx,guided=true,model=mlx-community/Qwen2.5-1.5B-Instruct-4bit" \
+  --output /tmp/eval-guided-ab
 ```
 
 ## Output
@@ -286,8 +321,8 @@ extract-eval --mode survey|accuracy|compare|anchors
   --table-detection automatic|off
   --anchors <file.json>
   --no-anchors
-  --config-a name:backend=…,tableDetection=…
-  --config-b name:backend=…,tableDetection=…
+  --config-a name:backend=…,tableDetection=…,guided=true|false
+  --config-b name:backend=…,tableDetection=…,guided=true|false
   --output <dir>
   --include-content          # privacy opt-in
 ```

@@ -33,16 +33,30 @@ public enum BackendError: Error, CustomStringConvertible {
 
 public enum BackendFactory {
     /// Build an ``ExtractionSession``. Never silently falls back between backends.
+    ///
+    /// - Parameter guidedGeneration: Opt-in constrained JSON path on the session.
+    ///   **Mock ignores this flag** (no schema engine); the run report must surface that
+    ///   so a mock A/B cannot be mistaken for a real guided measurement.
     public static func makeSession(
         backend: BackendKind,
         modelId: String?,
-        temperature: Double = 0
+        temperature: Double = 0,
+        guidedGeneration: Bool = false
     ) throws -> ExtractionSession {
         switch backend {
         case .mock:
-            return .mock(MockLanguageModel(responder: mockResponder), temperature: temperature)
+            // Mock has no token-level schema engine; store the flag for reporting only.
+            return .mock(
+                MockLanguageModel(responder: mockResponder),
+                temperature: temperature,
+                guidedGeneration: guidedGeneration
+            )
         case .mlx:
-            return try makeMLXSession(modelId: modelId, temperature: temperature)
+            return try makeMLXSession(
+                modelId: modelId,
+                temperature: temperature,
+                guidedGeneration: guidedGeneration
+            )
         }
     }
 
@@ -106,12 +120,20 @@ public enum BackendFactory {
 
     // MARK: - MLX
 
-    private static func makeMLXSession(modelId: String?, temperature: Double) throws -> ExtractionSession {
+    private static func makeMLXSession(
+        modelId: String?,
+        temperature: Double,
+        guidedGeneration: Bool
+    ) throws -> ExtractionSession {
         #if MLX
             let id = modelId ?? "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
             do {
                 let model = MLXLanguageModel(modelId: id)
-                return ExtractionSession(model: model, temperature: temperature)
+                return ExtractionSession(
+                    model: model,
+                    temperature: temperature,
+                    guidedGeneration: guidedGeneration
+                )
             } catch {
                 // MLXLanguageModel init is non-throwing today; keep a catch for API drift.
                 throw BackendError.mlxInitFailed(String(describing: error))
@@ -119,6 +141,7 @@ public enum BackendFactory {
         #else
             _ = modelId
             _ = temperature
+            _ = guidedGeneration
             throw BackendError.mlxNotCompiled
         #endif
     }

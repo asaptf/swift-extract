@@ -201,6 +201,18 @@ public enum ReportWriter {
         var mdLines: [String] = [
             "# A/B comparison",
             "",
+            "Arm A: \(summary.configALabel)",
+            "",
+            "Arm B: \(summary.configBLabel)",
+            "",
+        ]
+        if let caveat = summary.mockGuidedCaveat {
+            mdLines.append(contentsOf: [
+                "> **Note:** \(caveat)",
+                "",
+            ])
+        }
+        mdLines.append(contentsOf: [
             "| | \(summary.configA) | \(summary.configB) | Δ (pp) |",
             "| --- | ---: | ---: | ---: |",
             "| Overall accuracy | \(pct(summary.summaryA.overallAccuracy)) | \(pct(summary.summaryB.overallAccuracy)) | \(fmtSigned(summary.overallDeltaPP)) |",
@@ -210,7 +222,7 @@ public enum ReportWriter {
             "",
             "| Field | Δ pp |",
             "| --- | ---: |",
-        ]
+        ])
         for key in summary.perFieldDeltaPP.keys.sorted() {
             mdLines.append("| \(key) | \(fmtSigned(summary.perFieldDeltaPP[key]!)) |")
         }
@@ -593,10 +605,11 @@ public enum ReportWriter {
     private static func jsonObjectLine(_ obj: [String: Any]) -> String {
         // Deterministic key order via JSONSerialization + sorted rebuild is awkward;
         // use JSONSerialization (stable enough for equal inputs on same runtime).
-        guard let data = try? JSONSerialization.data(
-            withJSONObject: sortedJSON(obj),
-            options: [.sortedKeys]
-        ),
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: sortedJSON(obj),
+                options: [.sortedKeys]
+            ),
             let s = String(data: data, encoding: .utf8)
         else { return "{}" }
         return s

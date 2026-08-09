@@ -1,0 +1,168 @@
+diff --git a/Sources/AnyLanguageModel/LanguageModel.swift b/Sources/AnyLanguageModel/LanguageModel.swift
+index 635de68..cbdfb94 100644
+--- a/Sources/AnyLanguageModel/LanguageModel.swift
++++ b/Sources/AnyLanguageModel/LanguageModel.swift
+@@ -39,6 +39,26 @@ public protocol LanguageModel: Sendable {
+         issues: [LanguageModelFeedback.Issue],
+         desiredOutput: Transcript.Entry?
+     ) -> Data
++
++    /// Whether this model implements token-level constrained JSON generation for a
++    /// runtime ``GenerationSchema`` (not only a static ``Generable/generationSchema``).
++    ///
++    /// Defaults to `false`. Backends with a ``TokenBackend`` (e.g. MLX) override to `true`.
++    var supportsSchemaConstrainedGeneration: Bool { get }
++
++    /// Generate structured content constrained by a runtime ``GenerationSchema``.
++    ///
++    /// The default implementation preserves historical behaviour: it ignores `schema`
++    /// and routes through ``respond(within:to:generating:includeSchemaInPrompt:options:)``
++    /// with ``GeneratedContent`` (whose static schema is a placeholder). Models that own a
++    /// token-level constrained decoder override this method and honour `schema`.
++    func respond(
++        within session: LanguageModelSession,
++        to prompt: Prompt,
++        schema: GenerationSchema,
++        includeSchemaInPrompt: Bool,
++        options: GenerationOptions
++    ) async throws -> LanguageModelSession.Response<GeneratedContent>
+ }
+ 
+ // MARK: - Default Implementation
+@@ -67,6 +87,25 @@ extension LanguageModel {
+     ) -> Data {
+         return Data()
+     }
++
++    public var supportsSchemaConstrainedGeneration: Bool { false }
++
++    public func respond(
++        within session: LanguageModelSession,
++        to prompt: Prompt,
++        schema: GenerationSchema,
++        includeSchemaInPrompt: Bool,
++        options: GenerationOptions
++    ) async throws -> LanguageModelSession.Response<GeneratedContent> {
++        _ = schema
++        return try await respond(
++            within: session,
++            to: prompt,
++            generating: GeneratedContent.self,
++            includeSchemaInPrompt: includeSchemaInPrompt,
++            options: options
++        )
++    }
+ }
+ 
+ extension LanguageModel where UnavailableReason == Never {
+diff --git a/Sources/AnyLanguageModel/LanguageModelSession.swift b/Sources/AnyLanguageModel/LanguageModelSession.swift
+index ba38550..e5e6b8a 100644
+--- a/Sources/AnyLanguageModel/LanguageModelSession.swift
++++ b/Sources/AnyLanguageModel/LanguageModelSession.swift
+@@ -347,12 +347,49 @@ extension LanguageModelSession {
+         includeSchemaInPrompt: Bool = true,
+         options: GenerationOptions = GenerationOptions()
+     ) async throws -> Response<GeneratedContent> {
+-        try await respond(
+-            to: prompt,
+-            generating: GeneratedContent.self,
+-            includeSchemaInPrompt: includeSchemaInPrompt,
+-            options: options
+-        )
++        try await wrapRespond {
++            let promptEntry = Transcript.Entry.prompt(
++                Transcript.Prompt(
++                    segments: [.text(.init(content: prompt.description))],
++                    options: options,
++                    responseFormat: nil
++                )
++            )
++            withMutation(keyPath: \.transcript) {
++                state.withLock { $0.transcript.append(promptEntry) }
++            }
++
++            let response = try await model.respond(
++                within: self,
++                to: prompt,
++                schema: schema,
++                includeSchemaInPrompt: includeSchemaInPrompt,
++                options: options
++            )
++
++            let textContent: String
++            if case .string(let str) = response.rawContent.kind {
++                textContent = str
++            } else {
++                textContent = response.rawContent.jsonString
++            }
++
++            let responseEntry = Transcript.Entry.response(
++                Transcript.Response(
++                    assetIDs: [],
++                    segments: [.text(.init(content: textContent))]
++                )
++            )
++
++            withMutation(keyPath: \.transcript) {
++                state.withLock { lockedState in
++                    lockedState.transcript.append(contentsOf: response.transcriptEntries)
++                    lockedState.transcript.append(responseEntry)
++                }
++            }
++
++            return response
++        }
+     }
+ 
+     @discardableResult
+diff --git a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
+index 0ef37ef..c48de20 100644
+--- a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
++++ b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
+@@ -858,6 +858,46 @@ import Foundation
+             )
+         }
+ 
++        /// MLX owns a ``TokenBackend`` and can honour a runtime ``GenerationSchema``.
++        public var supportsSchemaConstrainedGeneration: Bool { true }
++
++        /// Token-level constrained JSON generation for a runtime schema.
++        ///
++        /// Unlike ``respond(within:to:generating:includeSchemaInPrompt:options:)``, this entry
++        /// point does not depend on a static ``Generable/generationSchema`` and is the path used
++        /// by ``LanguageModelSession/respond(to:schema:includeSchemaInPrompt:options:)``.
++        public func respond(
++            within session: LanguageModelSession,
++            to prompt: Prompt,
++            schema: GenerationSchema,
++            includeSchemaInPrompt: Bool,
++            options: GenerationOptions
++        ) async throws -> LanguageModelSession.Response<GeneratedContent> {
++            guard Self.acquireGenerationSlot(for: session) else {
++                throw Self.concurrentSessionError()
++            }
++            defer { Self.releaseGenerationSlot(for: session) }
++
++            let context = try await loadContext(modelId: modelId, hub: hub, directory: directory)
++            let generationScope = beginGenerationScope()
++            defer { endGenerationScope(generationScope) }
++
++            let jsonString = try await generateStructuredJSON(
++                context: context,
++                session: session,
++                prompt: prompt,
++                schema: schema,
++                options: options,
++                includeSchemaInPrompt: includeSchemaInPrompt
++            )
++            let generatedContent = try GeneratedContent(json: jsonString)
++            return LanguageModelSession.Response(
++                content: generatedContent,
++                rawContent: generatedContent,
++                transcriptEntries: ArraySlice([])
++            )
++        }
++
+         public func respond<Content>(
+             within session: LanguageModelSession,
+             to prompt: Prompt,

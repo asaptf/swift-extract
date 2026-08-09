@@ -138,6 +138,11 @@ public enum Harness {
             messages.append(
                 "Compare \(a.name) vs \(b.name): overall Δ \(String(format: "%+.2f", summary.overallDeltaPP)) pp; changed files \(summary.changedFiles.count)"
             )
+            messages.append("  A: \(a.reportLabel)")
+            messages.append("  B: \(b.reportLabel)")
+            if let caveat = summary.mockGuidedCaveat {
+                messages.append("  WARNING: \(caveat)")
+            }
 
         case .chunkMerge:
             let root = options.corpus ?? options.fixtures ?? options.repoRoot
@@ -215,7 +220,9 @@ public enum Harness {
     }
 
     /// Walk up from `start` looking for Package.swift + fixtures/ (repo root).
-    public static func findRepoRoot(from start: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+    public static func findRepoRoot(
+        from start: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    )
         -> URL
     {
         var dir = start.standardizedFileURL

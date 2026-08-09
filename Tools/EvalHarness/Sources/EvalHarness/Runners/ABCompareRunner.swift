@@ -16,6 +16,11 @@ public struct ABFileDelta: Sendable {
 public struct ABCompareSummary: Sendable {
     public var configA: String
     public var configB: String
+    /// Full report labels (backend, guided, mock caveat tokens).
+    public var configALabel: String
+    public var configBLabel: String
+    /// Set when either arm is mock with guided=true so results are not misread.
+    public var mockGuidedCaveat: String?
     public var summaryA: AccuracySummary
     public var summaryB: AccuracySummary
     public var perFieldDeltaPP: [String: Double]
@@ -83,9 +88,21 @@ public enum ABCompareRunner {
             }
         }
 
+        var mockCaveat: String?
+        let mockGuided =
+            (configA.backend == .mock && configA.guidedGeneration)
+            || (configB.backend == .mock && configB.guidedGeneration)
+        if mockGuided {
+            mockCaveat =
+                "Mock backend ignores guided=true (no schema engine). This A/B is not a real constrained-generation measurement."
+        }
+
         return ABCompareSummary(
             configA: configA.name,
             configB: configB.name,
+            configALabel: configA.reportLabel,
+            configBLabel: configB.reportLabel,
+            mockGuidedCaveat: mockCaveat,
             summaryA: a,
             summaryB: b,
             perFieldDeltaPP: deltas,

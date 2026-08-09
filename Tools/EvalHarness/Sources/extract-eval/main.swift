@@ -165,7 +165,7 @@ struct ExtractEvalMain {
         return result.exitCode
     }
 
-    /// Parse `name:backend=mock,tableDetection=off,model=…`
+    /// Parse `name:backend=mock,tableDetection=off,model=…,guided=true|false`
     static func parseConfigSpec(_ raw: String?, defaultName: String) throws -> RunConfig {
         guard let raw, !raw.isEmpty else {
             throw CLIParseError.missingValue("--config-a / --config-b")
@@ -174,6 +174,7 @@ struct ExtractEvalMain {
         var backend = BackendKind.mock
         var modelId: String?
         var tableDetection = TableDetectionMode.automatic
+        var guidedGeneration = false
         var rest = raw
         if let colon = raw.firstIndex(of: ":") {
             name = String(raw[..<colon])
@@ -189,6 +190,8 @@ struct ExtractEvalMain {
                 modelId = kv[1]
             case "tabledetection", "table-detection", "tables":
                 tableDetection = try TableDetectionParsing.parse(kv[1])
+            case "guided", "guidedgeneration", "guided-generation":
+                guidedGeneration = try parseBoolFlag(kv[1], key: kv[0])
             default:
                 break
             }
@@ -197,8 +200,20 @@ struct ExtractEvalMain {
             name: name,
             backend: backend,
             modelId: modelId,
-            tableDetection: tableDetection
+            tableDetection: tableDetection,
+            guidedGeneration: guidedGeneration
         )
+    }
+
+    static func parseBoolFlag(_ raw: String, key: String) throws -> Bool {
+        switch raw.lowercased() {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            throw CLIParseError.invalidBoolean(key, raw)
+        }
     }
 
     static func take(_ args: inout [String], for option: String) throws -> String {
@@ -236,8 +251,10 @@ struct ExtractEvalMain {
           --no-anchors          Skip anchor evaluation (survey/accuracy)
 
         A/B:
-          --config-a name:backend=mock,tableDetection=off
-          --config-b name:backend=mock,tableDetection=automatic
+          --config-a name:backend=mock,tableDetection=off,guided=false
+          --config-b name:backend=mock,tableDetection=automatic,guided=true
+          Config keys: backend, model, tables|tableDetection, guided=true|false
+          (Mock ignores guided — report notes mock-ignores-guided; use mlx for real A/B.)
 
         Chunk-merge:
           --chunk-budget <n>    Arm B softContextCharacterBudget (default 400)

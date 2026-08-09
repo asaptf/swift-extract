@@ -15,6 +15,9 @@ public struct RunConfig: Sendable, Equatable {
     public var softContextCharacterBudget: Int
     /// Chunking strategy (default `.automatic`).
     public var chunkingStrategy: ChunkingStrategy
+    /// Opt-in token-level constrained JSON generation (session/backend capability).
+    /// Default `false`. Mock backends ignore this flag (no schema engine).
+    public var guidedGeneration: Bool
 
     public init(
         name: String,
@@ -24,7 +27,8 @@ public struct RunConfig: Sendable, Equatable {
         temperature: Double = 0,
         maxRetries: Int = 1,
         softContextCharacterBudget: Int = 12_000,
-        chunkingStrategy: ChunkingStrategy = .automatic
+        chunkingStrategy: ChunkingStrategy = .automatic,
+        guidedGeneration: Bool = false
     ) {
         self.name = name
         self.backend = backend
@@ -34,6 +38,7 @@ public struct RunConfig: Sendable, Equatable {
         self.maxRetries = maxRetries
         self.softContextCharacterBudget = softContextCharacterBudget
         self.chunkingStrategy = chunkingStrategy
+        self.guidedGeneration = guidedGeneration
     }
 
     public var extractionOptions: ExtractionOptions {
@@ -46,11 +51,27 @@ public struct RunConfig: Sendable, Equatable {
         )
     }
 
+    /// Human-readable config summary for reports (includes guided + mock caveat).
+    public var reportLabel: String {
+        var parts = [
+            "name=\(name)",
+            "backend=\(backend.rawValue)",
+            "tableDetection=\(TableDetectionParsing.label(tableDetection))",
+            "model=\(modelId ?? "-")",
+            "guided=\(guidedGeneration)",
+        ]
+        if backend == .mock && guidedGeneration {
+            parts.append("note=mock-ignores-guided")
+        }
+        return parts.joined(separator: " ")
+    }
+
     public func makeSession() throws -> ExtractionSession {
         try BackendFactory.makeSession(
             backend: backend,
             modelId: modelId,
-            temperature: temperature
+            temperature: temperature,
+            guidedGeneration: guidedGeneration
         )
     }
 }
@@ -81,6 +102,7 @@ public enum CLIParseError: Error, CustomStringConvertible {
     case unknownOption(String)
     case invalidMode(String)
     case invalidInteger(String, String)
+    case invalidBoolean(String, String)
 
     public var description: String {
         switch self {
@@ -94,6 +116,8 @@ public enum CLIParseError: Error, CustomStringConvertible {
             return "Invalid mode '\(m)' (use survey|accuracy|compare|anchors|chunk-merge)"
         case .invalidInteger(let o, let v):
             return "Invalid integer for \(o): '\(v)'"
+        case .invalidBoolean(let o, let v):
+            return "Invalid boolean for \(o): '\(v)' (use true|false)"
         }
     }
 }
