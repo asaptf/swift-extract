@@ -101,9 +101,16 @@ public enum AccuracyRunner {
         config: RunConfig,
         includeContent: Bool = false
     ) async throws -> AccuracySummary {
+        // Install arithmetic gate for this arm; restore previous so A/B arms and
+        // later runs do not leak state. validateInvariants has no options channel.
+        let previousInvariant = EvalInvoice.InvariantProbe.isArithmeticEnabled
+        EvalInvoice.InvariantProbe.setArithmeticEnabled(config.arithmeticInvariant)
+        defer { EvalInvoice.InvariantProbe.setArithmeticEnabled(previousInvariant) }
+
         let session = try config.makeSession()
         var records: [AccuracyFileRecord] = []
-        for url in files {
+        let started = Date()
+        for (index, url) in files.enumerated() {
             let rec = await scoreOne(
                 url: url,
                 rootForRelative: rootForRelative,
@@ -112,6 +119,12 @@ public enum AccuracyRunner {
                 includeContent: includeContent
             )
             records.append(rec)
+            // Progress to stderr only — model runs take minutes per file and a silent
+            // run is indistinguishable from a hung one. Reports stay metrics-only.
+            let elapsed = Int(Date().timeIntervalSince(started))
+            let line =
+                "[\(config.name) \(index + 1)/\(files.count)] \(rec.relativePath) (\(elapsed)s)\n"
+            FileHandle.standardError.write(Data(line.utf8))
         }
         records.sort { $0.relativePath < $1.relativePath }
         return AccuracySummary.reduce(records)

@@ -138,6 +138,28 @@ Requires a patched AnyLanguageModel (see
 `experiments/anylanguagemodel-runtime-schema-constrained-generation.patch`) wired
 with `swift package edit` for local experiment builds.
 
+### Arithmetic invariant (`invariant=true|false`)
+
+`EvalInvoice.validateInvariants()` checks `sum(lineTotals) + tax ≈ grandTotal`.
+Default **`true`** — historical behaviour; a violated check can end the file in
+`validationFailed` with **no scored fields** (`0.0% (0/0)` rather than low
+accuracy). For low-capacity model A/B (guided vs prompt-only), both arms should
+usually set **`invariant=false`** so the run measures the decoder, not the
+arithmetic gate.
+
+| Key | Values | Notes |
+| --- | --- | --- |
+| `invariant` | `true` / `false` | Per-arm in compare; also accuracy CLI |
+
+Aliases: `arithmeticInvariant`, `arithmetic-invariant`.
+
+- **Accuracy mode**: `--invariant true|false` (alias `--arithmetic-invariant`).
+  Default `true`. The accuracy report `Config:` line includes `invariant=…`
+  (and `note=arithmetic-invariant-off` when disabled).
+- **Compare mode**: each `--config-a` / `--config-b` may set `invariant=`
+  independently (invariant-on vs off A/B is expressible). Arm labels in the
+  compare report always show `invariant=true|false`.
+
 ### MLX / xcodebuild
 
 MLX is **not** a silent requirement of the default build.
@@ -261,11 +283,11 @@ line-item loss examples).
 ## A/B comparison
 
 Only named configuration fields may differ: backend, model id, table detection,
-temperature / retries, soft context budget, **guided**. Nothing else varies
-silently.
+temperature / retries, soft context budget, **guided**, **invariant**. Nothing
+else varies silently.
 
 Config spec keys: `backend=`, `model=`, `tables=` / `tableDetection=`,
-`guided=true|false`.
+`guided=true|false`, `invariant=true|false`.
 
 ```bash
 swift run extract-eval --mode compare \
@@ -275,14 +297,15 @@ swift run extract-eval --mode compare \
   --output /tmp/eval-ab
 ```
 
-Guided vs prompt-only (MLX measurement arm):
+Guided vs prompt-only (MLX measurement arm), arithmetic invariant off on both
+arms so scores reflect the decoder:
 
 ```bash
 swift run --traits MLX extract-eval --mode compare \
   --corpus "$EXTRACT_EVAL_CORPUS" \
   --fixtures ../../fixtures \
-  --config-a "baseline:backend=mlx,guided=false,model=mlx-community/Qwen2.5-1.5B-Instruct-4bit" \
-  --config-b "guided:backend=mlx,guided=true,model=mlx-community/Qwen2.5-1.5B-Instruct-4bit" \
+  --config-a "baseline:backend=mlx,guided=false,invariant=false,model=mlx-community/Qwen2.5-1.5B-Instruct-4bit" \
+  --config-b "guided:backend=mlx,guided=true,invariant=false,model=mlx-community/Qwen2.5-1.5B-Instruct-4bit" \
   --output /tmp/eval-guided-ab
 ```
 
@@ -319,10 +342,11 @@ extract-eval --mode survey|accuracy|compare|anchors
   --backend mock|mlx         # default mock
   --model <id>
   --table-detection automatic|off
+  --invariant true|false     # accuracy mode; default true (alias: --arithmetic-invariant)
   --anchors <file.json>
   --no-anchors
-  --config-a name:backend=…,tableDetection=…,guided=true|false
-  --config-b name:backend=…,tableDetection=…,guided=true|false
+  --config-a name:backend=…,tableDetection=…,guided=true|false,invariant=true|false
+  --config-b name:backend=…,tableDetection=…,guided=true|false,invariant=true|false
   --output <dir>
   --include-content          # privacy opt-in
 ```

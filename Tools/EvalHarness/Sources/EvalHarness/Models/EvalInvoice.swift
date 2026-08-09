@@ -51,7 +51,13 @@ public struct EvalInvoice {
     /// items, a nil grand total, or any line item without a `lineTotal`. Missing
     /// `taxTotal` is treated as zero (tax-exempt / zero-VAT invoices). Not
     /// corpus-specific; same spirit as the documented Receipt example.
+    ///
+    /// When ``InvariantProbe/isArithmeticEnabled`` is `false` (run-level switch),
+    /// this is a no-op so low-capacity models can still produce scored fields
+    /// instead of dying entirely in `validationFailed`.
     public func validateInvariants() throws {
+        guard InvariantProbe.isArithmeticEnabled else { return }
+
         guard let items = lineItems, !items.isEmpty else {
             InvariantProbe.recordSkip()
             return
@@ -90,11 +96,17 @@ public struct EvalInvoice {
 
     /// Process-local counters so the harness can measure how often the invariant
     /// fires and whether repair recovers. Reset per arm extraction.
+    ///
+    /// Also owns the run-level arithmetic gate: ``Extractable/validateInvariants()``
+    /// has no options channel, so the harness installs enable/disable here before
+    /// an arm's extractions (see ``RunConfig/arithmeticInvariant``).
     public enum InvariantProbe: Sendable {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var checks = 0
         nonisolated(unsafe) private static var violations = 0
         nonisolated(unsafe) private static var skips = 0
+        /// Default `true` — matches historical harness behaviour.
+        nonisolated(unsafe) private static var arithmeticEnabled = true
 
         public static func reset() {
             lock.lock()
@@ -102,6 +114,19 @@ public struct EvalInvoice {
             violations = 0
             skips = 0
             lock.unlock()
+        }
+
+        /// Enable or disable the arithmetic check for subsequent extractions.
+        public static func setArithmeticEnabled(_ enabled: Bool) {
+            lock.lock()
+            arithmeticEnabled = enabled
+            lock.unlock()
+        }
+
+        public static var isArithmeticEnabled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return arithmeticEnabled
         }
 
         public static func recordSkip() {

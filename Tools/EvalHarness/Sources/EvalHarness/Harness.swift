@@ -30,6 +30,9 @@ public struct HarnessOptions: Sendable {
     public var chunkBudgetB: Int
     /// Optional max files for expensive model runs (chunk-merge / accuracy smoke).
     public var fileLimit: Int?
+    /// Accuracy-mode arithmetic invariant (`EvalInvoice`). Default `true`.
+    /// Compare mode uses each arm's ``RunConfig/arithmeticInvariant`` instead.
+    public var arithmeticInvariant: Bool
 
     public init(
         mode: HarnessMode,
@@ -47,7 +50,8 @@ public struct HarnessOptions: Sendable {
         runAnchors: Bool = true,
         chunkBudgetA: Int = ChunkMergeRunner.defaultBudgetA,
         chunkBudgetB: Int = ChunkMergeRunner.defaultBudgetB,
-        fileLimit: Int? = nil
+        fileLimit: Int? = nil,
+        arithmeticInvariant: Bool = true
     ) {
         self.mode = mode
         self.corpus = corpus
@@ -65,6 +69,7 @@ public struct HarnessOptions: Sendable {
         self.chunkBudgetA = chunkBudgetA
         self.chunkBudgetB = chunkBudgetB
         self.fileLimit = fileLimit
+        self.arithmeticInvariant = arithmeticInvariant
     }
 }
 
@@ -106,7 +111,8 @@ public enum Harness {
                 name: "accuracy",
                 backend: options.backend,
                 modelId: options.modelId,
-                tableDetection: options.tableDetection
+                tableDetection: options.tableDetection,
+                arithmeticInvariant: options.arithmeticInvariant
             )
             let summary = try await AccuracyRunner.run(
                 files: files,
@@ -114,10 +120,11 @@ public enum Harness {
                 config: config,
                 includeContent: options.includeContent
             )
+            // Use full reportLabel so invariant mode is never silent in the report.
             try ReportWriter.writeAccuracy(
                 summary,
                 outputDir: options.outputDir,
-                configLabel: configLabel
+                configLabel: config.reportLabel
             )
             messages.append(
                 "Accuracy: overall \(String(format: "%.1f%%", summary.overallAccuracy * 100)) (\(summary.overallCorrect)/\(summary.overallTotal)); present-in-text \(String(format: "%.1f%%", summary.presentAccuracy * 100)); unpaired \(summary.unpaired); GT files \(summary.withGroundTruth)"

@@ -18,6 +18,11 @@ public struct RunConfig: Sendable, Equatable {
     /// Opt-in token-level constrained JSON generation (session/backend capability).
     /// Default `false`. Mock backends ignore this flag (no schema engine).
     public var guidedGeneration: Bool
+    /// When `true` (default), `EvalInvoice.validateInvariants()` enforces
+    /// sum(lineTotals) + tax ≈ grandTotal. Set `false` so low-capacity models
+    /// still yield scored fields instead of `validationFailed` with empty scores.
+    /// Per-arm in compare runs; observable in ``reportLabel``.
+    public var arithmeticInvariant: Bool
 
     public init(
         name: String,
@@ -28,7 +33,8 @@ public struct RunConfig: Sendable, Equatable {
         maxRetries: Int = 1,
         softContextCharacterBudget: Int = 12_000,
         chunkingStrategy: ChunkingStrategy = .automatic,
-        guidedGeneration: Bool = false
+        guidedGeneration: Bool = false,
+        arithmeticInvariant: Bool = true
     ) {
         self.name = name
         self.backend = backend
@@ -39,6 +45,7 @@ public struct RunConfig: Sendable, Equatable {
         self.softContextCharacterBudget = softContextCharacterBudget
         self.chunkingStrategy = chunkingStrategy
         self.guidedGeneration = guidedGeneration
+        self.arithmeticInvariant = arithmeticInvariant
     }
 
     public var extractionOptions: ExtractionOptions {
@@ -51,7 +58,7 @@ public struct RunConfig: Sendable, Equatable {
         )
     }
 
-    /// Human-readable config summary for reports (includes guided + mock caveat).
+    /// Human-readable config summary for reports (includes guided, invariant, mock caveat).
     public var reportLabel: String {
         var parts = [
             "name=\(name)",
@@ -59,9 +66,13 @@ public struct RunConfig: Sendable, Equatable {
             "tableDetection=\(TableDetectionParsing.label(tableDetection))",
             "model=\(modelId ?? "-")",
             "guided=\(guidedGeneration)",
+            "invariant=\(arithmeticInvariant)",
         ]
         if backend == .mock && guidedGeneration {
             parts.append("note=mock-ignores-guided")
+        }
+        if !arithmeticInvariant {
+            parts.append("note=arithmetic-invariant-off")
         }
         return parts.joined(separator: " ")
     }
