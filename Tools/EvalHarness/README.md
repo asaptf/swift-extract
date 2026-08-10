@@ -118,6 +118,30 @@ on the documented top-left normalised convention.
 **If a backend cannot initialise, the harness fails loudly.** It never silently
 falls back to mock — mock accuracy numbers look precise and mean nothing.
 
+### Arithmetic invariant (`invariant=true|false`)
+
+`EvalInvoice.validateInvariants()` checks `sum(lineTotals) + tax ≈ grandTotal`.
+Default **`true`** — historical behaviour; a violated check can end the file in
+`validationFailed` with **no scored fields** (`0.0% (0/0)` rather than low
+accuracy). For low-capacity model measurement, set **`invariant=false`** so the
+run measures the extractor, not the arithmetic gate.
+
+| Key | Values | Notes |
+| --- | --- | --- |
+| `invariant` | `true` / `false` | Per-arm in compare; also accuracy CLI |
+
+Aliases: `arithmeticInvariant`, `arithmetic-invariant`.
+
+- **Accuracy mode**: `--invariant true|false` (alias `--arithmetic-invariant`).
+  Default `true`. The accuracy report `Config:` line includes `invariant=…`
+  (and `note=arithmetic-invariant-off` when disabled).
+- **Compare mode**: each `--config-a` / `--config-b` may set `invariant=`
+  independently (invariant-on vs off A/B is expressible). Arm labels in the
+  compare report always show `invariant=true|false`.
+
+Per-file progress during accuracy/compare extraction is written to **stderr**
+only (`[arm i/n] path (elapsed s)`). Report files stay metrics-only.
+
 ### MLX / xcodebuild
 
 MLX is **not** a silent requirement of the default build.
@@ -241,7 +265,11 @@ line-item loss examples).
 ## A/B comparison
 
 Only named configuration fields may differ: backend, model id, table detection,
-temperature / retries, soft context budget. Nothing else varies silently.
+temperature / retries, soft context budget, **invariant**. Nothing else varies
+silently.
+
+Config spec keys: `backend=`, `model=`, `tables=` / `tableDetection=`,
+`invariant=true|false`.
 
 ```bash
 swift run extract-eval --mode compare \
@@ -249,6 +277,17 @@ swift run extract-eval --mode compare \
   --config-a off:backend=mlx,tableDetection=off,model=mlx-community/Qwen2.5-7B-Instruct-4bit \
   --config-b auto:backend=mlx,tableDetection=automatic,model=mlx-community/Qwen2.5-7B-Instruct-4bit \
   --output /tmp/eval-ab
+```
+
+Arithmetic invariant on vs off (same backend/model), so scores can reflect the
+extractor rather than the gate:
+
+```bash
+swift run extract-eval --mode compare \
+  --fixtures ../../fixtures \
+  --config-a "inv-on:backend=mock,invariant=true" \
+  --config-b "inv-off:backend=mock,invariant=false" \
+  --output /tmp/eval-invariant-ab
 ```
 
 ## Output
@@ -284,10 +323,11 @@ extract-eval --mode survey|accuracy|compare|anchors
   --backend mock|mlx         # default mock
   --model <id>
   --table-detection automatic|off
+  --invariant true|false     # accuracy mode; default true (alias: --arithmetic-invariant)
   --anchors <file.json>
   --no-anchors
-  --config-a name:backend=…,tableDetection=…
-  --config-b name:backend=…,tableDetection=…
+  --config-a name:backend=…,tableDetection=…,invariant=true|false
+  --config-b name:backend=…,tableDetection=…,invariant=true|false
   --output <dir>
   --include-content          # privacy opt-in
 ```

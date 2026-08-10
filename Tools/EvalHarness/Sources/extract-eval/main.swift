@@ -36,6 +36,8 @@ struct ExtractEvalMain {
         var chunkBudgetA: Int = ChunkMergeRunner.defaultBudgetA
         var chunkBudgetB: Int = ChunkMergeRunner.defaultBudgetB
         var fileLimit: Int?
+        /// Accuracy-mode default: arithmetic invariant on (historical behaviour).
+        var arithmeticInvariant = true
 
         var args = arguments
         while let arg = args.first {
@@ -89,6 +91,9 @@ struct ExtractEvalMain {
                     throw CLIParseError.invalidInteger(arg, raw)
                 }
                 fileLimit = v
+            case "--invariant", "--arithmetic-invariant":
+                let raw = try take(&args, for: arg)
+                arithmeticInvariant = try parseBoolFlag(raw, key: arg)
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -154,7 +159,8 @@ struct ExtractEvalMain {
             runAnchors: (runAnchors || mode == .anchors) && mode != .chunkMerge,
             chunkBudgetA: chunkBudgetA,
             chunkBudgetB: chunkBudgetB,
-            fileLimit: fileLimit
+            fileLimit: fileLimit,
+            arithmeticInvariant: arithmeticInvariant
         )
 
         let result = try await Harness.run(options)
@@ -165,7 +171,7 @@ struct ExtractEvalMain {
         return result.exitCode
     }
 
-    /// Parse `name:backend=mock,tableDetection=off,model=…`
+    /// Parse `name:backend=mock,tableDetection=off,model=…,invariant=true|false`
     static func parseConfigSpec(_ raw: String?, defaultName: String) throws -> RunConfig {
         guard let raw, !raw.isEmpty else {
             throw CLIParseError.missingValue("--config-a / --config-b")
@@ -174,6 +180,7 @@ struct ExtractEvalMain {
         var backend = BackendKind.mock
         var modelId: String?
         var tableDetection = TableDetectionMode.automatic
+        var arithmeticInvariant = true
         var rest = raw
         if let colon = raw.firstIndex(of: ":") {
             name = String(raw[..<colon])
@@ -189,6 +196,8 @@ struct ExtractEvalMain {
                 modelId = kv[1]
             case "tabledetection", "table-detection", "tables":
                 tableDetection = try TableDetectionParsing.parse(kv[1])
+            case "invariant", "arithmeticinvariant", "arithmetic-invariant":
+                arithmeticInvariant = try parseBoolFlag(kv[1], key: kv[0])
             default:
                 break
             }
@@ -197,8 +206,20 @@ struct ExtractEvalMain {
             name: name,
             backend: backend,
             modelId: modelId,
-            tableDetection: tableDetection
+            tableDetection: tableDetection,
+            arithmeticInvariant: arithmeticInvariant
         )
+    }
+
+    static func parseBoolFlag(_ raw: String, key: String) throws -> Bool {
+        switch raw.lowercased() {
+        case "true", "1", "yes", "on":
+            return true
+        case "false", "0", "no", "off":
+            return false
+        default:
+            throw CLIParseError.invalidBoolean(key, raw)
+        }
     }
 
     static func take(_ args: inout [String], for option: String) throws -> String {
@@ -230,14 +251,19 @@ struct ExtractEvalMain {
           --backend mock|mlx    Default: mock (CI-safe). MLX never falls back to mock.
           --model <id>          MLX model id
           --table-detection automatic|off
+          --invariant true|false  Accuracy mode: enforce line+tax≈total (default true)
+                                  Alias: --arithmetic-invariant
 
         Anchors:
           --anchors <file.json> Default: bundled seed anchors
           --no-anchors          Skip anchor evaluation (survey/accuracy)
 
         A/B:
-          --config-a name:backend=mock,tableDetection=off
-          --config-b name:backend=mock,tableDetection=automatic
+          --config-a name:backend=mock,tableDetection=off,invariant=true
+          --config-b name:backend=mock,tableDetection=automatic,invariant=false
+          Config keys: backend, model, tables|tableDetection,
+                       invariant=true|false (aliases: arithmeticInvariant, arithmetic-invariant)
+          Per-arm invariant switch is independent (invariant-on vs off A/B is expressible).
 
         Chunk-merge:
           --chunk-budget <n>    Arm B softContextCharacterBudget (default 400)
