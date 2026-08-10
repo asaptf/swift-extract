@@ -116,7 +116,7 @@ index ba38550..e5e6b8a 100644
  
      @discardableResult
 diff --git a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
-index 0ef37ef..ad8fb3a 100644
+index 0ef37ef..98d0992 100644
 --- a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
 +++ b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
 @@ -858,6 +858,46 @@ import Foundation
@@ -166,7 +166,7 @@ index 0ef37ef..ad8fb3a 100644
          public func respond<Content>(
              within session: LanguageModelSession,
              to prompt: Prompt,
-@@ -1214,10 +1254,24 @@ import Foundation
+@@ -1214,10 +1254,31 @@ import Foundation
  
      // MARK: - Options Mapping
  
@@ -175,9 +175,16 @@ index 0ef37ef..ad8fb3a 100644
 +    /// Plain and schema-constrained paths must use the same default so A/B measurements
 +    /// isolate the decoding strategy rather than a hidden budget confound. Constrained
 +    /// generation previously hard-coded 512 while the free-form path passed `nil` through
-+    /// to MLX (unlimited until EOS).
++    /// to MLX (unlimited until EOS). **Capping the plain path is a measurement-parity
++    /// behaviour change, not a shipping default.**
++    ///
++    /// **1024** (was 512): sized from Qwen2.5 tokenizer counts of ideal EvalInvoice JSON
++    /// on the Factur-X measurement corpus — a ~10-line-item pretty/verbose completion
++    /// lands around 450–630 tokens, so 512 clips realistic invoices and would depress
++    /// both A/B arms. 1024 clears that band with headroom. Keep in lockstep with
++    /// `ExtractionSession.defaultMaximumResponseTokens` in swift-extraction-lib.
 +    private enum MLXResponseTokenBudget {
-+        static let defaultMaximum = 512
++        static let defaultMaximum = 1024
 +    }
 +
 +    private func resolvedMaximumResponseTokens(_ options: GenerationOptions) -> Int {
@@ -192,7 +199,7 @@ index 0ef37ef..ad8fb3a 100644
              maxKVSize: custom?.kvCache.maxSize,
              kvBits: custom?.kvCache.bits,
              kvGroupSize: custom?.kvCache.groupSize ?? 64,
-@@ -1233,7 +1287,7 @@ import Foundation
+@@ -1233,7 +1294,7 @@ import Foundation
      private func toStructuredGenerateParameters(_ options: GenerationOptions) -> MLXLMCommon.GenerateParameters {
          let custom = options[custom: MLXLanguageModel.self]
          return MLXLMCommon.GenerateParameters(
@@ -201,7 +208,7 @@ index 0ef37ef..ad8fb3a 100644
              maxKVSize: custom?.kvCache.maxSize,
              kvBits: custom?.kvCache.bits,
              kvGroupSize: custom?.kvCache.groupSize ?? 64,
-@@ -1625,7 +1679,7 @@ import Foundation
+@@ -1625,7 +1686,7 @@ import Foundation
          options: GenerationOptions,
          includeSchemaInPrompt: Bool
      ) async throws -> String {
@@ -211,43 +218,80 @@ index 0ef37ef..ad8fb3a 100644
  
          let baseChat = convertTranscriptToMLXChat(session: session, fallbackPrompt: prompt.description)
 diff --git a/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift b/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
-index aae832e..3b26116 100644
+index aae832e..4529187 100644
 --- a/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
 +++ b/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
-@@ -20,10 +20,15 @@ protocol TokenBackend {
+@@ -20,10 +20,16 @@ protocol TokenBackend {
      var totalTokenBudget: Int { get }
  }
  
 -/// Heuristics for deciding when to include optional properties in generated output.
-+/// Last-resort token-budget floor for optional object properties.
-+///
-+/// Optional property *selection* is model-driven (see ``ConstrainedJSONGenerator``).
-+/// This floor only kicks in when generation is about to run out of tokens: once every
-+/// required property has been emitted, the generator stops offering further optionals
-+/// and closes the object rather than risking a hard budget failure mid-value.
- private enum OptionalPropertyBudget {
+-private enum OptionalPropertyBudget {
 -    /// Minimum absolute number of tokens that should remain before we consider
 -    /// adding optional properties.
++/// Last-resort token-budget floor for optional structure (object keys / array items).
++///
++/// Optional *selection* is model-driven (see ``ConstrainedJSONGenerator``).
++/// This floor only kicks in when generation is about to run out of tokens: once the
++/// schema-valid minimum has been emitted (all required keys, or `minItems` elements),
++/// the generator stops offering further optionals and closes rather than risking a
++/// hard budget failure mid-value.
++private enum OptionalStructureBudget {
 +    /// Minimum absolute number of tokens that should remain before offering more
-+    /// optional properties.
++    /// optional properties or array elements.
      static let minimumRemainingTokens = 8
  
      /// Require at least this fraction of the total budget (divisor form).
-@@ -127,6 +132,13 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+@@ -69,10 +75,6 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     private static var maxIntegerTokenLimit: Int { 20 }
+     private static var maxDecimalTokenLimit: Int { 32 }
+ 
+-    /// Heuristics for default array sizes when no bounds are specified.
+-    private static var arrayDefaultCountDivisor: Int { 32 }
+-    private static var arrayDefaultCountMax: Int { 16 }
+-
+     private var backend: Backend
+     private let schema: GenerationSchema
+     private var emittedText = ""
+@@ -127,6 +129,16 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
              if case .earlyTermination(let partial) = error {
                  return partial
              }
-+            // Budget-forced optional omission still yields schema-valid JSON (all required
-+            // keys present). Surface the completed object so callers get usable output, while
-+            // the dedicated error case remains available to lower-level call sites that catch
-+            // before this recovery.
++            // Budget-forced optional omission / array truncation still yields schema-valid
++            // JSON (required keys present; at least `minItems` elements). Surface the
++            // completed value so callers get usable output, while the dedicated error cases
++            // remain available to lower-level call sites that catch before this recovery.
 +            if case .optionalPropertiesOmittedDueToTokenBudget(_, let json) = error {
++                return json
++            }
++            if case .arrayTruncatedDueToTokenBudget(_, _, _, let json) = error {
 +                return json
 +            }
              throw error
          }
      }
-@@ -425,20 +437,68 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+@@ -241,11 +253,20 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+         return min(remainingAfterClosingQuote, perStringLimit)
+     }
+ 
++    /// Samples free-string body tokens until the model emits `"`, hits `maxTokens`, or
++    /// exhausts the remaining budget.
++    ///
++    /// Termination is model-driven: after the first content token, `stringContinuationAllowedTokens`
++    /// includes the closing quote, so the model may end the string at any step. `maxTokens`
++    /// is only a per-string cap (and budget pressure a hard stop) — not a fixed length the
++    /// generator runs out to. Callers force-emit the closing `"` after this returns.
+     private mutating func generateFreeString(maxTokens: Int) async throws -> String {
+         var result = ""
+         var generated = 0
+ 
+         while backend.remainingTokens > 0, generated < maxTokens {
++            // First character: content only (empty free strings close via the outer quote emit
++            // when maxTokens is 0). Continuation: content ∪ `"` ∪ end tokens.
+             let allowed = result.isEmpty ? stringInitialAllowedTokens : stringContinuationAllowedTokens
+             let token = try await backend.sample(from: allowed)
+             if backend.endTokens.contains(token) {
+@@ -425,60 +446,197 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
      }
  
      private mutating func generateObject(_ node: GenerationSchema.ObjectNode) async throws -> String {
@@ -262,7 +306,7 @@ index aae832e..3b26116 100644
 +        while !remainingKeys.isEmpty {
 +            let missingRequired = required.intersection(remainingKeys)
 +            let canClose = missingRequired.isEmpty
-+            let budgetAllowsMoreOptionals = hasBudgetForOptionalProperties()
++            let budgetAllowsMoreOptionals = hasBudgetForOptionalStructure()
 +
 +            let keysToOffer: [String]
 +            if budgetAllowsMoreOptionals {
@@ -277,10 +321,7 @@ index aae832e..3b26116 100644
 +                // Still missing required keys — only those may be emitted under pressure.
 +                keysToOffer = missingRequired.sorted()
 +            }
- 
--        for (index, key) in includedKeys.enumerated() {
--            output += try await emit("\"\(key)\":")
--            output += try await generateNode(node.properties[key] ?? .string(.init()))
++
 +            var candidates: [String] = keysToOffer.map { key in
 +                let prefix = emittedAnyProperty ? "," : ""
 +                return "\(prefix)\"\(key)\":"
@@ -290,19 +331,22 @@ index aae832e..3b26116 100644
 +            if canClose {
 +                candidates.append("}")
 +            }
- 
--            if index < includedKeys.count - 1 {
--                output += try await emit(",")
++
 +            guard !candidates.isEmpty else { break }
 +
 +            let choice = try await generateChoice(candidates)
 +            output += choice
-+
+ 
+-        for (index, key) in includedKeys.enumerated() {
+-            output += try await emit("\"\(key)\":")
+-            output += try await generateNode(node.properties[key] ?? .string(.init()))
 +            // Model elected to close; remaining keys are optional and intentionally omitted.
 +            if choice == "}" {
 +                return output
 +            }
-+
+ 
+-            if index < includedKeys.count - 1 {
+-                output += try await emit(",")
 +            guard let key = propertyKey(fromPropertyStart: choice),
 +                let valueNode = node.properties[key]
 +            else {
@@ -323,25 +367,184 @@ index aae832e..3b26116 100644
          return output
      }
  
-@@ -516,15 +576,36 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     private mutating func generateArray(_ node: GenerationSchema.ArrayNode) async throws -> String {
+-        // Derive a default item count from the total token budget when the schema
+-        // does not specify explicit minItems/maxItems. We use a small fraction of the
+-        // budget and clamp it to a reasonable range to avoid overlong arrays.
+-        let budgetBasedCount = backend.totalTokenBudget / Self.arrayDefaultCountDivisor
+-        let defaultCount = max(1, min(Self.arrayDefaultCountMax, budgetBasedCount))
+-        let count: Int
+-
+-        if let minItems = node.minItems, let maxItems = node.maxItems {
+-            if minItems > maxItems {
+-                throw ConstrainedGenerationError.invalidArrayBounds(
+-                    "Minimum items \(minItems) exceeds maximum \(maxItems)"
+-                )
+-            }
+-            let rangeSize = maxItems - minItems + 1
+-            let offset = rangeSize > 0 ? backend.totalTokenBudget % rangeSize : 0
+-            count = minItems + offset
+-        } else if let minItems = node.minItems {
+-            count = minItems
+-        } else if let maxItems = node.maxItems {
+-            count = maxItems
+-        } else {
+-            count = defaultCount
++        // Array *length* is model-driven under the JSON grammar — same family of fix as
++        // model-driven optional object keys. After each element the mask permits both
++        // continuing (`,`) and closing (`]`), subject to schema `minItems` / `maxItems`.
++        // A budget-derived fixed count (or `totalTokenBudget % rangeSize`) would force the
++        // same length for every document and invent filler or truncate real items.
++        let minItems = max(0, node.minItems ?? 0)
++        let maxItems = node.maxItems
++
++        if let maxItems, minItems > maxItems {
++            throw ConstrainedGenerationError.invalidArrayBounds(
++                "Minimum items \(minItems) exceeds maximum \(maxItems)"
++            )
+         }
++
+         var output = try await emit("[")
++        var count = 0
++        var truncatedDueToBudget = false
+ 
+-        for index in 0 ..< count {
+-            output += try await generateNode(node.items)
+-            if index < count - 1 {
+-                output += try await emit(",")
++        while true {
++            if let maxItems, count >= maxItems {
++                break
++            }
++
++            let canClose = count >= minItems
++            let budgetAllowsMore = hasBudgetForOptionalStructure()
++
++            if canClose && !budgetAllowsMore {
++                // Genuine last resort: close once minItems is satisfied rather than
++                // failing mid-element under a hard budget floor.
++                truncatedDueToBudget = true
++                break
++            }
++
++            if count > 0 {
++                if canClose {
++                    // Model chooses continue vs close.
++                    let choice = try await generateChoice([",", "]"])
++                    if choice == "]" {
++                        output += choice
++                        return output
++                    }
++                    output += choice
++                } else {
++                    // Still below minItems — must emit another element.
++                    output += try await emit(",")
++                }
++            } else if canClose {
++                // Empty array is legal (`minItems == 0`). Probe whether the model wants
++                // `]` or a first element. Sampling is non-committing for non-`]` tokens
++                // (see ``sampleWhetherToCloseEmptyArray``); the element is then generated
++                // from the same decode state.
++                if try await sampleWhetherToCloseEmptyArray(items: node.items) {
++                    output += try await emit("]")
++                    return output
++                }
+             }
++
++            output += try await generateNode(node.items)
++            count += 1
+         }
+ 
+         output += try await emit("]")
++        if truncatedDueToBudget {
++            throw ConstrainedGenerationError.arrayTruncatedDueToTokenBudget(
++                emittedCount: count,
++                minItems: minItems,
++                maxItems: maxItems,
++                json: output
++            )
++        }
+         return output
+     }
+ 
++    /// Probe after `[` when `minItems == 0`: model may close immediately or start an item.
++    ///
++    /// Samples once among `]` and tokens that can start the item type. Choosing `]` means
++    /// close; any other sample is discarded without decoding so ``generateNode`` can emit
++    /// the first element from the same backend state.
++    private mutating func sampleWhetherToCloseEmptyArray(
++        items: GenerationSchema.Node
++    ) async throws -> Bool {
++        let closeToken = try Self.singleToken(for: "]", backend: backend)
++        var allowed = try itemStartTokens(for: items)
++        allowed.insert(closeToken)
++        guard !allowed.isEmpty else {
++            return false
++        }
++        let token = try await backend.sample(from: allowed)
++        return token == closeToken
++    }
++
++    /// Tokens that can begin a JSON value for `node` (used only for the empty-array probe).
++    private func itemStartTokens(for node: GenerationSchema.Node) throws -> Set<Int> {
++        switch node {
++        case .string:
++            return [quoteToken]
++        case .object:
++            return [try Self.singleToken(for: "{", backend: backend)]
++        case .array:
++            return [try Self.singleToken(for: "[", backend: backend)]
++        case .boolean:
++            var tokens = Set<Int>()
++            for literal in ["true", "false"] {
++                if let first = try backend.tokenize(literal).first {
++                    tokens.insert(first)
++                }
++            }
++            return tokens
++        case .number(let numberNode):
++            let numeric = numberNode.integerOnly ? integerTerminators : doubleTerminators
++            return numeric.subtracting(basicTerminators)
++        case .ref(let typeName):
++            guard let referenced = schema.defs[typeName] else {
++                throw ConstrainedGenerationError.missingReference(typeName)
++            }
++            return try itemStartTokens(for: referenced)
++        case .anyOf(let variants):
++            var tokens = Set<Int>()
++            for variant in variants {
++                tokens.formUnion(try itemStartTokens(for: variant))
++            }
++            return tokens
++        }
++    }
++
+     private mutating func generateString(_ node: GenerationSchema.StringNode) async throws -> String {
+         var output = try await emit("\"")
+         let content: String
+@@ -516,15 +674,39 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
          return output
      }
  
 -    private func shouldIncludeOptionalProperty(_ key: String, required: Set<String>) -> Bool {
 -        if required.contains(key) { return true }
-+    /// Whether enough budget remains to *offer* more optional properties to the model.
-+    ///
-+    /// This is a last-resort guard only. It does not pick which optionals appear — that
-+    /// decision is made by constrained sampling over not-yet-emitted keys.
-+    private func hasBudgetForOptionalProperties() -> Bool {
-         let minimumBudget = OptionalPropertyBudget.minimumBudget(totalTokenBudget: backend.totalTokenBudget)
+-        let minimumBudget = OptionalPropertyBudget.minimumBudget(totalTokenBudget: backend.totalTokenBudget)
 -        guard backend.remainingTokens > minimumBudget else { return false }
 -        let hash = key.utf8.reduce(0) { ($0 &* 31) &+ Int($1) }
 -        let combined = hash ^ backend.totalTokenBudget
 -        return combined % 2 == 0
++    /// Whether enough budget remains to *offer* more optional structure to the model
++    /// (object properties or array elements).
++    ///
++    /// This is a last-resort guard only. It does not pick which optionals appear or how
++    /// long an array is — those decisions are made by constrained sampling.
++    private func hasBudgetForOptionalStructure() -> Bool {
++        let minimumBudget = OptionalStructureBudget.minimumBudget(
++            totalTokenBudget: backend.totalTokenBudget
++        )
 +        return backend.remainingTokens > minimumBudget
-     }
- 
++    }
++
 +    /// Parses a property-start fragment produced for object key selection.
 +    ///
 +    /// Expected shapes: `"key":` (first property) or `,"key":` (subsequent).
@@ -354,8 +557,8 @@ index aae832e..3b26116 100644
 +        fragment.removeFirst()
 +        fragment.removeLast(2)
 +        return fragment
-+    }
-+
+     }
+ 
 +    /// Fallback when token-level sampling cannot disambiguate enum candidates.
 +    ///
 +    /// Used only by ``generateChoice`` when an empty string is among the choices, or when
@@ -366,7 +569,7 @@ index aae832e..3b26116 100644
      private func deterministicChoice(from candidates: [String]) -> String {
          guard !candidates.isEmpty else { return "" }
          if candidates.contains("") { return "" }
-@@ -633,6 +714,14 @@ enum ConstrainedGenerationError: LocalizedError {
+@@ -633,6 +815,26 @@ enum ConstrainedGenerationError: LocalizedError {
      /// An any-of schema has no choices.
      case emptyAnyOf
  
@@ -378,27 +581,279 @@ index aae832e..3b26116 100644
 +    /// are part of the error for observability.
 +    case optionalPropertiesOmittedDueToTokenBudget(omittedKeys: [String], json: String)
 +
++    /// Array generation stopped early because the token budget was nearly exhausted.
++    ///
++    /// The associated JSON is still schema-valid (`emittedCount >= minItems`). Length is
++    /// normally model-driven; this path only fires as a last resort under real budget
++    /// pressure, and the emitted count is part of the error for observability.
++    case arrayTruncatedDueToTokenBudget(
++        emittedCount: Int,
++        minItems: Int,
++        maxItems: Int?,
++        json: String
++    )
++
      var errorDescription: String? {
          switch self {
          case .tokenizationFailed:
-@@ -653,6 +742,9 @@ enum ConstrainedGenerationError: LocalizedError {
+@@ -653,6 +855,13 @@ enum ConstrainedGenerationError: LocalizedError {
              return "Missing referenced schema definition '\(name)'"
          case .emptyAnyOf:
              return "Any-of schema has no choices"
 +        case .optionalPropertiesOmittedDueToTokenBudget(let omittedKeys, _):
 +            return
 +                "Optional properties omitted due to token budget: \(omittedKeys.joined(separator: ", "))"
++        case .arrayTruncatedDueToTokenBudget(let emittedCount, let minItems, let maxItems, _):
++            let maxDescription = maxItems.map(String.init) ?? "nil"
++            return
++                "Array truncated due to token budget after \(emittedCount) items (minItems=\(minItems), maxItems=\(maxDescription))"
          }
      }
  }
 diff --git a/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift b/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
-index 3b5f0b1..86bcd1f 100644
+index 3b5f0b1..b47c5e6 100644
 --- a/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
 +++ b/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
-@@ -450,4 +450,166 @@ struct StructuredGenerationTests {
-         let result = try await generator.generate()
-         #expect(result == "[\"a\",\"a\",\"a\"]")
+@@ -254,6 +254,39 @@ struct StructuredGenerationTests {
+         #expect(result == capture.decodedText)
      }
+ 
++    @Test func freeStringTerminatesOnModelQuoteNotTokenCap() async throws {
++        // generateFreeString allows `"` on every continuation step; the model can close
++        // long before maxFreeStringTokens (budget/16). A fixed run-out-to-cap would keep
++        // consuming the queue past the early quote.
++        let maps = baseTokenMaps()
++        let stringNode = GenerationSchema.StringNode(
++            description: nil,
++            pattern: nil,
++            enumChoices: nil
++        )
++        let schema = GenerationSchema.primitive(String.self, node: .string(stringNode))
++        let eosToken = 50
++        let quoteToken = 0
++        let aToken = 8
++        let bToken = 9
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                aToken, bToken, quoteToken,
++                // If the generator ignored the quote and ran to a token count, these would be consumed:
++                aToken, aToken, aToken, aToken,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "\"ab\"")
++    }
++
+     @Test func negativeIntegerWithinRange() async throws {
+         let maps = baseTokenMaps()
+         let numberNode = GenerationSchema.NumberNode(
+@@ -428,7 +461,9 @@ struct StructuredGenerationTests {
+         }
+     }
+ 
+-    @Test func arrayCountIsDeterministic() async throws {
++    // MARK: - Model-driven array length
++
++    @Test func arrayLengthIsChosenBySamplingNotBudget() async throws {
+         let maps = baseTokenMaps()
+         let arrayNode = GenerationSchema.ArrayNode(
+             description: nil,
+@@ -438,16 +473,351 @@ struct StructuredGenerationTests {
+         )
+         let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
+         let eosToken = 50
++        let aToken = 8
++        let comma = 1
++        let rightBracket = 3
++
++        // minItems=1 forces first element; model then closes (length 1), not budget-derived 3.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                aToken,  // first "a"
++                rightBracket,  // close after 1 (`,` would continue)
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "[\"a\"]")
++        // `comma` is offered by the mask after the first element; the queue chooses `]` instead.
++        _ = comma
++    }
++
++    @Test func arrayLengthVariesWithSamplingQueue() async throws {
++        let maps = baseTokenMaps()
++        let arrayNode = GenerationSchema.ArrayNode(
++            description: nil,
++            items: .string(.init(enumChoices: ["a"])),
++            minItems: 1,
++            maxItems: 3
++        )
++        let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
++        let eosToken = 50
++        let aToken = 8
++        let comma = 1
++        let rightBracket = 3
++
++        // Emit two elements then close — different length than the previous test.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                aToken,  // "a"
++                comma,  // continue
++                aToken,  // "a"
++                rightBracket,  // close
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "[\"a\",\"a\"]")
++    }
++
++    @Test func arrayRespectsMaxItems() async throws {
++        let maps = baseTokenMaps()
++        let arrayNode = GenerationSchema.ArrayNode(
++            description: nil,
++            items: .string(.init(enumChoices: ["a"])),
++            minItems: 1,
++            maxItems: 2
++        )
++        let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
++        let eosToken = 50
++        let aToken = 8
++        let comma = 1
++
++        // Model always continues; generator must still stop at maxItems=2.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                aToken,
++                comma,
++                aToken,
++                // further commas would be illegal once max is reached — close is forced
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "[\"a\",\"a\"]")
++    }
++
++    @Test func arrayRespectsMinItemsBeforeClose() async throws {
++        let maps = baseTokenMaps()
++        let arrayNode = GenerationSchema.ArrayNode(
++            description: nil,
++            items: .string(.init(enumChoices: ["a"])),
++            minItems: 2,
++            maxItems: 4
++        )
++        let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
++        let eosToken = 50
++        let aToken = 8
++        let rightBracket = 3
++
++        // After first element, `]` is not offered — only forced `,` + second element, then close.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                aToken,  // first
++                // no close offered here — comma is emitted forcibly
++                aToken,  // second (satisfies minItems)
++                rightBracket,  // model closes
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "[\"a\",\"a\"]")
++    }
++
++    @Test func emptyArrayWhenModelClosesImmediately() async throws {
++        let maps = baseTokenMaps()
++        let arrayNode = GenerationSchema.ArrayNode(
++            description: nil,
++            items: .string(.init(enumChoices: ["a"])),
++            minItems: nil,
++            maxItems: nil
++        )
++        let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
++        let eosToken = 50
++        let rightBracket = 3
++
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [rightBracket]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "[]")
++    }
++
++    @Test func arrayTruncatesUnderBudgetPressure() async throws {
++        let maps = baseTokenMaps()
++        let arrayNode = GenerationSchema.ArrayNode(
++            description: nil,
++            items: .string(.init(enumChoices: ["a"])),
++            minItems: 1,
++            maxItems: 8
++        )
++        let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
++        let eosToken = 50
++        let aToken = 8
++        let comma = 1
++
++        // Mock maps encode `]` / `"` / `a` but not `[`, so the opening bracket is free.
++        // First element costs 3 tokens (`"`, `a`, `"`). Floor is max(8, budget/10)=8.
++        // With budget 11, remaining after the first element is 8 → not strictly greater
++        // than the floor → force-close. Sampling queue would happily continue with `,`.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 11,
++            samplingQueue: [
++                aToken,
++                comma,  // would continue if offered — must not be consumed if we truncate
++                aToken,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        // Force-close after satisfying minItems under budget pressure.
++        #expect(result == "[\"a\"]")
++    }
 +
 +    // MARK: - Model-driven optional object properties
 +
@@ -548,17 +1003,19 @@ index 3b5f0b1..86bcd1f 100644
 +        let eosToken = 50
 +        let rightBrace = 2
 +
-+        let backend = MockTokenBackend(
-+            tokenToText: maps.tokenToText,
-+            textToTokens: maps.textToTokens,
-+            eosToken: eosToken,
-+            endTokens: [eosToken],
+         let backend = MockTokenBackend(
+             tokenToText: maps.tokenToText,
+             textToTokens: maps.textToTokens,
+             eosToken: eosToken,
+             endTokens: [eosToken],
+-            maximumTokens: 17
 +            maximumTokens: 64,
 +            samplingQueue: [rightBrace]
-+        )
-+
-+        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
-+        let result = try await generator.generate()
+         )
+ 
+         var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
+         let result = try await generator.generate()
+-        #expect(result == "[\"a\",\"a\",\"a\"]")
 +        #expect(result == "{}")
-+    }
+     }
  }

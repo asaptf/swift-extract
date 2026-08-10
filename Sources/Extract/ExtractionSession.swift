@@ -11,10 +11,19 @@ public struct ExtractionSession: Sendable {
 
     /// Shared max completion tokens for guided and plain generation paths.
     ///
-    /// Kept in lockstep with `MLXLanguageModel`'s default when
-    /// ``GenerationOptions/maximumResponseTokens`` is nil, so both arms of a
-    /// guided-vs-plain A/B use the same budget.
-    public static let defaultMaximumResponseTokens = 512
+    /// **Behaviour change for A/B parity, not a shipping default we settled on:**
+    /// the plain path previously passed `nil` (MLX = unlimited until EOS) while
+    /// guided generation defaulted to a fixed budget. Pinning both arms to the same
+    /// value isolates the decoding strategy in measurement runs.
+    ///
+    /// Value **1024** chosen from Qwen2.5-1.5B tokenizer counts on ideal
+    /// `EvalInvoice` JSON built from Factur-X ground truth under
+    /// `invoice-mather/examples/pdf` (see experiment README): compact GT
+    /// completions are ~120–230 tokens; a padded ~10-line pretty JSON is
+    /// ~450–500; a verbose fenced 10-line proxy is ~590–630. **512 clips** that
+    /// 10-line proxy (negative margin); 1024 clears it with ~400 tokens of
+    /// headroom. Kept in lockstep with `MLXLanguageModel`'s nil-option default.
+    public static let defaultMaximumResponseTokens = 1024
 
     let backend: any ExtractionGenerating
     /// Default sampling temperature for this session (used when
