@@ -9,6 +9,13 @@ public struct ExtractionSession: Sendable {
         DefaultSessionResolver.resolve()
     }
 
+    /// Shared max completion tokens for guided and plain generation paths.
+    ///
+    /// Kept in lockstep with `MLXLanguageModel`'s default when
+    /// ``GenerationOptions/maximumResponseTokens`` is nil, so both arms of a
+    /// guided-vs-plain A/B use the same budget.
+    public static let defaultMaximumResponseTokens = 512
+
     let backend: any ExtractionGenerating
     /// Default sampling temperature for this session (used when
     /// ``ExtractionOptions/temperature`` is `nil`).
@@ -106,7 +113,13 @@ private struct LanguageModelBackend: ExtractionGenerating {
         //   through `LanguageModelSession.respond(to:schema:)`). Requires
         //   `supportsSchemaConstrainedGeneration`; no silent fallback to the prompt-only path.
         let session = LanguageModelSession(model: model, instructions: system)
-        let options = GenerationOptions(temperature: temperature)
+        // Pin the same response-token budget for guided and plain paths so A/B
+        // comparisons isolate the decoding strategy. MLX's constrained path used to
+        // default to 512 while free-form passed nil (unlimited until EOS).
+        let options = GenerationOptions(
+            temperature: temperature,
+            maximumResponseTokens: ExtractionSession.defaultMaximumResponseTokens
+        )
 
         if guidedGeneration {
             guard model.supportsSchemaConstrainedGeneration else {

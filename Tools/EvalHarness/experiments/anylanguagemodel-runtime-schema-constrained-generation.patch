@@ -116,7 +116,7 @@ index ba38550..e5e6b8a 100644
  
      @discardableResult
 diff --git a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
-index 0ef37ef..c48de20 100644
+index 0ef37ef..ad8fb3a 100644
 --- a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
 +++ b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
 @@ -858,6 +858,46 @@ import Foundation
@@ -166,3 +166,399 @@ index 0ef37ef..c48de20 100644
          public func respond<Content>(
              within session: LanguageModelSession,
              to prompt: Prompt,
+@@ -1214,10 +1254,24 @@ import Foundation
+ 
+     // MARK: - Options Mapping
+ 
++    /// Shared default when ``GenerationOptions/maximumResponseTokens`` is `nil`.
++    ///
++    /// Plain and schema-constrained paths must use the same default so A/B measurements
++    /// isolate the decoding strategy rather than a hidden budget confound. Constrained
++    /// generation previously hard-coded 512 while the free-form path passed `nil` through
++    /// to MLX (unlimited until EOS).
++    private enum MLXResponseTokenBudget {
++        static let defaultMaximum = 512
++    }
++
++    private func resolvedMaximumResponseTokens(_ options: GenerationOptions) -> Int {
++        options.maximumResponseTokens ?? MLXResponseTokenBudget.defaultMaximum
++    }
++
+     private func toGenerateParameters(_ options: GenerationOptions) -> MLXLMCommon.GenerateParameters {
+         let custom = options[custom: MLXLanguageModel.self]
+         return MLXLMCommon.GenerateParameters(
+-            maxTokens: options.maximumResponseTokens,
++            maxTokens: resolvedMaximumResponseTokens(options),
+             maxKVSize: custom?.kvCache.maxSize,
+             kvBits: custom?.kvCache.bits,
+             kvGroupSize: custom?.kvCache.groupSize ?? 64,
+@@ -1233,7 +1287,7 @@ import Foundation
+     private func toStructuredGenerateParameters(_ options: GenerationOptions) -> MLXLMCommon.GenerateParameters {
+         let custom = options[custom: MLXLanguageModel.self]
+         return MLXLMCommon.GenerateParameters(
+-            maxTokens: options.maximumResponseTokens,
++            maxTokens: resolvedMaximumResponseTokens(options),
+             maxKVSize: custom?.kvCache.maxSize,
+             kvBits: custom?.kvCache.bits,
+             kvGroupSize: custom?.kvCache.groupSize ?? 64,
+@@ -1625,7 +1679,7 @@ import Foundation
+         options: GenerationOptions,
+         includeSchemaInPrompt: Bool
+     ) async throws -> String {
+-        let maxTokens = options.maximumResponseTokens ?? 512
++        let maxTokens = resolvedMaximumResponseTokens(options)
+         let generateParameters = toStructuredGenerateParameters(options)
+ 
+         let baseChat = convertTranscriptToMLXChat(session: session, fallbackPrompt: prompt.description)
+diff --git a/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift b/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
+index aae832e..3b26116 100644
+--- a/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
++++ b/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
+@@ -20,10 +20,15 @@ protocol TokenBackend {
+     var totalTokenBudget: Int { get }
+ }
+ 
+-/// Heuristics for deciding when to include optional properties in generated output.
++/// Last-resort token-budget floor for optional object properties.
++///
++/// Optional property *selection* is model-driven (see ``ConstrainedJSONGenerator``).
++/// This floor only kicks in when generation is about to run out of tokens: once every
++/// required property has been emitted, the generator stops offering further optionals
++/// and closes the object rather than risking a hard budget failure mid-value.
+ private enum OptionalPropertyBudget {
+-    /// Minimum absolute number of tokens that should remain before we consider
+-    /// adding optional properties.
++    /// Minimum absolute number of tokens that should remain before offering more
++    /// optional properties.
+     static let minimumRemainingTokens = 8
+ 
+     /// Require at least this fraction of the total budget (divisor form).
+@@ -127,6 +132,13 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+             if case .earlyTermination(let partial) = error {
+                 return partial
+             }
++            // Budget-forced optional omission still yields schema-valid JSON (all required
++            // keys present). Surface the completed object so callers get usable output, while
++            // the dedicated error case remains available to lower-level call sites that catch
++            // before this recovery.
++            if case .optionalPropertiesOmittedDueToTokenBudget(_, let json) = error {
++                return json
++            }
+             throw error
+         }
+     }
+@@ -425,20 +437,68 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     }
+ 
+     private mutating func generateObject(_ node: GenerationSchema.ObjectNode) async throws -> String {
+-        let keys = node.properties.keys.sorted()
+-        let includedKeys = keys.filter { shouldIncludeOptionalProperty($0, required: node.required) }
++        var remainingKeys = Set(node.properties.keys)
++        let required = node.required
+         var output = try await emit("{")
++        var emittedAnyProperty = false
++        var omittedOptionalKeys: [String] = []
++
++        while !remainingKeys.isEmpty {
++            let missingRequired = required.intersection(remainingKeys)
++            let canClose = missingRequired.isEmpty
++            let budgetAllowsMoreOptionals = hasBudgetForOptionalProperties()
++
++            let keysToOffer: [String]
++            if budgetAllowsMoreOptionals {
++                // Model chooses any not-yet-emitted property (required or optional).
++                keysToOffer = remainingKeys.sorted()
++            } else if canClose {
++                // Genuine last resort: stop offering optionals when the budget is nearly
++                // exhausted. Required properties are already present, so close cleanly.
++                omittedOptionalKeys = remainingKeys.sorted()
++                break
++            } else {
++                // Still missing required keys — only those may be emitted under pressure.
++                keysToOffer = missingRequired.sorted()
++            }
+ 
+-        for (index, key) in includedKeys.enumerated() {
+-            output += try await emit("\"\(key)\":")
+-            output += try await generateNode(node.properties[key] ?? .string(.init()))
++            var candidates: [String] = keysToOffer.map { key in
++                let prefix = emittedAnyProperty ? "," : ""
++                return "\(prefix)\"\(key)\":"
++            }
++            // Closing is legal once every required property has been emitted. The model
++            // may leave remaining optionals out; that is schema-valid JSON.
++            if canClose {
++                candidates.append("}")
++            }
+ 
+-            if index < includedKeys.count - 1 {
+-                output += try await emit(",")
++            guard !candidates.isEmpty else { break }
++
++            let choice = try await generateChoice(candidates)
++            output += choice
++
++            // Model elected to close; remaining keys are optional and intentionally omitted.
++            if choice == "}" {
++                return output
++            }
++
++            guard let key = propertyKey(fromPropertyStart: choice),
++                let valueNode = node.properties[key]
++            else {
++                throw ConstrainedGenerationError.tokenizationFailed
+             }
++            remainingKeys.remove(key)
++            output += try await generateNode(valueNode)
++            emittedAnyProperty = true
+         }
+ 
+         output += try await emit("}")
++        if !omittedOptionalKeys.isEmpty {
++            throw ConstrainedGenerationError.optionalPropertiesOmittedDueToTokenBudget(
++                omittedKeys: omittedOptionalKeys,
++                json: output
++            )
++        }
+         return output
+     }
+ 
+@@ -516,15 +576,36 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+         return output
+     }
+ 
+-    private func shouldIncludeOptionalProperty(_ key: String, required: Set<String>) -> Bool {
+-        if required.contains(key) { return true }
++    /// Whether enough budget remains to *offer* more optional properties to the model.
++    ///
++    /// This is a last-resort guard only. It does not pick which optionals appear — that
++    /// decision is made by constrained sampling over not-yet-emitted keys.
++    private func hasBudgetForOptionalProperties() -> Bool {
+         let minimumBudget = OptionalPropertyBudget.minimumBudget(totalTokenBudget: backend.totalTokenBudget)
+-        guard backend.remainingTokens > minimumBudget else { return false }
+-        let hash = key.utf8.reduce(0) { ($0 &* 31) &+ Int($1) }
+-        let combined = hash ^ backend.totalTokenBudget
+-        return combined % 2 == 0
++        return backend.remainingTokens > minimumBudget
+     }
+ 
++    /// Parses a property-start fragment produced for object key selection.
++    ///
++    /// Expected shapes: `"key":` (first property) or `,"key":` (subsequent).
++    private func propertyKey(fromPropertyStart choice: String) -> String? {
++        var fragment = choice
++        if fragment.first == "," {
++            fragment.removeFirst()
++        }
++        guard fragment.first == "\"", fragment.hasSuffix("\":") else { return nil }
++        fragment.removeFirst()
++        fragment.removeLast(2)
++        return fragment
++    }
++
++    /// Fallback when token-level sampling cannot disambiguate enum candidates.
++    ///
++    /// Used only by ``generateChoice`` when an empty string is among the choices, or when
++    /// one candidate's token sequence is a prefix of another (the sampler cannot commit
++    /// without lookahead). Preferring `""` / the longest candidate is arbitrary, but it is
++    /// a rare tokenizer edge case — not a pre-pass that decides schema structure. Optional
++    /// object properties do **not** use this path; they are selected via masked sampling.
+     private func deterministicChoice(from candidates: [String]) -> String {
+         guard !candidates.isEmpty else { return "" }
+         if candidates.contains("") { return "" }
+@@ -633,6 +714,14 @@ enum ConstrainedGenerationError: LocalizedError {
+     /// An any-of schema has no choices.
+     case emptyAnyOf
+ 
++    /// Optional properties were dropped because the token budget was nearly exhausted.
++    ///
++    /// The associated JSON is still schema-valid (every required property is present).
++    /// This is intentionally distinct from silent hash-based omission: truncation only
++    /// happens as a last resort under real budget pressure, and the omitted key names
++    /// are part of the error for observability.
++    case optionalPropertiesOmittedDueToTokenBudget(omittedKeys: [String], json: String)
++
+     var errorDescription: String? {
+         switch self {
+         case .tokenizationFailed:
+@@ -653,6 +742,9 @@ enum ConstrainedGenerationError: LocalizedError {
+             return "Missing referenced schema definition '\(name)'"
+         case .emptyAnyOf:
+             return "Any-of schema has no choices"
++        case .optionalPropertiesOmittedDueToTokenBudget(let omittedKeys, _):
++            return
++                "Optional properties omitted due to token budget: \(omittedKeys.joined(separator: ", "))"
+         }
+     }
+ }
+diff --git a/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift b/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
+index 3b5f0b1..86bcd1f 100644
+--- a/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
++++ b/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
+@@ -450,4 +450,166 @@ struct StructuredGenerationTests {
+         let result = try await generator.generate()
+         #expect(result == "[\"a\",\"a\",\"a\"]")
+     }
++
++    // MARK: - Model-driven optional object properties
++
++    private func objectTokenMaps() -> (
++        tokenToText: [Int: String],
++        textToTokens: [String: [Int]]
++    ) {
++        // Structural + single-letter keys so `"x":` / `,"y":` tokenize without collisions.
++        var maps = baseTokenMaps()
++        let quote = 0
++        let comma = 1
++        let colon = 4
++        let x = 10
++        let y = 11
++        let z = 12
++        maps.textToTokens["\"x\":"] = [quote, x, quote, colon]
++        maps.textToTokens["\"y\":"] = [quote, y, quote, colon]
++        maps.textToTokens["\"z\":"] = [quote, z, quote, colon]
++        maps.textToTokens[",\"x\":"] = [comma, quote, x, quote, colon]
++        maps.textToTokens[",\"y\":"] = [comma, quote, y, quote, colon]
++        maps.textToTokens[",\"z\":"] = [comma, quote, z, quote, colon]
++        return maps
++    }
++
++    private func allOptionalObjectSchema() -> GenerationSchema {
++        let stringNode = GenerationSchema.Node.string(.init(enumChoices: ["a"]))
++        let objectNode = GenerationSchema.ObjectNode(
++            description: nil,
++            properties: [
++                "x": stringNode,
++                "y": stringNode,
++                "z": stringNode,
++            ],
++            required: []
++        )
++        // Type argument is unused; only the node shapes generation.
++        return GenerationSchema.primitive(String.self, node: .object(objectNode))
++    }
++
++    @Test func optionalObjectKeysAreChosenBySamplingNotNameHash() async throws {
++        let maps = objectTokenMaps()
++        let schema = allOptionalObjectSchema()
++        let eosToken = 50
++        let quote = 0
++        let y = 11
++        let aToken = 8
++        let colon = 4
++        let rightBrace = 2
++
++        // Open with "y": (not lexicographically first), value "a", then close — leave x/z out.
++        // generateChoice samples every token of the chosen property-start and the enum value.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                quote, y, quote, colon,  // "y":
++                aToken,  // enum value "a"
++                rightBrace,  // close
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == #"{"y":"a"}"#)
++        #expect(!result.contains("\"x\""))
++        #expect(!result.contains("\"z\""))
++    }
++
++    @Test func optionalObjectKeysVaryWithSamplingQueue() async throws {
++        let maps = objectTokenMaps()
++        let schema = allOptionalObjectSchema()
++        let eosToken = 50
++        let quote = 0
++        let x = 10
++        let z = 12
++        let aToken = 8
++        let comma = 1
++        let colon = 4
++        let rightBrace = 2
++
++        // Emit x then z (skip y) — different key set than the previous test.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                quote, x, quote, colon,  // "x":
++                aToken,  // "a"
++                comma, quote, z, quote, colon,  // ,"z":
++                aToken,  // "a"
++                rightBrace,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == #"{"x":"a","z":"a"}"#)
++        #expect(!result.contains("\"y\""))
++    }
++
++    @Test func requiredObjectKeysMustBeEmittedBeforeClose() async throws {
++        let maps = objectTokenMaps()
++        let stringNode = GenerationSchema.Node.string(.init(enumChoices: ["a"]))
++        let objectNode = GenerationSchema.ObjectNode(
++            description: nil,
++            properties: [
++                "x": stringNode,
++                "y": stringNode,
++            ],
++            required: ["x"]
++        )
++        let schema = GenerationSchema.primitive(String.self, node: .object(objectNode))
++        let eosToken = 50
++        let quote = 0
++        let x = 10
++        let aToken = 8
++        let colon = 4
++        let rightBrace = 2
++
++        // "}" is not among candidates until required "x" is emitted.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                quote, x, quote, colon,
++                aToken,
++                rightBrace,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == #"{"x":"a"}"#)
++    }
++
++    @Test func emptyObjectWhenModelClosesImmediately() async throws {
++        let maps = objectTokenMaps()
++        let schema = allOptionalObjectSchema()
++        let eosToken = 50
++        let rightBrace = 2
++
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [rightBrace]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "{}")
++    }
+ }
