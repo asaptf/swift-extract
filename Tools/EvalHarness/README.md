@@ -81,6 +81,28 @@ accuracy only includes fields whose truth value actually appears in the extracte
 text. Profiles like ZUGFeRD MINIMUM carry XML values that are never printed;
 scoring those as misses understates the pipeline.
 
+### Hard failures and failure-inclusive accuracy
+
+A **hard failure** is a paired file (has Factur-X ground truth, passed the pairing
+guard) whose extraction threw — for example `validationFailed` from an arithmetic
+invariant. The file never produced field values.
+
+Two accuracy metrics are always reported side by side:
+
+| Metric | What it counts | When to use it |
+| --- | --- | --- |
+| **Overall / present-in-text (successful extractions only)** | Field scores from extractions that returned a value. Hard failures contribute **nothing** to numerator or denominator. | Comparable to published CHANGELOG numbers for 0.3.0 / 0.4.0 (historical definition). |
+| **Failure-inclusive** | Same successful scores, plus every ground-truth-bearing field on a hard-failed file scored **incorrect** (the user got an exception → no value). | Comparing runs or models that can fail outright; headline number when failures are possible. |
+
+Without the failure-inclusive row, a run where every file hard-fails prints
+`0.0% (0/0)` on the historical metric and looks like “very low accuracy” when it
+actually means “nothing was scored.” Hard-failure **count and share** appear in
+the aggregate table, a dedicated markdown section, per-file JSONL
+(`hardFailure: true`), and the A/B compare report.
+
+A/B per-field deltas treat a missing score as incorrect: a field arm A got right
+and arm B never produced is Δ −1, not silent zero.
+
 ### Line-item-shaped share
 
 Share of successfully ingested files that yield at least one table with:
@@ -122,9 +144,11 @@ falls back to mock — mock accuracy numbers look precise and mean nothing.
 
 `EvalInvoice.validateInvariants()` checks `sum(lineTotals) + tax ≈ grandTotal`.
 Default **`true`** — historical behaviour; a violated check can end the file in
-`validationFailed` with **no scored fields** (`0.0% (0/0)` rather than low
-accuracy). For low-capacity model measurement, set **`invariant=false`** so the
-run measures the extractor, not the arithmetic gate.
+`validationFailed` (a **hard failure**). The historical overall row may still
+show `0.0% (0/0)` for a total wipeout, but the report always surfaces hard-failure
+count/share and **failure-inclusive** accuracy (GT fields counted incorrect).
+For low-capacity model measurement, set **`invariant=false`** so the run measures
+the extractor, not the arithmetic gate.
 
 | Key | Values | Notes |
 | --- | --- | --- |

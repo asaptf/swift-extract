@@ -94,6 +94,7 @@ public enum ReportWriter {
                 "file": r.relativePath,
                 "hasGroundTruth": r.hasGroundTruth,
                 "paired": r.paired,
+                "hardFailure": r.hardFailure,
                 "tableCount": r.tableCount,
                 "hasLineItemShaped": r.hasLineItemShaped,
                 "ingestionSeconds": round6(r.ingestionSeconds),
@@ -103,6 +104,7 @@ public enum ReportWriter {
             if let e = r.extractionError { obj["extractionError"] = e }
             // Metrics only — no predicted free-text values unless they are already
             // field score strings (truth/pred labels are short identifiers/amounts).
+            // Hard-failure fields are synthetic all-miss scores from ground truth.
             obj["fields"] = r.fieldScores.map { f -> [String: Any] in
                 [
                     "field": f.field,
@@ -114,6 +116,7 @@ public enum ReportWriter {
         }
         try lines.joined(separator: "\n").appending("\n").write(to: jsonl, atomically: true, encoding: .utf8)
 
+        let pairedTotal = summary.scored + summary.hardFailures
         var mdLines: [String] = [
             "# Accuracy report",
             "",
@@ -126,19 +129,43 @@ public enum ReportWriter {
             "| Files total | \(summary.filesTotal) |",
             "| With Factur-X ground truth | \(summary.withGroundTruth) |",
             "| Unpaired (dropped) | \(summary.unpaired) |",
-            "| Scored (paired) | \(summary.scored) |",
-            "| Overall field accuracy | \(pct(summary.overallAccuracy)) (\(summary.overallCorrect)/\(summary.overallTotal)) |",
-            "| Present-in-text accuracy | \(pct(summary.presentAccuracy)) (\(summary.presentCorrect)/\(summary.presentTotal)) |",
-            "| Seller accuracy | \(summary.sellerAccuracy.map(pct) ?? "n/a") |",
+            "| Paired (passed pairing guard) | \(pairedTotal) |",
+            "| Successfully extracted (scored) | \(summary.scored) |",
+            "| **Hard failures** (paired, extraction threw) | **\(summary.hardFailures)** (\(pct(summary.hardFailureShare)) of paired) |",
+            "| Overall field accuracy (successful extractions only) | \(pct(summary.overallAccuracy)) (\(summary.overallCorrect)/\(summary.overallTotal)) |",
+            "| Present-in-text accuracy (successful extractions only) | \(pct(summary.presentAccuracy)) (\(summary.presentCorrect)/\(summary.presentTotal)) |",
+            "| **Failure-inclusive field accuracy** | **\(pct(summary.failureInclusiveAccuracy))** (\(summary.failureInclusiveCorrect)/\(summary.failureInclusiveTotal)) |",
+            "| Failure-inclusive present-in-text accuracy | \(pct(summary.failureInclusivePresentAccuracy)) (\(summary.failureInclusivePresentCorrect)/\(summary.failureInclusivePresentTotal)) |",
+            "| Seller accuracy (successful extractions only) | \(summary.sellerAccuracy.map(pct) ?? "n/a") |",
             "| Line-item-shaped share | \(pct(summary.lineItemShapedShare)) (\(summary.filesWithLineItemShaped)/\(max(summary.filesTotal - summary.records.filter { $0.extractionError != nil }.count, 1))) |",
+            "",
+            "### How to read the accuracy rows",
+            "",
+            "- **Overall / present-in-text (successful extractions only)** — historical definition used in published CHANGELOG numbers. Hard-failed files contribute **nothing** to the denominator; a total wipeout can still print `0.0% (0/0)` on this row alone.",
+            "- **Failure-inclusive** — every ground-truth-bearing field on a hard-failed file is scored incorrect (the user got an exception, so they got no value). Use this when comparing runs that can fail outright.",
+            "- **Hard failures** are paired files (have GT, passed the pairing guard) whose extraction threw. They are never silent.",
             "",
             "Present-in-text accuracy restricts to fields whose truth value appears in the extracted text (ZUGFeRD MINIMUM XML-only values are excluded).",
             "",
-            "## Per field (overall)",
+            "## Hard failures",
+            "",
+        ]
+        let hardFailed = summary.records.filter(\.hardFailure)
+        if hardFailed.isEmpty {
+            mdLines.append("_None._")
+        } else {
+            for r in hardFailed {
+                let err = r.extractionError.map(shortError) ?? "(unknown)"
+                mdLines.append("- \(r.relativePath): \(err)")
+            }
+        }
+        mdLines.append(contentsOf: [
+            "",
+            "## Per field (overall, successful extractions only)",
             "",
             "| Field | Accuracy | n |",
             "| --- | ---: | ---: |",
-        ]
+        ])
         for key in summary.perField.keys.sorted() {
             let pair = summary.perField[key]!
             let acc = pair.total == 0 ? 0 : Double(pair.correct) / Double(pair.total)
@@ -146,7 +173,7 @@ public enum ReportWriter {
         }
         mdLines.append(contentsOf: [
             "",
-            "## Per field (present in text)",
+            "## Per field (present in text, successful extractions only)",
             "",
             "| Field | Accuracy | n |",
             "| --- | ---: | ---: |",
@@ -185,6 +212,8 @@ public enum ReportWriter {
         for f in summary.changedFiles {
             let obj: [String: Any] = [
                 "file": f.relativePath,
+                "hardFailureA": f.hardFailureA,
+                "hardFailureB": f.hardFailureB,
                 "fieldDeltas": f.fieldDeltas.map { d -> [String: Any] in
                     [
                         "field": d.field,
@@ -198,6 +227,9 @@ public enum ReportWriter {
         }
         try lines.joined(separator: "\n").appending("\n").write(to: jsonl, atomically: true, encoding: .utf8)
 
+        func hardShare(_ s: AccuracySummary) -> String {
+            "\(s.hardFailures) (\(pct(s.hardFailureShare)) of paired)"
+        }
         var mdLines: [String] = [
             "# A/B comparison",
             "",
@@ -207,10 +239,17 @@ public enum ReportWriter {
             "",
             "| | \(summary.configA) | \(summary.configB) | Δ (pp) |",
             "| --- | ---: | ---: | ---: |",
-            "| Overall accuracy | \(pct(summary.summaryA.overallAccuracy)) | \(pct(summary.summaryB.overallAccuracy)) | \(fmtSigned(summary.overallDeltaPP)) |",
-            "| Present-in-text accuracy | \(pct(summary.summaryA.presentAccuracy)) | \(pct(summary.summaryB.presentAccuracy)) | \(fmtSigned(summary.presentDeltaPP)) |",
+            "| Hard failures | \(hardShare(summary.summaryA)) | \(hardShare(summary.summaryB)) | \(summary.hardFailuresB - summary.hardFailuresA) files |",
+            "| Overall accuracy (successful only) | \(pct(summary.summaryA.overallAccuracy)) | \(pct(summary.summaryB.overallAccuracy)) | \(fmtSigned(summary.overallDeltaPP)) |",
+            "| Present-in-text accuracy (successful only) | \(pct(summary.summaryA.presentAccuracy)) | \(pct(summary.summaryB.presentAccuracy)) | \(fmtSigned(summary.presentDeltaPP)) |",
+            "| Failure-inclusive field accuracy | \(pct(summary.summaryA.failureInclusiveAccuracy)) | \(pct(summary.summaryB.failureInclusiveAccuracy)) | \(fmtSigned(summary.failureInclusiveDeltaPP)) |",
+            "| Failure-inclusive present-in-text | \(pct(summary.summaryA.failureInclusivePresentAccuracy)) | \(pct(summary.summaryB.failureInclusivePresentAccuracy)) | \(fmtSigned(summary.failureInclusivePresentDeltaPP)) |",
             "",
-            "## Per-field Δ (pp, B − A)",
+            "Hard failures are paired extractions that threw. Overall / present-in-text rows exclude them (historical definition); failure-inclusive rows count every GT field on a hard-failed file as incorrect.",
+            "",
+            "Per-file field deltas treat a missing score as incorrect, so a field arm A got right and arm B never produced is Δ −1 (not silent zero).",
+            "",
+            "## Per-field Δ (pp, B − A, successful extractions only)",
             "",
             "| Field | Δ pp |",
             "| --- | ---: |",
@@ -228,6 +267,11 @@ public enum ReportWriter {
         } else {
             for f in summary.changedFiles {
                 mdLines.append("### \(f.relativePath)")
+                if f.hardFailureA || f.hardFailureB {
+                    mdLines.append(
+                        "- hard failure: A=\(f.hardFailureA) B=\(f.hardFailureB)"
+                    )
+                }
                 for d in f.fieldDeltas {
                     mdLines.append(
                         "- \(d.field): A=\(d.aCorrect.map(String.init(describing:)) ?? "n/a") B=\(d.bCorrect.map(String.init(describing:)) ?? "n/a") (Δ \(d.delta))"
@@ -597,10 +641,11 @@ public enum ReportWriter {
     private static func jsonObjectLine(_ obj: [String: Any]) -> String {
         // Deterministic key order via JSONSerialization + sorted rebuild is awkward;
         // use JSONSerialization (stable enough for equal inputs on same runtime).
-        guard let data = try? JSONSerialization.data(
-            withJSONObject: sortedJSON(obj),
-            options: [.sortedKeys]
-        ),
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: sortedJSON(obj),
+                options: [.sortedKeys]
+            ),
             let s = String(data: data, encoding: .utf8)
         else { return "{}" }
         return s

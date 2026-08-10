@@ -88,5 +88,14 @@ let package = Package(
                 .enableExperimentalFeature("StrictConcurrency=complete"),
             ]
         ),
+        .testTarget(
+            name: "EvalHarnessTests",
+            dependencies: ["EvalHarness"],
+            path: "Tests/EvalHarnessTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableExperimentalFeature("StrictConcurrency=complete"),
+            ]
+        ),
     ]
 )

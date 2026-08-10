@@ -126,8 +126,14 @@ public enum Harness {
                 outputDir: options.outputDir,
                 configLabel: config.reportLabel
             )
+            let overallPct = String(format: "%.1f%%", summary.overallAccuracy * 100)
+            let fiPct = String(format: "%.1f%%", summary.failureInclusiveAccuracy * 100)
+            let paired = summary.scored + summary.hardFailures
             messages.append(
-                "Accuracy: overall \(String(format: "%.1f%%", summary.overallAccuracy * 100)) (\(summary.overallCorrect)/\(summary.overallTotal)); present-in-text \(String(format: "%.1f%%", summary.presentAccuracy * 100)); unpaired \(summary.unpaired); GT files \(summary.withGroundTruth)"
+                "Accuracy: overall \(overallPct) (\(summary.overallCorrect)/\(summary.overallTotal)); "
+                    + "failure-inclusive \(fiPct) (\(summary.failureInclusiveCorrect)/\(summary.failureInclusiveTotal)); "
+                    + "hard failures \(summary.hardFailures)/\(paired) paired; "
+                    + "unpaired \(summary.unpaired); GT files \(summary.withGroundTruth)"
             )
 
         case .compare:
@@ -143,7 +149,7 @@ public enum Harness {
             )
             try ReportWriter.writeCompare(summary, outputDir: options.outputDir)
             messages.append(
-                "Compare \(a.name) vs \(b.name): overall Δ \(String(format: "%+.2f", summary.overallDeltaPP)) pp; changed files \(summary.changedFiles.count)"
+                "Compare \(a.name) vs \(b.name): overall Δ \(String(format: "%+.2f", summary.overallDeltaPP)) pp; failure-inclusive Δ \(String(format: "%+.2f", summary.failureInclusiveDeltaPP)) pp; hard failures A/B \(summary.hardFailuresA)/\(summary.hardFailuresB); changed files \(summary.changedFiles.count)"
             )
             messages.append("  A: \(a.reportLabel)")
             messages.append("  B: \(b.reportLabel)")
@@ -224,7 +230,9 @@ public enum Harness {
     }
 
     /// Walk up from `start` looking for Package.swift + fixtures/ (repo root).
-    public static func findRepoRoot(from start: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+    public static func findRepoRoot(
+        from start: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    )
         -> URL
     {
         var dir = start.standardizedFileURL

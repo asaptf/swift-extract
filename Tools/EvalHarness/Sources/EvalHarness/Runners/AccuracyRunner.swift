@@ -9,6 +9,8 @@ public struct AccuracyFileRecord: Sendable {
     public var unpairedReason: String?
     public var fieldScores: [FieldScore]
     public var extractionError: String?
+    /// Paired file whose extraction threw — scores are synthetic all-miss fields from GT.
+    public var hardFailure: Bool
     public var tableCount: Int
     public var hasLineItemShaped: Bool
     public var ingestionSeconds: Double
@@ -20,37 +22,69 @@ public struct AccuracySummary: Sendable {
     public var filesTotal: Int
     public var withGroundTruth: Int
     public var unpaired: Int
+    /// Paired files that extracted successfully and contributed to ``overallAccuracy``.
     public var scored: Int
+    /// Paired files whose extraction threw (hard failures).
+    public var hardFailures: Int
+    /// `hardFailures / (scored + hardFailures)`; 0 when no paired files.
+    public var hardFailureShare: Double
     public var overallCorrect: Int
     public var overallTotal: Int
     public var presentCorrect: Int
     public var presentTotal: Int
+    /// Failure-inclusive: successful scores plus every GT field on hard failures counted incorrect.
+    public var failureInclusiveCorrect: Int
+    public var failureInclusiveTotal: Int
+    public var failureInclusivePresentCorrect: Int
+    public var failureInclusivePresentTotal: Int
     public var perField: [String: (correct: Int, total: Int)]
     public var perFieldPresent: [String: (correct: Int, total: Int)]
     public var sellerAccuracy: Double?
     public var filesWithLineItemShaped: Int
     public var lineItemShapedShare: Double
 
+    /// Field accuracy over successful extractions only (historical definition; hard failures excluded).
     public var overallAccuracy: Double {
         overallTotal == 0 ? 0 : Double(overallCorrect) / Double(overallTotal)
     }
 
+    /// Present-in-text accuracy over successful extractions only (historical definition).
     public var presentAccuracy: Double {
         presentTotal == 0 ? 0 : Double(presentCorrect) / Double(presentTotal)
+    }
+
+    /// Field accuracy counting hard-failed files as all-miss on every GT-bearing field.
+    public var failureInclusiveAccuracy: Double {
+        failureInclusiveTotal == 0
+            ? 0 : Double(failureInclusiveCorrect) / Double(failureInclusiveTotal)
+    }
+
+    /// Present-in-text variant of ``failureInclusiveAccuracy``.
+    public var failureInclusivePresentAccuracy: Double {
+        failureInclusivePresentTotal == 0
+            ? 0
+            : Double(failureInclusivePresentCorrect) / Double(failureInclusivePresentTotal)
     }
 
     public static func reduce(_ records: [AccuracyFileRecord]) -> AccuracySummary {
         let gt = records.filter(\.hasGroundTruth)
         let paired = gt.filter(\.paired)
         let unpaired = gt.filter { !$0.paired }.count
+        let hardFailed = paired.filter(\.hardFailure)
+        let successful = paired.filter { !$0.hardFailure }
         var overallC = 0
         var overallT = 0
         var presentC = 0
         var presentT = 0
+        var fiC = 0
+        var fiT = 0
+        var fiPresentC = 0
+        var fiPresentT = 0
         var perField: [String: (Int, Int)] = [:]
         var perFieldPresent: [String: (Int, Int)] = [:]
 
-        for rec in paired {
+        // Historical metrics: only successful extractions contribute field scores.
+        for rec in successful {
             for f in rec.fieldScores {
                 overallT += 1
                 if f.correct { overallC += 1 }
@@ -69,22 +103,52 @@ public struct AccuracySummary: Sendable {
             }
         }
 
+        // Failure-inclusive: successful scores + hard failures as all-miss on GT fields.
+        for rec in successful {
+            for f in rec.fieldScores {
+                fiT += 1
+                if f.correct { fiC += 1 }
+                if f.truthPresentInText {
+                    fiPresentT += 1
+                    if f.correct { fiPresentC += 1 }
+                }
+            }
+        }
+        for rec in hardFailed {
+            for f in rec.fieldScores {
+                fiT += 1
+                // correct is always false for synthetic hard-failure scores
+                if f.truthPresentInText {
+                    fiPresentT += 1
+                }
+            }
+        }
+
         let seller = perField["sellerName"]
         let sellerAcc = seller.map { $0.1 == 0 ? 0.0 : Double($0.0) / Double($0.1) }
         let ok = records.filter { $0.extractionError == nil }
         let shaped = ok.filter(\.hasLineItemShaped).count
         let n = max(ok.count, 1)
+        let pairedCount = successful.count + hardFailed.count
+        let hardShare =
+            pairedCount == 0 ? 0.0 : Double(hardFailed.count) / Double(pairedCount)
 
         return AccuracySummary(
             records: records,
             filesTotal: records.count,
             withGroundTruth: gt.count,
             unpaired: unpaired,
-            scored: paired.count,
+            scored: successful.count,
+            hardFailures: hardFailed.count,
+            hardFailureShare: hardShare,
             overallCorrect: overallC,
             overallTotal: overallT,
             presentCorrect: presentC,
             presentTotal: presentT,
+            failureInclusiveCorrect: fiC,
+            failureInclusiveTotal: fiT,
+            failureInclusivePresentCorrect: fiPresentC,
+            failureInclusivePresentTotal: fiPresentT,
             perField: perField,
             perFieldPresent: perFieldPresent,
             sellerAccuracy: sellerAcc,
@@ -153,6 +217,7 @@ public enum AccuracyRunner {
                 unpairedReason: nil,
                 fieldScores: [],
                 extractionError: "inspect: \(error)",
+                hardFailure: false,
                 tableCount: 0,
                 hasLineItemShaped: false,
                 ingestionSeconds: elapsed,
@@ -175,6 +240,7 @@ public enum AccuracyRunner {
                 unpairedReason: nil,
                 fieldScores: [],
                 extractionError: nil,
+                hardFailure: false,
                 tableCount: inspection.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(inspection.tables),
                 ingestionSeconds: ingestSec,
@@ -193,6 +259,7 @@ public enum AccuracyRunner {
                     "pairing token '\(truth.pairingToken ?? "?")' not found in extracted text",
                 fieldScores: [],
                 extractionError: nil,
+                hardFailure: false,
                 tableCount: inspection.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(inspection.tables),
                 ingestionSeconds: ingestSec,
@@ -223,6 +290,7 @@ public enum AccuracyRunner {
                 unpairedReason: nil,
                 fieldScores: card.fields,
                 extractionError: nil,
+                hardFailure: false,
                 tableCount: result.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(result.tables),
                 ingestionSeconds: ingestSec,
@@ -230,14 +298,23 @@ public enum AccuracyRunner {
             )
         } catch {
             let extractSec = seconds(since: extractStart)
+            // Synthetic all-miss scores so failure-inclusive metrics have a denominator
+            // and the report cannot hide a total wipeout as 0/0.
+            let card = FieldScoring.score(
+                file: relative,
+                truth: truth,
+                predicted: EvalInvoice(),
+                documentText: inspection.fullText
+            )
             return AccuracyFileRecord(
                 file: url.path,
                 relativePath: relative,
                 hasGroundTruth: true,
                 paired: true,
                 unpairedReason: nil,
-                fieldScores: [],
+                fieldScores: card.fields,
                 extractionError: String(describing: error),
+                hardFailure: true,
                 tableCount: inspection.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(inspection.tables),
                 ingestionSeconds: ingestSec,
