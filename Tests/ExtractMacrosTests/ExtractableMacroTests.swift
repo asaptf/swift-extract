@@ -39,6 +39,17 @@ final class ExtractableMacroTests: XCTestCase {
                             propertyOrder: ["name", "age"]
                         )
                     }
+
+                    public struct Partial: Decodable, Sendable {
+                        public let name: String?
+                        public let age: Int?
+
+                        public init(from decoder: Decoder) throws {
+                            let container = try decoder.container(keyedBy: CodingKeys.self)
+                            self.name = try container.decodeLenientStringIfPresent(forKey: .name)
+                            self.age = try container.decodeIfPresent(Int.self, forKey: .age)
+                        }
+                    }
                 }
 
                 extension Person: Extractable, Codable, Sendable {
@@ -96,6 +107,22 @@ final class ExtractableMacroTests: XCTestCase {
                             propertyOrder: ["currency", "amount", "due", "link"]
                         )
                     }
+
+                    public struct Partial: Decodable, Sendable {
+                        public let currency: String?
+                        public let amount: Decimal?
+                        public let due: Date?
+                        public let link: URL?
+
+                        public init(from decoder: Decoder) throws {
+                            let container = try decoder.container(keyedBy: CodingKeys.self)
+                            let extractionLocale = decoder.userInfo[.swiftExtractLocale] as? Locale
+                            self.currency = try container.decodeLenientStringIfPresent(forKey: .currency)
+                            self.amount = try container.decodeLenientDecimalIfPresent(forKey: .amount, locale: extractionLocale)
+                            self.due = try container.decodeLenientDateIfPresent(forKey: .due)
+                            self.link = try container.decodeLenientURLIfPresent(forKey: .link)
+                        }
+                    }
                 }
 
                 extension Payment: Extractable, Codable, Sendable {
@@ -150,6 +177,17 @@ final class ExtractableMacroTests: XCTestCase {
                             propertyOrder: ["enabled", "tags"]
                         )
                     }
+
+                    public struct Partial: Decodable, Sendable {
+                        public let enabled: Bool?
+                        public let tags: [String]?
+
+                        public init(from decoder: Decoder) throws {
+                            let container = try decoder.container(keyedBy: CodingKeys.self)
+                            self.enabled = try container.decodeLenientBoolIfPresent(forKey: .enabled)
+                            self.tags = try container.decodeIfPresent([String].self, forKey: .tags)
+                        }
+                    }
                 }
 
                 extension Flags: Extractable, Codable, Sendable {
@@ -195,6 +233,15 @@ final class ExtractableMacroTests: XCTestCase {
                             propertyOrder: ["child"]
                         )
                     }
+
+                    public struct Partial: Decodable, Sendable {
+                        public let child: Child.Partial?
+
+                        public init(from decoder: Decoder) throws {
+                            let container = try decoder.container(keyedBy: CodingKeys.self)
+                            self.child = try container.decodeIfPresent(Child.Partial.self, forKey: .child)
+                        }
+                    }
                 }
 
                 extension Parent: Extractable, Codable, Sendable {
@@ -205,6 +252,66 @@ final class ExtractableMacroTests: XCTestCase {
                     public func encode(to encoder: Encoder) throws {
                         var container = encoder.container(keyedBy: CodingKeys.self)
                         try container.encode(self.child, forKey: .child)
+                    }
+                }
+                """,
+            macros: macros
+        )
+    }
+
+    func testNestedArrayPartial() {
+        assertMacroExpansion(
+            """
+            @Extractable
+            struct Invoice {
+                let vendor: String
+                let lineItems: [LineItem]
+            }
+            """,
+            expandedSource: """
+                struct Invoice {
+                    let vendor: String
+                    let lineItems: [LineItem]
+
+                    public enum CodingKeys: String, CodingKey {
+                        case vendor
+                        case lineItems
+                    }
+
+                    public nonisolated static var extractionSchema: ExtractionSchema {
+                        .object(
+                            title: "Invoice",
+                            properties: [
+                                "vendor": .string(),
+                                "lineItems": .array(items: LineItem.extractionSchema)
+                            ],
+                            required: ["vendor", "lineItems"],
+                            propertyOrder: ["vendor", "lineItems"]
+                        )
+                    }
+
+                    public struct Partial: Decodable, Sendable {
+                        public let vendor: String?
+                        public let lineItems: [LineItem.Partial]?
+
+                        public init(from decoder: Decoder) throws {
+                            let container = try decoder.container(keyedBy: CodingKeys.self)
+                            self.vendor = try container.decodeLenientStringIfPresent(forKey: .vendor)
+                            self.lineItems = try container.decodeIfPresent([LineItem.Partial].self, forKey: .lineItems)
+                        }
+                    }
+                }
+
+                extension Invoice: Extractable, Codable, Sendable {
+                    public init(from decoder: Decoder) throws {
+                        let container = try decoder.container(keyedBy: CodingKeys.self)
+                        self.vendor = try container.decodeLenientString(forKey: .vendor)
+                        self.lineItems = try container.decode([LineItem].self, forKey: .lineItems)
+                    }
+                    public func encode(to encoder: Encoder) throws {
+                        var container = encoder.container(keyedBy: CodingKeys.self)
+                        try container.encode(self.vendor, forKey: .vendor)
+                        try container.encode(self.lineItems, forKey: .lineItems)
                     }
                 }
                 """,
@@ -234,6 +341,12 @@ final class ExtractableMacroTests: XCTestCase {
                             required: [String](),
                             propertyOrder: [String]()
                         )
+                    }
+
+                    public struct Partial: Decodable, Sendable {
+                        public init(from decoder: Decoder) throws {
+                            let _ = try decoder.container(keyedBy: CodingKeys.self)
+                        }
                     }
                 }
 
@@ -287,6 +400,15 @@ final class ExtractableMacroTests: XCTestCase {
                             propertyOrder: ["name"]
                         )
                     }
+
+                    public struct Partial: Decodable, Sendable {
+                        public let name: String?
+
+                        public init(from decoder: Decoder) throws {
+                            let container = try decoder.container(keyedBy: CodingKeys.self)
+                            self.name = try container.decodeLenientStringIfPresent(forKey: .name)
+                        }
+                    }
                 }
 
                 extension WithUUID: Extractable, Codable, Sendable {
@@ -334,6 +456,12 @@ final class ExtractableMacroTests: XCTestCase {
                             required: [String](),
                             propertyOrder: [String]()
                         )
+                    }
+
+                    public struct Partial: Decodable, Sendable {
+                        public init(from decoder: Decoder) throws {
+                            let _ = try decoder.container(keyedBy: CodingKeys.self)
+                        }
                     }
                 }
 

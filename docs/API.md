@@ -54,6 +54,11 @@ let currency: String
 
 ```swift
 public protocol Extractable: Codable, Sendable {
+    /// Preview type for ``Extract/stream``; default `Self` keeps hand-written
+    /// conformances compiling. The macro generates a nested `Partial` with every
+    /// field optional.
+    associatedtype Partial: Decodable & Sendable = Self
+
     nonisolated static var extractionSchema: ExtractionSchema { get }
 
     /// Cross-field semantic checks after a successful decode.
@@ -209,6 +214,19 @@ public enum Extract {
 
     // Metadata
     public static func detailed<T: Extractable>(...) async throws -> ExtractionResult<T>
+
+    // Streaming partials → terminal final
+    public static func stream<T: Extractable>(
+        from source: ExtractionSource,
+        as type: T.Type = T.self,
+        using session: ExtractionSession = .default,
+        options: ExtractionOptions = .init()
+    ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error>
+}
+
+public enum ExtractionUpdate<T: Extractable>: Sendable {
+    case partial(T.Partial)           // completed-token preview; no signals
+    case final(ExtractionResult<T>)   // same shape as detailed
 }
 ```
 
@@ -217,7 +235,14 @@ Overloads:
 ```swift
 Extract.from("raw text", using: session)           // String → .text
 Extract.from(fileURL, using: session)              // URL → .fileURL
+Extract.stream(from: "raw text", as: T.self, using: session)
+Extract.stream(from: fileURL, as: T.self, using: session)
 ```
+
+**Streaming rules:** partials surface only completed JSON tokens (no half-numbers /
+truncated strings). Arrays may grow as elements complete. Chunked documents emit
+no `.partial` — only `.final` after merge. Repair retries are not streamed; the
+stream still ends with `.final` or throws. Signals / tables attach to `.final` only.
 
 ### Extraction loop
 
