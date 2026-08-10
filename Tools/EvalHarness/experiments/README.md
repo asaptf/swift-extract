@@ -18,51 +18,64 @@ It is intended as the seed for a PR to
    `LanguageModelSession.respond(to:schema:)` forwards the schema instead of
    dropping it. Also exposes `supportsSchemaConstrainedGeneration`.
 
-2. **Model-driven optional properties** — `ConstrainedJSONGenerator.generateObject`
-   used to pre-filter optional keys with a hash of the field name XOR the token
-   budget (`shouldIncludeOptionalProperty`). With a fixed budget that made each
-   optional either always present or always absent across every document — a
-   measurement confound that looks like “guided generation dropped currency.”
+2. **Required keys + null for absence (OpenAI strict shape)** — optional
+   extraction fields used to map to `isOptional: true` on
+   `DynamicGenerationSchema.Property`. With every `EvalInvoice` field optional,
+   `generateObject` offered `}` on the first key step; Qwen2.5-7B at temperature
+   0 took it every time (`{}` in two tokens → 0% accuracy).
 
-   The generator now keeps a set of not-yet-emitted keys and, at each step,
-   **masks tokens** so the model may open any remaining property (`"key":` /
-   `,"key":`) or, once every **required** key has been emitted, close the object
-   with `}`. Optional inclusion is therefore a function of the model’s next-token
-   distribution under the JSON grammar, not of the field name.
+   Industry practice (OpenAI strict structured output): **every property key is
+   required**; absence is a `null` value, not key omission. The patch:
+
+   - Adds `GenerationSchema.Node.null` / `DynamicGenerationSchema` null scalar
+     so nullable values are expressible.
+   - `generateAnyOf` samples between `null` and non-null variant starts when
+     `anyOf [T, null]` is used (non-committing for non-null, same family as the
+     empty-array probe).
+   - Library `SchemaBridge` marks **all** properties required and wraps
+     extraction-optional fields as `anyOf [T, null]`.
+
+   **Prompt parity:** `PromptBuilder` still embeds
+   `ExtractionSchema.renderJSONSchema()` with the original `required` list.
+   Only the guided `GenerationSchema` changes. Decoding still accepts a missing
+   key as `nil`.
+
+3. **Model-driven optional properties (historical)** — before the strict-null
+   change, `generateObject` kept not-yet-emitted keys and masked tokens so the
+   model could open any remaining property or close once every **required** key
+   was present. That path remains for schemas that still mark keys optional; the
+   Extract bridge no longer produces all-optional objects.
 
    A token-budget floor remains as a **last resort only**: when
    `remainingTokens` drops to `max(8, total/10)` and all required keys are
-   present, further optionals are no longer offered and the object is closed.
-   That path surfaces as
-   `ConstrainedGenerationError.optionalPropertiesOmittedDueToTokenBudget`
-   (recovered to valid JSON by `generate()`, with omitted key names in the
-   error for observability). It does **not** fire while budget is plentiful.
+   present, further optionals are no longer offered and the object is closed
+   (`optionalPropertiesOmittedDueToTokenBudget`).
 
-3. **Model-driven array length** — `generateArray` used to pick a fixed element
-   count from the token budget (`totalTokenBudget / 32`, clamped) or, when both
-   `minItems` and `maxItems` were set, `minItems + totalTokenBudget % rangeSize`.
-   That forced the **same** array length for every document (filler when short,
-   truncation when long) — the same family of confound as the name-hash bug, and
-   the dominant one for invoice line items (12 of 18 scored fields).
+4. **Model-driven array length** — after each element the mask permits both
+   continuing (`,`) and closing (`]`), subject to `minItems` / `maxItems`. Empty
+   arrays are chosen by a non-committing probe among `]` and item-start tokens.
+   Budget pressure may force an early close only once `minItems` is satisfied
+   (`arrayTruncatedDueToTokenBudget`).
 
-   Length is now model-driven under the JSON grammar: after each element the
-   mask permits both continuing (`,`) and closing (`]`), subject to schema
-   `minItems` / `maxItems`. Empty arrays (`minItems == 0`) are chosen by a
-   non-committing probe among `]` and item-start tokens. Budget pressure may
-   force an early close only once `minItems` is satisfied; that path surfaces as
-   `ConstrainedGenerationError.arrayTruncatedDueToTokenBudget` (recovered to
-   valid JSON by `generate()`, with `emittedCount` in the error).
+5. **Number termination (decimal point + digit budgets)** — diagnosis on
+   Qwen2.5 tokenizers:
 
-4. **Free-string termination** — already model-driven: after the first content
-   token, `stringContinuationAllowedTokens` includes the closing quote, so the
-   model may end a free string at any step. `maxFreeStringTokens` is only a
-   per-string cap (and budget a hard stop), not a fixed run-out length. Probe
-   garbage like concatenated dates/amounts is the model declining to emit `"`
-   until the cap forces a close — not a missing terminator in the mask.
+   | finding | detail |
+   | --- | --- |
+   | Structural terminators | `,` `}` `]` `:` are single tokens (ids 11, 92, 60, 25) and were already in the mask |
+   | Digit+delimiter merges | **none** in the Qwen2.5 vocab |
+   | Root cause | `buildValidDecimalTokens` required every token to contain a digit, which **excluded standalone `.` and `-`**. Qwen encodes `473.00` as `4` `7` `3` `.` `0` `0`, so the model could not emit a decimal point; after integer digits it padded zeros until `maxDecimalTokenLimit` (32) → values re-serialized as `e+31` |
+   | Whitespace | ` ` / `\n` / `\t` are single tokens and are now number terminators (pretty-print end) |
 
-5. **Shared response-token default (MLX)** — plain generation used to pass
-   `options.maximumResponseTokens` through as `nil` (MLX = unlimited until EOS)
-   while structured generation hard-coded `?? 512`. Both paths now resolve
+   Fix: include standalone `.` / `-` (ASCII digits only; no fullwidth/`²`),
+   number FSM for valid prefixes, whitespace terminators, fractional digit cap
+   (6) and integer digit cap (12) so zero-padding cannot run to the token cap,
+   and reject pathological unbounded magnitudes (`≥ 1e15` or `> 16` digits).
+
+6. **Free-string termination** — already model-driven: after the first content
+   token, `stringContinuationAllowedTokens` includes the closing quote.
+
+7. **Shared response-token default (MLX)** — plain and structured paths resolve
    through the same default when the option is nil so a guided-vs-plain A/B
    isolates the decoding strategy.
 
@@ -79,8 +92,7 @@ It is intended as the seed for a PR to
    | verbose 10-line + markdown fence (plain-path proxy) | 587 | 614 | 629 |
 
    **512 clips** the 10-line proxy (margin −117). **1024** clears max fenced
-   verbose-10 with ~400 tokens of headroom (~1.5× the 1.5×-headroom target of
-   ~943). Keep in lockstep with
+   verbose-10 with ~400 tokens of headroom. Keep in lockstep with
    `ExtractionSession.defaultMaximumResponseTokens`.
 
 ### `deterministicChoice` (judgement)
@@ -88,11 +100,10 @@ It is intended as the seed for a PR to
 Nearby `deterministicChoice(from:)` returns `""` if present, else the longest
 candidate. It is **only** on the `generateChoice` path for string enums, and
 only when an empty candidate is present or one candidate’s token sequence is a
-prefix of another (the sampler cannot commit without lookahead). It is **not**
-used for object-key selection, array length, or the `anyOf` path (`anyOf` still
-picks the first variant — a pre-existing limitation, left alone here because it
-is a different defect class). Leaving the fallback is correct: it is a rare
-tokenizer edge case, not a systematic pre-pass over schema structure.
+prefix of another. It is **not** used for object-key selection, array length,
+nullable `anyOf`, or multi non-null `anyOf` (multi non-null still picks the
+first variant — a pre-existing limitation). Leaving the fallback is correct: it
+is a rare tokenizer edge case, not a systematic pre-pass over schema structure.
 
 ### Apply locally (not committed)
 
@@ -118,3 +129,9 @@ Do **not** commit `Packages/` symlinks, the clone, or build artifacts.
 Real callers of `ExtractionSession` therefore get a comparable budget on both
 paths without depending on backend-specific nil handling. See the comment on
 that constant: plain-path capping is for A/B parity, not a product default.
+
+### Library-side SchemaBridge (required + null)
+
+`Sources/Extract/SchemaBridge.swift` converts optional extraction properties to
+required keys with `anyOf [value, null]` on the guided path only. The JSON
+Schema string in prompts is unchanged.

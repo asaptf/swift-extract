@@ -3,6 +3,17 @@ import Foundation
 
 extension ExtractionSchema {
     /// Convert to AnyLanguageModel ``DynamicGenerationSchema`` for constrained generation.
+    ///
+    /// ## Required keys + null for absence (guided path only)
+    ///
+    /// Every property is marked **required** on the generation schema. Properties that are
+    /// optional in the extraction schema (Swift `Optional` / not listed in `required`) get a
+    /// value schema of `anyOf [T, null]`, matching OpenAI strict structured-output practice:
+    /// the model must emit each key and may answer `null` when the document lacks that field.
+    ///
+    /// This does **not** change ``renderJSONSchema()`` / ``PromptBuilder`` — those still use
+    /// the extraction schema's original `required` list so guided and unguided arms share
+    /// identical prompts. Decoding continues to accept missing keys as `nil`.
     public func toDynamicGenerationSchema(name: String = "Root") -> DynamicGenerationSchema {
         switch type {
         case .object:
@@ -11,28 +22,12 @@ extension ExtractionSchema {
             let requiredSet = Set(required ?? [])
             for key in order {
                 guard let child = properties?[key] else { continue }
-                let childSchema = child.toDynamicGenerationSchema(name: key)
-                props.append(
-                    DynamicGenerationSchema.Property(
-                        name: key,
-                        description: child.description,
-                        schema: childSchema,
-                        isOptional: !requiredSet.contains(key)
-                    )
-                )
+                props.append(bridgedProperty(key: key, child: child, requiredSet: requiredSet, parentName: name))
             }
             // Properties not listed in order
             if let properties {
                 for (key, child) in properties where !order.contains(key) {
-                    let childSchema = child.toDynamicGenerationSchema(name: key)
-                    props.append(
-                        DynamicGenerationSchema.Property(
-                            name: key,
-                            description: child.description,
-                            schema: childSchema,
-                            isOptional: !requiredSet.contains(key)
-                        )
-                    )
+                    props.append(bridgedProperty(key: key, child: child, requiredSet: requiredSet, parentName: name))
                 }
             }
             return DynamicGenerationSchema(
@@ -61,7 +56,7 @@ extension ExtractionSchema {
         case .boolean:
             return DynamicGenerationSchema(type: Bool.self)
         case .null:
-            return DynamicGenerationSchema(type: String.self)
+            return DynamicGenerationSchema(null: ())
         }
     }
 
@@ -69,5 +64,34 @@ extension ExtractionSchema {
     public func toGenerationSchema(name: String = "Root") throws -> GenerationSchema {
         let dynamic = toDynamicGenerationSchema(name: name)
         return try GenerationSchema(root: dynamic, dependencies: [])
+    }
+
+    /// Build a guided-generation property: always required; optional extraction fields
+    /// become `anyOf [value, null]`.
+    private func bridgedProperty(
+        key: String,
+        child: ExtractionSchema,
+        requiredSet: Set<String>,
+        parentName: String
+    ) -> DynamicGenerationSchema.Property {
+        let childSchema = child.toDynamicGenerationSchema(name: key)
+        let extractionOptional = !requiredSet.contains(key)
+        let valueSchema: DynamicGenerationSchema
+        if extractionOptional {
+            // Required key, nullable value — model must emit the key, may answer null.
+            valueSchema = DynamicGenerationSchema(
+                name: "\(parentName)_\(key)_Nullable",
+                description: child.description,
+                anyOf: [childSchema, DynamicGenerationSchema(null: ())]
+            )
+        } else {
+            valueSchema = childSchema
+        }
+        return DynamicGenerationSchema.Property(
+            name: key,
+            description: child.description,
+            schema: valueSchema,
+            isOptional: false
+        )
     }
 }

@@ -1,3 +1,91 @@
+diff --git a/Sources/AnyLanguageModel/DynamicGenerationSchema.swift b/Sources/AnyLanguageModel/DynamicGenerationSchema.swift
+index 3245a25..30f3d1d 100644
+--- a/Sources/AnyLanguageModel/DynamicGenerationSchema.swift
++++ b/Sources/AnyLanguageModel/DynamicGenerationSchema.swift
+@@ -22,6 +22,8 @@ public struct DynamicGenerationSchema: Sendable {
+         case number
+         case integer
+         case decimal
++        /// JSON `null` literal (used for required-but-nullable properties).
++        case null
+     }
+ 
+     internal let body: Body
+@@ -122,6 +124,14 @@ public struct DynamicGenerationSchema: Sendable {
+     public init(referenceTo name: String) {
+         self.body = .reference(name)
+     }
++
++    /// Creates a schema that accepts only the JSON `null` literal.
++    ///
++    /// Used with ``init(name:description:anyOf:)`` to express required keys whose
++    /// absence is represented as `null` rather than key omission.
++    public init(null: Void = ()) {
++        self.body = .scalar(.null)
++    }
+ }
+ 
+ // MARK: - DynamicGenerationSchema.Property
+diff --git a/Sources/AnyLanguageModel/GenerationSchema.swift b/Sources/AnyLanguageModel/GenerationSchema.swift
+index 8d80644..3785b29 100644
+--- a/Sources/AnyLanguageModel/GenerationSchema.swift
++++ b/Sources/AnyLanguageModel/GenerationSchema.swift
+@@ -15,6 +15,8 @@ public struct GenerationSchema: Equatable, Codable, CustomDebugStringConvertible
+         case string(StringNode)
+         case number(NumberNode)
+         case boolean
++        /// JSON `null` literal.
++        case null
+         case anyOf([Node])
+         case ref(String)
+ 
+@@ -24,6 +26,8 @@ public struct GenerationSchema: Equatable, Codable, CustomDebugStringConvertible
+             switch (lhs, rhs) {
+             case (.boolean, .boolean):
+                 return true
++            case (.null, .null):
++                return true
+             case (.ref(let lhsName), .ref(let rhsName)):
+                 return lhsName == rhsName
+             case (.string(let lhsString), .string(let rhsString)):
+@@ -130,6 +134,9 @@ public struct GenerationSchema: Equatable, Codable, CustomDebugStringConvertible
+             case .boolean:
+                 try container.encode("boolean", forKey: .type)
+ 
++            case .null:
++                try container.encode("null", forKey: .type)
++
+             case .anyOf(let nodes):
+                 try container.encode(nodes, forKey: .anyOf)
+ 
+@@ -208,6 +215,9 @@ public struct GenerationSchema: Equatable, Codable, CustomDebugStringConvertible
+             case "boolean":
+                 self = .boolean
+ 
++            case "null":
++                self = .null
++
+             default:
+                 throw DecodingError.dataCorruptedError(
+                     forKey: .type,
+@@ -280,6 +290,8 @@ public struct GenerationSchema: Equatable, Codable, CustomDebugStringConvertible
+             return num.integerOnly ? "integer" : "number"
+         case .boolean:
+             return "boolean"
++        case .null:
++            return "null"
+         case .anyOf(let nodes):
+             return "anyOf(\(nodes.count) choices)"
+         case .ref(let name):
+@@ -534,6 +546,8 @@ public struct GenerationSchema: Equatable, Codable, CustomDebugStringConvertible
+                 return .number(
+                     NumberNode(description: dynamicProp?.description, minimum: nil, maximum: nil, integerOnly: false)
+                 )
++            case .null:
++                return .null
+             }
+ 
+         case .reference(let name):
 diff --git a/Sources/AnyLanguageModel/LanguageModel.swift b/Sources/AnyLanguageModel/LanguageModel.swift
 index 635de68..cbdfb94 100644
 --- a/Sources/AnyLanguageModel/LanguageModel.swift
@@ -116,7 +204,7 @@ index ba38550..e5e6b8a 100644
  
      @discardableResult
 diff --git a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
-index 0ef37ef..98d0992 100644
+index 0ef37ef..b098d2f 100644
 --- a/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
 +++ b/Sources/AnyLanguageModel/Models/MLXLanguageModel.swift
 @@ -858,6 +858,46 @@ import Foundation
@@ -166,7 +254,21 @@ index 0ef37ef..98d0992 100644
          public func respond<Content>(
              within session: LanguageModelSession,
              to prompt: Prompt,
-@@ -1214,10 +1254,31 @@ import Foundation
+@@ -945,8 +985,11 @@ import Foundation
+                     switch item {
+                     case .chunk(let text):
+                         chunks.append(text)
+-                    case .info:
+-                        break
++                    case .info(let info):
++                        // Diagnostic probe: unconstrained completion token count.
++                        ConstrainedGenerationProbe.recordBaselineCompletionTokens(
++                            info.generationTokenCount
++                        )
+                     case .toolCall(let call):
+                         collectedToolCalls.append(call)
+                     }
+@@ -1214,10 +1257,31 @@ import Foundation
  
      // MARK: - Options Mapping
  
@@ -199,7 +301,7 @@ index 0ef37ef..98d0992 100644
              maxKVSize: custom?.kvCache.maxSize,
              kvBits: custom?.kvCache.bits,
              kvGroupSize: custom?.kvCache.groupSize ?? 64,
-@@ -1233,7 +1294,7 @@ import Foundation
+@@ -1233,7 +1297,7 @@ import Foundation
      private func toStructuredGenerateParameters(_ options: GenerationOptions) -> MLXLMCommon.GenerateParameters {
          let custom = options[custom: MLXLanguageModel.self]
          return MLXLMCommon.GenerateParameters(
@@ -208,7 +310,7 @@ index 0ef37ef..98d0992 100644
              maxKVSize: custom?.kvCache.maxSize,
              kvBits: custom?.kvCache.bits,
              kvGroupSize: custom?.kvCache.groupSize ?? 64,
-@@ -1625,7 +1686,7 @@ import Foundation
+@@ -1625,7 +1689,7 @@ import Foundation
          options: GenerationOptions,
          includeSchemaInPrompt: Bool
      ) async throws -> String {
@@ -217,8 +319,193 @@ index 0ef37ef..98d0992 100644
          let generateParameters = toStructuredGenerateParameters(options)
  
          let baseChat = convertTranscriptToMLXChat(session: session, fallbackPrompt: prompt.description)
+diff --git a/Sources/AnyLanguageModel/Models/SystemLanguageModel.swift b/Sources/AnyLanguageModel/Models/SystemLanguageModel.swift
+index ff2e8f2..8220dfe 100644
+--- a/Sources/AnyLanguageModel/Models/SystemLanguageModel.swift
++++ b/Sources/AnyLanguageModel/Models/SystemLanguageModel.swift
+@@ -851,6 +851,9 @@
+         case .boolean:
+             return GeneratedContent(true)
+ 
++        case .null:
++            return GeneratedContent(kind: .null)
++
+         case .anyOf(let nodes):
+             if let first = nodes.first {
+                 return placeholderGeneratedContent(from: first, defs: defs)
+diff --git a/Sources/AnyLanguageModel/Shared/ConstrainedGenerationProbe.swift b/Sources/AnyLanguageModel/Shared/ConstrainedGenerationProbe.swift
+new file mode 100644
+index 0000000..439b03c
+--- /dev/null
++++ b/Sources/AnyLanguageModel/Shared/ConstrainedGenerationProbe.swift
+@@ -0,0 +1,165 @@
++import Foundation
++
++/// Temporary diagnostic counters for guided-generation probes.
++///
++/// Not part of the stable public API — used by a one-off harness probe to dump
++/// escape-hatch / empty-object behaviour. Safe to leave at zero cost when unused
++/// (locked counters, no logging unless the probe reads a snapshot).
++public enum ConstrainedGenerationProbe: Sendable {
++    public struct Snapshot: Sendable, CustomStringConvertible {
++        /// Total `generateChoice` calls that took the deterministic escape hatch.
++        public var escapeHatchTotal: Int = 0
++        /// Escape hatches where candidates looked like object key starts (`"key":` / `,"key":`)
++        /// plus optional `}` — i.e. the property-selection path, not string enums.
++        public var escapeHatchPropertyChoice: Int = 0
++        /// Subset of property-choice escapes that occurred at object nesting depth 0 (root).
++        public var escapeHatchRootKeySet: Int = 0
++        public var escapeHatchEmptyCandidate: Int = 0
++        public var escapeHatchPrefixCollision: Int = 0
++        /// Root object chose `}` before emitting any property (schema had empty `required`).
++        public var rootObjectImmediateClose: Int = 0
++        /// How many times the root object offered a key-set choice (including close).
++        public var rootObjectKeyChoiceSteps: Int = 0
++        /// Nested object immediate closes (all-optional nested structs).
++        public var nestedObjectImmediateClose: Int = 0
++        /// Completion tokens consumed by the last guided generate (budget − remaining).
++        public var guidedCompletionTokens: Int?
++        /// Completion tokens from the last unconstrained MLX stream (`.info`).
++        public var baselineCompletionTokens: Int?
++        /// Brief event log (escape hatch + immediate close).
++        public var events: [String] = []
++
++        public var description: String {
++            var lines: [String] = []
++            lines.append(
++                "escapeHatchTotal=\(escapeHatchTotal) (empty=\(escapeHatchEmptyCandidate) prefixCollision=\(escapeHatchPrefixCollision))"
++            )
++            lines.append(
++                "escapeHatchPropertyChoice=\(escapeHatchPropertyChoice) rootKeySet=\(escapeHatchRootKeySet)"
++            )
++            lines.append(
++                "rootObjectKeyChoiceSteps=\(rootObjectKeyChoiceSteps) rootImmediateClose=\(rootObjectImmediateClose) nestedImmediateClose=\(nestedObjectImmediateClose)"
++            )
++            if let g = guidedCompletionTokens {
++                lines.append("guidedCompletionTokens=\(g)")
++            }
++            if let b = baselineCompletionTokens {
++                lines.append("baselineCompletionTokens=\(b)")
++            }
++            if !events.isEmpty {
++                lines.append("events:")
++                for e in events.prefix(40) {
++                    lines.append("  \(e)")
++                }
++                if events.count > 40 {
++                    lines.append("  … (\(events.count - 40) more)")
++                }
++            }
++            return lines.joined(separator: "\n")
++        }
++    }
++
++    private static let lock = NSLock()
++    nonisolated(unsafe) private static var state = Snapshot()
++
++    public static func reset() {
++        lock.lock()
++        state = Snapshot()
++        lock.unlock()
++    }
++
++    public static func snapshot() -> Snapshot {
++        lock.lock()
++        defer { lock.unlock() }
++        return state
++    }
++
++    static func recordEscape(
++        hasEmptyCandidate: Bool,
++        hasPrefixCollision: Bool,
++        candidates: [String],
++        chosen: String,
++        objectDepth: Int?
++    ) {
++        lock.lock()
++        defer { lock.unlock() }
++        state.escapeHatchTotal += 1
++        if hasEmptyCandidate { state.escapeHatchEmptyCandidate += 1 }
++        if hasPrefixCollision { state.escapeHatchPrefixCollision += 1 }
++
++        let isPropertyChoice =
++            candidates.contains(where: { looksLikePropertyStart($0) })
++            || candidates.contains("}")
++        if isPropertyChoice {
++            state.escapeHatchPropertyChoice += 1
++            if objectDepth == 0 {
++                state.escapeHatchRootKeySet += 1
++            }
++        }
++
++        let reason: String
++        switch (hasEmptyCandidate, hasPrefixCollision) {
++        case (true, true): reason = "empty+prefixCollision"
++        case (true, false): reason = "empty"
++        case (false, true): reason = "prefixCollision"
++        case (false, false): reason = "unknown"
++        }
++        let depthLabel = objectDepth.map { "depth=\($0)" } ?? "depth=?"
++        let preview = candidates.prefix(8).map { truncate($0, 40) }.joined(separator: " | ")
++        state.events.append(
++            "ESCAPE[\(reason) \(depthLabel)] chosen=\(truncate(chosen, 40)) from [\(preview)] (n=\(candidates.count))"
++        )
++    }
++
++    static func recordObjectKeyChoiceStep(depth: Int, canClose: Bool, keyCount: Int) {
++        lock.lock()
++        defer { lock.unlock() }
++        if depth == 0 {
++            state.rootObjectKeyChoiceSteps += 1
++        }
++        // Keep event volume low — only first few root steps
++        if depth == 0 && state.rootObjectKeyChoiceSteps <= 5 {
++            state.events.append(
++                "ROOT_KEY_STEP #\(state.rootObjectKeyChoiceSteps) keysRemaining=\(keyCount) canClose=\(canClose)"
++            )
++        }
++    }
++
++    static func recordImmediateClose(depth: Int) {
++        lock.lock()
++        defer { lock.unlock() }
++        if depth == 0 {
++            state.rootObjectImmediateClose += 1
++            state.events.append("ROOT_IMMEDIATE_CLOSE {}")
++        } else {
++            state.nestedObjectImmediateClose += 1
++            state.events.append("NESTED_IMMEDIATE_CLOSE depth=\(depth)")
++        }
++    }
++
++    static func recordGuidedCompletionTokens(_ n: Int) {
++        lock.lock()
++        defer { lock.unlock() }
++        state.guidedCompletionTokens = n
++    }
++
++    /// Public so MLXLanguageModel (same module) and external probes can record baseline usage.
++    public static func recordBaselineCompletionTokens(_ n: Int) {
++        lock.lock()
++        defer { lock.unlock() }
++        state.baselineCompletionTokens = n
++    }
++
++    private static func looksLikePropertyStart(_ s: String) -> Bool {
++        // `"key":` or `,"key":`
++        if s.hasPrefix(",\"") || s.hasPrefix("\"") {
++            return s.hasSuffix("\":")
++        }
++        return false
++    }
++
++    private static func truncate(_ s: String, _ max: Int) -> String {
++        if s.count <= max { return s }
++        return String(s.prefix(max)) + "…"
++    }
++}
 diff --git a/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift b/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
-index aae832e..4529187 100644
+index aae832e..3d19d7c 100644
 --- a/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
 +++ b/Sources/AnyLanguageModel/Shared/StructuredGeneration.swift
 @@ -20,10 +20,16 @@ protocol TokenBackend {
@@ -242,18 +529,90 @@ index aae832e..4529187 100644
      static let minimumRemainingTokens = 8
  
      /// Require at least this fraction of the total budget (divisor form).
-@@ -69,10 +75,6 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
-     private static var maxIntegerTokenLimit: Int { 20 }
-     private static var maxDecimalTokenLimit: Int { 32 }
+@@ -66,25 +72,41 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     private static var freeStringTokenBudgetDivisor: Int { 16 }
  
+     /// Upper bounds for numeric token generation heuristics.
++    ///
++    /// Sized for human-scale values (money, quantities, dates-as-numbers). The previous
++    /// decimal cap of 32 let greedy decoding pad zeros until the result re-serialized as
++    /// `e+31` once the model could not emit a decimal point (see ``buildValidDecimalTokens``).
+     private static var maxIntegerTokenLimit: Int { 20 }
+-    private static var maxDecimalTokenLimit: Int { 32 }
+-
 -    /// Heuristics for default array sizes when no bounds are specified.
 -    private static var arrayDefaultCountDivisor: Int { 32 }
 -    private static var arrayDefaultCountMax: Int { 16 }
--
++    private static var maxDecimalTokenLimit: Int { 20 }
++    /// Reject unbounded numbers whose digit count exceeds this (pathological for money fields).
++    private static var maxUnconstrainedDigitCount: Int { 16 }
++    /// Max digits before the decimal point for unbounded numbers.
++    private static var maxIntegerDigitCount: Int { 12 }
++    /// Max digits after the decimal point. Stops zero-padding that otherwise runs until
++    /// the token cap once `.` is available (observed: `197.6500000000000249`).
++    private static var maxFractionalDigitCount: Int { 6 }
++    /// Reject unbounded magnitudes at or above this absolute value.
++    private static var maxUnconstrainedMagnitude: Double { 1e15 }
+ 
      private var backend: Backend
      private let schema: GenerationSchema
      private var emittedText = ""
-@@ -127,6 +129,16 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     private let quoteToken: Int
++    /// Nesting depth of the object currently being generated (0 = root). Used only by
++    /// ``ConstrainedGenerationProbe`` diagnostics.
++    private var objectDepth: Int = 0
++    /// Depth of the object whose key-set is currently being chosen via `generateChoice`.
++    private var activeObjectChoiceDepth: Int?
+ 
+     private let stringTerminators: Set<Int>
+     private let stringInitialAllowedTokens: Set<Int>
+     private let stringContinuationAllowedTokens: Set<Int>
+ 
+     private let basicTerminators: Set<Int>
+-    private let integerTerminators: Set<Int>
+-    private let doubleTerminators: Set<Int>
++    /// Structural + whitespace tokens that end a number without being part of it.
++    private let numberTerminators: Set<Int>
++    private let integerNumericTokens: Set<Int>
++    private let doubleNumericTokens: Set<Int>
+ 
+     /// Creates a constrained JSON generator.
+     ///
+@@ -107,8 +129,18 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+             structuralTerminators.insert(token)
+         }
+         self.basicTerminators = structuralTerminators
+-        self.integerTerminators = Self.buildValidIntegerTokens(backend: backend).union(structuralTerminators)
+-        self.doubleTerminators = Self.buildValidDecimalTokens(backend: backend).union(structuralTerminators)
++
++        // Whitespace is a legal way for the model to end a number (pretty-printed JSON).
++        // It is accepted as a terminator only — not emitted into the number text.
++        var numberTerminators = structuralTerminators
++        for whitespace in [" ", "\n", "\t"] {
++            if let token = try? Self.singleToken(for: whitespace, backend: backend) {
++                numberTerminators.insert(token)
++            }
++        }
++        self.numberTerminators = numberTerminators
++        self.integerNumericTokens = Self.buildValidIntegerTokens(backend: backend)
++        self.doubleNumericTokens = Self.buildValidDecimalTokens(backend: backend)
+ 
+         let stringContentTokens = Self.buildValidStringTokens(backend: backend)
+         self.stringInitialAllowedTokens = stringContentTokens
+@@ -122,11 +154,28 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     /// - Throws: ``ConstrainedGenerationError`` if generation fails.
+     mutating func generate() async throws -> String {
+         do {
+-            return try await generateNode(schema.root)
++            let json = try await generateNode(schema.root)
++            ConstrainedGenerationProbe.recordGuidedCompletionTokens(
++                backend.totalTokenBudget - backend.remainingTokens
++            )
++            return json
+         } catch let error as ConstrainedGenerationError {
++            ConstrainedGenerationProbe.recordGuidedCompletionTokens(
++                backend.totalTokenBudget - backend.remainingTokens
++            )
              if case .earlyTermination(let partial) = error {
                  return partial
              }
@@ -270,7 +629,109 @@ index aae832e..4529187 100644
              throw error
          }
      }
-@@ -241,11 +253,20 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+@@ -193,34 +242,95 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+         return samples.filter { $0 >= 0 && $0 < vocabSize }.sorted()
+     }
+ 
++    /// ASCII digit `0`...`9` only — JSON numbers must not accept fullwidth / superscript
++    /// forms that `Character.isNumber` would otherwise admit.
++    private static func isASCIIDigit(_ character: Character) -> Bool {
++        character >= "0" && character <= "9"
++    }
++
++    /// Tokens that may appear inside a JSON integer: ASCII digits and standalone `-`.
++    ///
++    /// Standalone `-` is required because BPE tokenizers (Qwen2.5, etc.) encode `-1` as
++    /// two tokens. Requiring every token to contain a digit excluded `-` and made negatives
++    /// unrepresentable except via rare multi-character tokens.
+     private static func buildValidIntegerTokens(backend: Backend) -> Set<Int> {
+         var allowed = Set<Int>()
+         for token in 0 ..< backend.vocabSize {
+             if backend.isSpecialToken(token) { continue }
+             guard let text = backend.tokenText(token), !text.isEmpty else { continue }
+-            if text.allSatisfy({ $0.isNumber || $0 == "-" }),
+-                text.contains(where: { $0.isNumber })
+-            {
++            let onlyIntegerChars = text.allSatisfy { ($0 >= "0" && $0 <= "9") || $0 == "-" }
++            let hasDigit = text.contains { $0 >= "0" && $0 <= "9" }
++            let isStandaloneMinus = text == "-"
++            if onlyIntegerChars && (hasDigit || isStandaloneMinus) {
+                 allowed.insert(token)
+             }
+         }
+         return allowed
+     }
+ 
++    /// Tokens that may appear inside a JSON number: ASCII digits, `-`, and `.`.
++    ///
++    /// **Critical:** standalone `.` and `-` must be included. Qwen2.5 encodes `473.00` as
++    /// `4` `7` `3` `.` `0` `0`. The previous filter required every token to contain a digit,
++    /// which dropped `.` and forced the model to pad zeros until `maxDecimalTokenLimit`
++    /// (pathological `e+31` values after Double re-serialization).
+     private static func buildValidDecimalTokens(backend: Backend) -> Set<Int> {
+         var allowed = Set<Int>()
+         for token in 0 ..< backend.vocabSize {
+             if backend.isSpecialToken(token) { continue }
+             guard let text = backend.tokenText(token), !text.isEmpty else { continue }
+-            if text.allSatisfy({ $0.isNumber || $0 == "-" || $0 == "." }),
+-                text.contains(where: { $0.isNumber })
+-            {
++            let onlyNumberChars = text.allSatisfy {
++                ($0 >= "0" && $0 <= "9") || $0 == "-" || $0 == "."
++            }
++            let hasDigit = text.contains { $0 >= "0" && $0 <= "9" }
++            let isStandaloneSignOrDot = text == "-" || text == "."
++            if onlyNumberChars && (hasDigit || isStandaloneSignOrDot) {
+                 allowed.insert(token)
+             }
+         }
+         return allowed
+     }
+ 
++    /// Whether `text` is a valid *prefix* of a JSON number (may still be incomplete).
++    ///
++    /// States: 0 start, 1 afterMinus, 2 integerDigits, 3 afterDot, 4 fractionDigits.
++    /// (Integer states avoid nesting a type inside this generic static method.)
++    private static func isValidJSONNumberPrefix(_ text: String, integerOnly: Bool) -> Bool {
++        if text.isEmpty { return true }
++
++        var state = 0
++        for character in text {
++            let digit = character >= "0" && character <= "9"
++            switch (state, character, digit) {
++            case (0, "-", _):
++                state = 1
++            case (0, _, true):
++                state = 2
++            case (1, _, true):
++                state = 2
++            case (2, _, true):
++                state = 2
++            case (2, ".", _) where !integerOnly:
++                state = 3
++            case (3, _, true):
++                state = 4
++            case (4, _, true):
++                state = 4
++            default:
++                return false
++            }
++        }
++        return true
++    }
++
++    /// Whether `text` is a complete JSON number (at least one digit; no trailing `-`/`.`).
++    private static func isCompleteJSONNumber(_ text: String, integerOnly: Bool) -> Bool {
++        guard !text.isEmpty else { return false }
++        guard isValidJSONNumberPrefix(text, integerOnly: integerOnly) else { return false }
++        guard text.last != "-", text.last != "." else { return false }  // trailing sign/dot incomplete
++        return text.contains { $0 >= "0" && $0 <= "9" }
++    }
++
+     private mutating func emit(_ text: String) async throws -> String {
+         for token in try backend.tokenize(text) {
+             guard backend.remainingTokens > 0 else {
+@@ -241,11 +351,20 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
          return min(remainingAfterClosingQuote, perStringLimit)
      }
  
@@ -291,12 +752,276 @@ index aae832e..4529187 100644
              let allowed = result.isEmpty ? stringInitialAllowedTokens : stringContinuationAllowedTokens
              let token = try await backend.sample(from: allowed)
              if backend.endTokens.contains(token) {
-@@ -425,60 +446,197 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+@@ -280,6 +399,13 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+         let hasPrefixCollision = Self.hasPrefixCollision(tokenized: tokenized)
+         if hasEmptyCandidate || hasPrefixCollision {
+             let chosen = deterministicChoice(from: candidates)
++            ConstrainedGenerationProbe.recordEscape(
++                hasEmptyCandidate: hasEmptyCandidate,
++                hasPrefixCollision: hasPrefixCollision,
++                candidates: candidates,
++                chosen: chosen,
++                objectDepth: activeObjectChoiceDepth
++            )
+             if !chosen.isEmpty {
+                 _ = try await emit(chosen)
+             }
+@@ -335,22 +461,63 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+     }
+ 
+     private mutating func generateNumber(_ node: GenerationSchema.NumberNode) async throws -> String {
+-        let allowedTokens = node.integerOnly ? integerTerminators : doubleTerminators
+-        let numericTokens = allowedTokens.subtracting(basicTerminators)
++        let numericTokens = node.integerOnly ? integerNumericTokens : doubleNumericTokens
+         var result = ""
+         let maxTokens = maxNumberTokens(for: node)
+         var generatedTokens = 0
+ 
+         while backend.remainingTokens > 0, generatedTokens < maxTokens {
+-            let candidates = result.isEmpty ? numericTokens : allowedTokens
++            var candidates = Set<Int>()
++            let complete = Self.isCompleteJSONNumber(result, integerOnly: node.integerOnly)
++
++            // Model may end a complete number on structural or whitespace terminators.
++            if complete {
++                candidates.formUnion(numberTerminators)
++            }
++
++            // Further digits only while under digit budgets. Once the integer or
++            // fractional budget is exhausted, only terminators remain — the model
++            // must close rather than pad zeros until the token cap.
++            let allowMoreNumeric = Self.allowsAdditionalNumberDigits(
++                result,
++                integerOnly: node.integerOnly
++            )
++            if allowMoreNumeric {
++                for token in numericTokens {
++                    guard let piece = backend.tokenText(token), !piece.isEmpty else { continue }
++                    let candidate = result + piece
++                    guard Self.isValidJSONNumberPrefix(candidate, integerOnly: node.integerOnly)
++                    else {
++                        continue
++                    }
++                    guard Self.allowsAdditionalNumberDigits(
++                        candidate,
++                        integerOnly: node.integerOnly,
++                        asCompletedPrefix: true
++                    ) else {
++                        continue
++                    }
++                    candidates.insert(token)
++                }
++            }
++
+             guard !candidates.isEmpty else {
++                // No legal continuation: stop if we already have a complete number.
++                if complete {
++                    break
++                }
+                 throw ConstrainedGenerationError.tokenizationFailed
+             }
++
+             let token = try await backend.sample(from: candidates)
+             if backend.endTokens.contains(token) {
+                 throw ConstrainedGenerationError.earlyTermination(emittedText)
+             }
+-            if basicTerminators.contains(token) { break }
++            // Terminators are not part of the number and are not decoded — the next
++            // structural step re-samples from the same backend state.
++            if numberTerminators.contains(token) {
++                break
++            }
+ 
+             guard let text = backend.tokenText(token) else { break }
+             result += text
+@@ -359,13 +526,68 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+             try await backend.decode(token)
+         }
+ 
+-        guard !result.isEmpty else {
+-            throw ConstrainedGenerationError.numberOutOfRange("Missing number value")
++        guard Self.isCompleteJSONNumber(result, integerOnly: node.integerOnly) else {
++            throw ConstrainedGenerationError.numberOutOfRange(
++                result.isEmpty ? "Missing number value" : "Incomplete number: \(result)"
++            )
+         }
+         return try validateNumberString(result, node: node)
+     }
+ 
++    /// Whether `text` is still within digit budgets for an unbounded JSON number.
++    ///
++    /// - Parameter asCompletedPrefix: when true, trailing `.` (incomplete fraction start)
++    ///   is allowed without counting fractional digits yet.
++    private static func allowsAdditionalNumberDigits(
++        _ text: String,
++        integerOnly: Bool,
++        asCompletedPrefix: Bool = false
++    ) -> Bool {
++        if text.isEmpty { return true }
++
++        var integerDigits = 0
++        var fractionalDigits = 0
++        var seenDot = false
++        var seenDigit = false
++        for character in text {
++            if character == "-" { continue }
++            if character == "." {
++                seenDot = true
++                continue
++            }
++            if character >= "0", character <= "9" {
++                seenDigit = true
++                if seenDot {
++                    fractionalDigits += 1
++                } else {
++                    integerDigits += 1
++                }
++            }
++        }
++
++        if integerDigits > maxIntegerDigitCount { return false }
++        if !integerOnly, fractionalDigits > maxFractionalDigitCount { return false }
++        if integerDigits + fractionalDigits > maxUnconstrainedDigitCount { return false }
++
++        // Incomplete trailing dot is fine as a prefix even at the frac budget boundary.
++        if asCompletedPrefix, seenDot, fractionalDigits == 0, !seenDigit {
++            return true
++        }
++        return true
++    }
++
+     private func validateNumberString(_ text: String, node: GenerationSchema.NumberNode) throws -> String {
++        let digitCount = text.reduce(into: 0) { count, character in
++            if Self.isASCIIDigit(character) { count += 1 }
++        }
++        // Pathological digit runs (e.g. 32 zeros after a money amount) must not silently
++        // become `1e+31` after Double re-serialization.
++        if digitCount > Self.maxUnconstrainedDigitCount {
++            throw ConstrainedGenerationError.numberOutOfRange(
++                "Pathological number length (\(digitCount) digits): \(text)"
++            )
++        }
++
+         if node.integerOnly {
+             guard let value = Int(text) else {
+                 throw ConstrainedGenerationError.numberOutOfRange("Invalid integer: \(text)")
+@@ -376,6 +598,13 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+             if let maximum = node.maximum, Double(value) > maximum {
+                 throw ConstrainedGenerationError.numberOutOfRange("Integer \(value) exceeds maximum \(maximum)")
+             }
++            if node.minimum == nil, node.maximum == nil,
++                abs(Double(value)) >= Self.maxUnconstrainedMagnitude
++            {
++                throw ConstrainedGenerationError.numberOutOfRange(
++                    "Pathological integer magnitude: \(text)"
++                )
++            }
+             return text
+         } else {
+             guard let value = Double(text), !value.isNaN, value.isFinite else {
+@@ -387,6 +616,13 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+             if let maximum = node.maximum, value > maximum {
+                 throw ConstrainedGenerationError.numberOutOfRange("Number \(value) exceeds maximum \(maximum)")
+             }
++            if node.minimum == nil, node.maximum == nil,
++                abs(value) >= Self.maxUnconstrainedMagnitude
++            {
++                throw ConstrainedGenerationError.numberOutOfRange(
++                    "Pathological number magnitude: \(text)"
++                )
++            }
+             return text
+         }
+     }
+@@ -407,78 +643,297 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+             return try await generateNumber(numberNode)
+         case .boolean:
+             return try await generateChoice(["true", "false"])
++        case .null:
++            return try await emit("null")
+         case .ref(let typeName):
+             guard let referenced = schema.defs[typeName] else {
+                 throw ConstrainedGenerationError.missingReference(typeName)
+             }
+             return try await generateNode(referenced)
+         case .anyOf(let variants):
+-            guard !variants.isEmpty else {
+-                throw ConstrainedGenerationError.emptyAnyOf
+-            }
+-            if variants.count == 1 {
+-                return try await generateNode(variants[0])
++            return try await generateAnyOf(variants)
++        }
++    }
++
++    /// Generate a value for an `anyOf` schema.
++    ///
++    /// Nullable properties are encoded as `anyOf [T, null]`. When `null` is among the
++    /// variants the model samples between the `null` literal and tokens that start a
++    /// non-null variant (non-committing for non-null, same pattern as empty-array probe).
++    /// Multi-variant `anyOf` without `null` keeps the historical first-variant choice.
++    private mutating func generateAnyOf(_ variants: [GenerationSchema.Node]) async throws -> String {
++        guard !variants.isEmpty else {
++            throw ConstrainedGenerationError.emptyAnyOf
++        }
++        if variants.count == 1 {
++            return try await generateNode(variants[0])
++        }
++
++        var nonNull: [GenerationSchema.Node] = []
++        var hasNull = false
++        for variant in variants {
++            if case .null = variant {
++                hasNull = true
++            } else {
++                nonNull.append(variant)
+             }
+-            // Choose the first variant to keep selection deterministic.
++        }
++
++        if !hasNull {
++            // Pre-existing limitation for multi non-null anyOf: first variant.
+             return try await generateNode(variants[0])
+         }
++        if nonNull.isEmpty {
++            return try await emit("null")
++        }
++
++        let nullTokens = try backend.tokenize("null")
++        guard let nullFirst = nullTokens.first else {
++            throw ConstrainedGenerationError.tokenizationFailed
++        }
++
++        var allowed = Set<Int>()
++        allowed.insert(nullFirst)
++        for node in nonNull {
++            allowed.formUnion(try itemStartTokens(for: node))
++        }
++
++        let token = try await backend.sample(from: allowed)
++        if token == nullFirst {
++            return try await emit("null")
++        }
++
++        // Non-null start was preferred; do not decode it — generateNode samples again.
++        if nonNull.count == 1 {
++            return try await generateNode(nonNull[0])
++        }
++        for node in nonNull {
++            if try itemStartTokens(for: node).contains(token) {
++                return try await generateNode(node)
++            }
++        }
++        return try await generateNode(nonNull[0])
      }
  
      private mutating func generateObject(_ node: GenerationSchema.ObjectNode) async throws -> String {
 -        let keys = node.properties.keys.sorted()
 -        let includedKeys = keys.filter { shouldIncludeOptionalProperty($0, required: node.required) }
++        let depth = objectDepth
++        objectDepth += 1
++        defer { objectDepth -= 1 }
++
 +        var remainingKeys = Set(node.properties.keys)
 +        let required = node.required
          var output = try await emit("{")
@@ -321,7 +1046,10 @@ index aae832e..4529187 100644
 +                // Still missing required keys — only those may be emitted under pressure.
 +                keysToOffer = missingRequired.sorted()
 +            }
-+
+ 
+-        for (index, key) in includedKeys.enumerated() {
+-            output += try await emit("\"\(key)\":")
+-            output += try await generateNode(node.properties[key] ?? .string(.init()))
 +            var candidates: [String] = keysToOffer.map { key in
 +                let prefix = emittedAnyProperty ? "," : ""
 +                return "\(prefix)\"\(key)\":"
@@ -331,27 +1059,34 @@ index aae832e..4529187 100644
 +            if canClose {
 +                candidates.append("}")
 +            }
-+
-+            guard !candidates.isEmpty else { break }
-+
-+            let choice = try await generateChoice(candidates)
-+            output += choice
- 
--        for (index, key) in includedKeys.enumerated() {
--            output += try await emit("\"\(key)\":")
--            output += try await generateNode(node.properties[key] ?? .string(.init()))
-+            // Model elected to close; remaining keys are optional and intentionally omitted.
-+            if choice == "}" {
-+                return output
-+            }
  
 -            if index < includedKeys.count - 1 {
 -                output += try await emit(",")
++            guard !candidates.isEmpty else { break }
++
++            ConstrainedGenerationProbe.recordObjectKeyChoiceStep(
++                depth: depth,
++                canClose: canClose,
++                keyCount: remainingKeys.count
++            )
++            activeObjectChoiceDepth = depth
++            let choice = try await generateChoice(candidates)
++            activeObjectChoiceDepth = nil
++            output += choice
++
++            // Model elected to close; remaining keys are optional and intentionally omitted.
++            if choice == "}" {
++                if !emittedAnyProperty {
++                    ConstrainedGenerationProbe.recordImmediateClose(depth: depth)
++                }
++                return output
+             }
++
 +            guard let key = propertyKey(fromPropertyStart: choice),
 +                let valueNode = node.properties[key]
 +            else {
 +                throw ConstrainedGenerationError.tokenizationFailed
-             }
++            }
 +            remainingKeys.remove(key)
 +            output += try await generateNode(valueNode)
 +            emittedAnyProperty = true
@@ -485,7 +1220,7 @@ index aae832e..4529187 100644
 +        return token == closeToken
 +    }
 +
-+    /// Tokens that can begin a JSON value for `node` (used only for the empty-array probe).
++    /// Tokens that can begin a JSON value for `node` (empty-array probe, anyOf null choice).
 +    private func itemStartTokens(for node: GenerationSchema.Node) throws -> Set<Int> {
 +        switch node {
 +        case .string:
@@ -502,9 +1237,22 @@ index aae832e..4529187 100644
 +                }
 +            }
 +            return tokens
++        case .null:
++            var tokens = Set<Int>()
++            if let first = try backend.tokenize("null").first {
++                tokens.insert(first)
++            }
++            return tokens
 +        case .number(let numberNode):
-+            let numeric = numberNode.integerOnly ? integerTerminators : doubleTerminators
-+            return numeric.subtracting(basicTerminators)
++            let numeric = numberNode.integerOnly ? integerNumericTokens : doubleNumericTokens
++            // Only tokens that can start a number (digit or minus — not a bare `.`).
++            return Set(
++                numeric.filter { token in
++                    guard let text = backend.tokenText(token), !text.isEmpty else { return false }
++                    return Self.isValidJSONNumberPrefix(text, integerOnly: numberNode.integerOnly)
++                        && text.first != "."
++                }
++            )
 +        case .ref(let typeName):
 +            guard let referenced = schema.defs[typeName] else {
 +                throw ConstrainedGenerationError.missingReference(typeName)
@@ -522,7 +1270,7 @@ index aae832e..4529187 100644
      private mutating func generateString(_ node: GenerationSchema.StringNode) async throws -> String {
          var output = try await emit("\"")
          let content: String
-@@ -516,15 +674,39 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
+@@ -516,15 +971,39 @@ struct ConstrainedJSONGenerator<Backend: TokenBackend> {
          return output
      }
  
@@ -569,7 +1317,7 @@ index aae832e..4529187 100644
      private func deterministicChoice(from candidates: [String]) -> String {
          guard !candidates.isEmpty else { return "" }
          if candidates.contains("") { return "" }
-@@ -633,6 +815,26 @@ enum ConstrainedGenerationError: LocalizedError {
+@@ -633,6 +1112,26 @@ enum ConstrainedGenerationError: LocalizedError {
      /// An any-of schema has no choices.
      case emptyAnyOf
  
@@ -596,7 +1344,7 @@ index aae832e..4529187 100644
      var errorDescription: String? {
          switch self {
          case .tokenizationFailed:
-@@ -653,6 +855,13 @@ enum ConstrainedGenerationError: LocalizedError {
+@@ -653,6 +1152,13 @@ enum ConstrainedGenerationError: LocalizedError {
              return "Missing referenced schema definition '\(name)'"
          case .emptyAnyOf:
              return "Any-of schema has no choices"
@@ -611,7 +1359,7 @@ index aae832e..4529187 100644
      }
  }
 diff --git a/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift b/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
-index 3b5f0b1..b47c5e6 100644
+index 3b5f0b1..61b72b0 100644
 --- a/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
 +++ b/Tests/AnyLanguageModelTests/StructuredGenerationTests.swift
 @@ -254,6 +254,39 @@ struct StructuredGenerationTests {
@@ -665,7 +1413,7 @@ index 3b5f0b1..b47c5e6 100644
          let maps = baseTokenMaps()
          let arrayNode = GenerationSchema.ArrayNode(
              description: nil,
-@@ -438,16 +473,351 @@ struct StructuredGenerationTests {
+@@ -438,16 +473,624 @@ struct StructuredGenerationTests {
          )
          let schema = GenerationSchema.primitive([String].self, node: .array(arrayNode))
          let eosToken = 50
@@ -774,11 +1522,12 @@ index 3b5f0b1..b47c5e6 100644
 +        let rightBracket = 3
 +
 +        // After first element, `]` is not offered — only forced `,` + second element, then close.
-+        let backend = MockTokenBackend(
-+            tokenToText: maps.tokenToText,
-+            textToTokens: maps.textToTokens,
-+            eosToken: eosToken,
-+            endTokens: [eosToken],
+         let backend = MockTokenBackend(
+             tokenToText: maps.tokenToText,
+             textToTokens: maps.textToTokens,
+             eosToken: eosToken,
+             endTokens: [eosToken],
+-            maximumTokens: 17
 +            maximumTokens: 64,
 +            samplingQueue: [
 +                aToken,  // first
@@ -786,10 +1535,11 @@ index 3b5f0b1..b47c5e6 100644
 +                aToken,  // second (satisfies minItems)
 +                rightBracket,  // model closes
 +            ]
-+        )
-+
-+        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
-+        let result = try await generator.generate()
+         )
+ 
+         var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
+         let result = try await generator.generate()
+-        #expect(result == "[\"a\",\"a\",\"a\"]")
 +        #expect(result == "[\"a\",\"a\"]")
 +    }
 +
@@ -1003,19 +1753,290 @@ index 3b5f0b1..b47c5e6 100644
 +        let eosToken = 50
 +        let rightBrace = 2
 +
-         let backend = MockTokenBackend(
-             tokenToText: maps.tokenToText,
-             textToTokens: maps.textToTokens,
-             eosToken: eosToken,
-             endTokens: [eosToken],
--            maximumTokens: 17
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
 +            maximumTokens: 64,
 +            samplingQueue: [rightBrace]
-         )
- 
-         var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
-         let result = try await generator.generate()
--        #expect(result == "[\"a\",\"a\",\"a\"]")
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
 +        #expect(result == "{}")
++    }
++
++    // MARK: - Required keys + null (OpenAI-strict shape)
++
++    private func nullableObjectTokenMaps() -> (
++        tokenToText: [Int: String],
++        textToTokens: [String: [Int]]
++    ) {
++        var maps = objectTokenMaps()
++        let nullToken = 20
++        let nToken = 21
++        let uToken = 22
++        let lToken = 23
++        maps.tokenToText[nullToken] = "null"
++        // Prefer single-token "null" when the mock tokenizes the literal.
++        maps.textToTokens["null"] = [nullToken]
++        maps.tokenToText[nToken] = "n"
++        maps.tokenToText[uToken] = "u"
++        maps.tokenToText[lToken] = "l"
++        return maps
++    }
++
++    /// All properties required; each value is `anyOf [string, null]`.
++    private func requiredNullableObjectSchema() -> GenerationSchema {
++        let stringNode = GenerationSchema.Node.string(.init(enumChoices: ["a"]))
++        let nullableString = GenerationSchema.Node.anyOf([stringNode, .null])
++        let objectNode = GenerationSchema.ObjectNode(
++            description: nil,
++            properties: [
++                "x": nullableString,
++                "y": nullableString,
++            ],
++            required: ["x", "y"]
++        )
++        return GenerationSchema.primitive(String.self, node: .object(objectNode))
++    }
++
++    @Test func nullablePropertyMayEmitNull() async throws {
++        let maps = nullableObjectTokenMaps()
++        let schema = requiredNullableObjectSchema()
++        let eosToken = 50
++        let quote = 0
++        let x = 10
++        let y = 11
++        let aToken = 8
++        let colon = 4
++        let comma = 1
++        let rightBrace = 2
++        let nullToken = 20
++
++        // "x": null, "y": "a"
++        // anyOf null vs string: null commits via emit; string start is non-committing
++        // (quote sampled for the probe, then generateString force-emits `"` again).
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                quote, x, quote, colon,  // "x":
++                nullToken,  // anyOf → null
++                comma, quote, y, quote, colon,  // ,"y":
++                quote,  // anyOf → string (probe only)
++                aToken,  // enum "a"
++                rightBrace,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == #"{"x":null,"y":"a"}"#)
++    }
++
++    @Test func requiredNullableKeySetCannotProduceEmptyObject() async throws {
++        let maps = nullableObjectTokenMaps()
++        let schema = requiredNullableObjectSchema()
++        let eosToken = 50
++        let quote = 0
++        let x = 10
++        let y = 11
++        let colon = 4
++        let comma = 1
++        let rightBrace = 2
++        let nullToken = 20
++
++        // Both keys required — even if every value is null, `{}` is illegal.
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                quote, x, quote, colon,
++                nullToken,
++                comma, quote, y, quote, colon,
++                nullToken,
++                rightBrace,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == #"{"x":null,"y":null}"#)
++        #expect(result != "{}")
++        #expect(result.contains("\"x\""))
++        #expect(result.contains("\"y\""))
++    }
++
++    // MARK: - Number termination
++
++    private func numberTokenMaps() -> (
++        tokenToText: [Int: String],
++        textToTokens: [String: [Int]]
++    ) {
++        var maps = baseTokenMaps()
++        let dotToken = 20
++        let spaceToken = 21
++        maps.tokenToText[dotToken] = "."
++        maps.tokenToText[spaceToken] = " "
++        maps.textToTokens["."] = [dotToken]
++        maps.textToTokens[" "] = [spaceToken]
++        return maps
++    }
++
++    @Test func numberTerminatesOnModelChoiceBeforeTokenCap() async throws {
++        // After "12" the model samples `,` (terminator) even though many tokens remain
++        // in the budget — must not pad digits out to maxDecimalTokenLimit.
++        let maps = numberTokenMaps()
++        let numberNode = GenerationSchema.NumberNode(
++            description: nil,
++            minimum: nil,
++            maximum: nil,
++            integerOnly: false
++        )
++        let schema = GenerationSchema.primitive(Double.self, node: .number(numberNode))
++        let eosToken = 50
++        let oneToken = 6
++        let twoToken = 7
++        let comma = 1
++        let zeroToken = 5
++
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                oneToken, twoToken, comma,
++                // If termination were ignored these would be consumed:
++                zeroToken, zeroToken, zeroToken, zeroToken,
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "12")
++    }
++
++    @Test func decimalNumberEmitsDotAndTerminates() async throws {
++        var maps = numberTokenMaps()
++        maps.tokenToText[30] = "4"
++        maps.tokenToText[31] = "7"
++        maps.tokenToText[32] = "3"
++        maps.textToTokens["4"] = [30]
++        maps.textToTokens["7"] = [31]
++        maps.textToTokens["3"] = [32]
++        let numberNode = GenerationSchema.NumberNode(
++            description: nil,
++            minimum: nil,
++            maximum: nil,
++            integerOnly: false
++        )
++        let schema = GenerationSchema.primitive(Double.self, node: .number(numberNode))
++        let eosToken = 50
++        let fourToken = 30
++        let sevenToken = 31
++        let threeToken = 32
++        let dotToken = 20
++        let zeroToken = 5
++        let rightBrace = 2
++
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [
++                fourToken, sevenToken, threeToken,  // 473
++                dotToken, zeroToken, zeroToken,  // .00
++                rightBrace,  // terminate
++            ]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "473.00")
++    }
++
++    @Test func integerDigitBudgetStopsZeroPadding() async throws {
++        // After maxIntegerDigitCount (12) digits, only terminators remain in the mask.
++        // The model cannot keep padding zeros out to the token cap.
++        let maps = numberTokenMaps()
++        let numberNode = GenerationSchema.NumberNode(
++            description: nil,
++            minimum: nil,
++            maximum: nil,
++            integerOnly: false
++        )
++        let schema = GenerationSchema.primitive(Double.self, node: .number(numberNode))
++        let eosToken = 50
++        let oneToken = 6
++        let zeroToken = 5
++        let rightBrace = 2
++        var queue = [oneToken]
++        queue.append(contentsOf: Array(repeating: zeroToken, count: 11))  // 12 digits total
++        queue.append(rightBrace)  // forced terminator once digit budget is full
++        // Extra zeros must not be consumed:
++        queue.append(contentsOf: Array(repeating: zeroToken, count: 8))
++
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: queue
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        let result = try await generator.generate()
++        #expect(result == "100000000000")  // 1 + 11 zeros
++        #expect(result.count == 12)
++    }
++
++    @Test func pathologicalMagnitudeIsRejected() async throws {
++        // Explicit bounds still reject out-of-range values; unbounded magnitude
++        // guard rejects values at/above 1e15 when min/max are absent.
++        let maps = numberTokenMaps()
++        let numberNode = GenerationSchema.NumberNode(
++            description: nil,
++            minimum: 0,
++            maximum: 10,
++            integerOnly: false
++        )
++        let schema = GenerationSchema.primitive(Double.self, node: .number(numberNode))
++        let eosToken = 50
++        // "2" exceeds maximum 10 when... need two digits. Use one=6 ("1") twice → "11".
++        let oneToken = 6
++        let rightBrace = 2
++
++        let backend = MockTokenBackend(
++            tokenToText: maps.tokenToText,
++            textToTokens: maps.textToTokens,
++            eosToken: eosToken,
++            endTokens: [eosToken],
++            maximumTokens: 64,
++            samplingQueue: [oneToken, oneToken, rightBrace]
++        )
++
++        var generator = try ConstrainedJSONGenerator(backend: backend, schema: schema)
++        do {
++            _ = try await generator.generate()
++            Issue.record("Expected out-of-range number to be rejected.")
++        } catch let error as ConstrainedGenerationError {
++            guard case .numberOutOfRange = error else {
++                Issue.record("Unexpected error: \(error).")
++                return
++            }
++        }
      }
  }
