@@ -49,41 +49,30 @@ struct CompletedTokenJSONTests {
     @Test("number split across pieces is never surfaced early")
     func numberNeverHalfSurfaced() {
         // Simulate cumulative buffers while "473.00" arrives.
-        let prefixes = [
-            "{\"total\":4",
-            "{\"total\":47",
-            "{\"total\":473",
-            "{\"total\":473.",
-            "{\"total\":473.0",
-            "{\"total\":473.00",
-            "{\"total\":473.00}",
+        // Incomplete numbers have no delimiter yet → omit the key entirely.
+        // Root object has started, so the snapshot is `{}` (not nil).
+        let expected: [(buffer: String, snapshot: String?)] = [
+            ("{\"total\":4", "{}"),
+            ("{\"total\":47", "{}"),
+            ("{\"total\":473", "{}"),
+            ("{\"total\":473.", "{}"),
+            ("{\"total\":473.0", "{}"),
+            ("{\"total\":473.00", "{}"),
+            ("{\"total\":473.00}", "{\"total\":473.00}"),
         ]
-        for (i, buffer) in prefixes.enumerated() {
-            let snap = CompletedTokenJSON.snapshot(from: buffer)
-            if i < prefixes.count - 1 {
-                // Before the closing `}`, the number has no delimiter → omit total.
-                if let snap {
-                    #expect(
-                        !snap.contains("473") && !snap.contains("\"total\":47")
-                            && !snap.contains("\"total\":4"),
-                        "half-number leaked in snapshot \(snap) for buffer \(buffer)"
-                    )
-                }
-            } else {
-                #expect(snap == "{\"total\":473.00}")
-            }
+        for (buffer, want) in expected {
+            #expect(
+                CompletedTokenJSON.snapshot(from: buffer) == want,
+                "buffer \(buffer)"
+            )
         }
     }
 
     @Test("string split mid-token is never surfaced truncated")
     func stringNeverTruncated() {
-        let mid = "{\"name\":\"Ad"
-        let snapMid = CompletedTokenJSON.snapshot(from: mid)
-        if let snapMid {
-            #expect(!snapMid.contains("Ad"), "truncated string leaked: \(snapMid)")
-        }
-        let done = "{\"name\":\"Ada\"}"
-        #expect(CompletedTokenJSON.snapshot(from: done) == "{\"name\":\"Ada\"}")
+        // Unclosed string → omit the key; root has started → empty object.
+        #expect(CompletedTokenJSON.snapshot(from: "{\"name\":\"Ad") == "{}")
+        #expect(CompletedTokenJSON.snapshot(from: "{\"name\":\"Ada\"}") == "{\"name\":\"Ada\"}")
     }
 
     @Test("array grows element by element, each complete")
@@ -93,20 +82,26 @@ struct CompletedTokenJSONTests {
         let s2 = "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1},{\"sku\":\"B\",\"qty\":2}"
         let s3 = "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1},{\"sku\":\"B\",\"qty\":2}]}"
 
-        // First element incomplete → empty or no array content with incomplete object.
-        let p0 = CompletedTokenJSON.snapshot(from: s0)
-        if let p0 {
-            #expect(!p0.contains("\"sku\""), "incomplete element leaked: \(p0)")
-        }
+        // Incomplete first element: arrays surface while open, so the property is
+        // kept with zero completed elements (not omitted, and not nil).
+        #expect(CompletedTokenJSON.snapshot(from: s0) == "{\"lineItems\":[]}")
+        #expect(CompletedTokenJSON.snapshot(from: s1) == "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1}]}")
+        #expect(
+            CompletedTokenJSON.snapshot(from: s2)
+                == "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1},{\"sku\":\"B\",\"qty\":2}]}"
+        )
+        #expect(
+            CompletedTokenJSON.snapshot(from: s3)
+                == "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1},{\"sku\":\"B\",\"qty\":2}]}"
+        )
+    }
 
-        let p1 = CompletedTokenJSON.snapshot(from: s1)
-        #expect(p1 == "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1}]}")
-
-        let p2 = CompletedTokenJSON.snapshot(from: s2)
-        #expect(p2 == "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1},{\"sku\":\"B\",\"qty\":2}]}")
-
-        let p3 = CompletedTokenJSON.snapshot(from: s3)
-        #expect(p3 == "{\"lineItems\":[{\"sku\":\"A\",\"qty\":1},{\"sku\":\"B\",\"qty\":2}]}")
+    @Test("completed field retained while next field is still incomplete")
+    func completedFieldThenIncomplete() {
+        // Realistic mid-stream shape: a finished scalar followed by a half-written one.
+        let buffer = "{\"name\":\"Ada\",\"total\":47"
+        let snap = CompletedTokenJSON.snapshot(from: buffer)
+        #expect(snap == "{\"name\":\"Ada\"}")
     }
 
     @Test("markdown fences and leading prose are tolerated")
