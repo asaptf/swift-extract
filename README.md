@@ -250,7 +250,28 @@ let receipt: Receipt = try await Extract.from(
 // With metadata (attempts, raw model output)
 let result = try await Extract.detailed(from: .pdf(pdfURL), using: session)
 print(result.value.total, result.attempts, result.rawModelOutput)
+
+// Stream fields as the model produces them (completed tokens only)
+let stream = Extract.stream(from: pdfURL, as: Receipt.self, using: session)
+for try await update in stream {
+    switch update {
+    case .partial(let p):   // Receipt.Partial — every field optional
+        print(p.merchant, p.total)
+    case .final(let r):     // ExtractionResult<Receipt> — same as detailed
+        print(r.value.total, r.signals)
+    }
+}
 ```
+
+**Streaming notes.** Partials only surface values whose JSON tokens are **complete**
+(closing quote for strings; a delimiter after a number). While the model writes
+`473.00`, you will not see `47` — a wrong total on screen is worse than an empty
+field. Arrays may grow element by element as each element completes. Chunked
+documents emit no `.partial` updates (only `.final`), because per-chunk snapshots
+would be incoherent before the deterministic merge. Signals, provenance, grounding,
+and tables attach to `.final` only — a partial is a UI preview, not an evidenced
+result. Repair retries after a failed first attempt are not streamed; the stream
+still ends with `.final` (or throws) like `detailed`.
 
 ### 4. Handle errors
 
@@ -428,7 +449,7 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
 ## Roadmap
 
 - [ ] Audio input (Speech framework)
-- [ ] Streaming partials for `@Extractable`
+- [x] Streaming partials for `@Extractable`
 - [x] Per-field provenance (bounding boxes on `FieldSignal.provenance`)
 - [x] Evaluation harness (`Tools/EvalHarness/` — survey, Factur-X accuracy, A/B, anchors)
 - [ ] First-class guided-generation bridge when AnyLanguageModel passes schemas through

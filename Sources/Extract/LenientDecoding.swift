@@ -751,6 +751,23 @@ extension Extractable {
         let decoder = LenientDecoding.makeDecoder(locale: locale)
         return try decoder.decode(Self.self, from: data)
     }
+
+    /// Decode a completed-token partial snapshot into ``Partial``.
+    ///
+    /// `jsonText` is expected to already be closed, valid JSON from
+    /// ``CompletedTokenJSON`` (no fence stripping beyond what the assembler did).
+    static func decodePartial(
+        from jsonText: String,
+        locale: Locale? = nil
+    ) throws -> Partial {
+        guard let data = jsonText.data(using: .utf8) else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: [], debugDescription: "Partial JSON is not valid UTF-8")
+            )
+        }
+        let decoder = LenientDecoding.makeDecoder(locale: locale)
+        return try decoder.decode(Partial.self, from: data)
+    }
 }
 
 // MARK: - Fence stripping

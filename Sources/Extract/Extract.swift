@@ -43,6 +43,98 @@ public enum Extract {
         return try await extract(from: document, as: type, using: session, options: options)
     }
 
+    // MARK: - Streaming
+
+    /// Stream progressive ``ExtractionUpdate/partial(_:)`` snapshots, then a terminal
+    /// ``ExtractionUpdate/final(_:)`` with the same shape as ``detailed(from:as:using:options:)``.
+    ///
+    /// ```swift
+    /// let stream = Extract.stream(from: source, as: Invoice.self, using: session)
+    /// for try await update in stream {
+    ///     switch update {
+    ///     case .partial(let p):  // Invoice.Partial — every field optional
+    ///     case .final(let r):    // ExtractionResult<Invoice>
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// ## Completed-token rule
+    ///
+    /// Partials only surface values whose JSON tokens are provably complete (closing
+    /// quote for strings; a delimiter after a number). Half-written numbers like `47`
+    /// while the model is still producing `473.00` are withheld — a wrong total on
+    /// screen is worse than an empty field. Growing arrays are fine as elements complete.
+    ///
+    /// ## Chunking
+    ///
+    /// When the document is split into multiple chunks, partial snapshots across chunks
+    /// would be incoherent (the deterministic merge is what makes the value meaningful).
+    /// Chunked runs therefore emit **no** ``ExtractionUpdate/partial(_:)`` updates —
+    /// only the terminal ``ExtractionUpdate/final(_:)``.
+    ///
+    /// ## Repair retries
+    ///
+    /// Partials stream from the **first** generation attempt only. If decode or
+    /// ``Extractable/validateInvariants()`` fails and the loop retries, the retry is
+    /// not streamed; the stream still ends with ``ExtractionUpdate/final(_:)`` carrying
+    /// the repaired result (or throws if retries are exhausted — same errors as
+    /// ``detailed(from:as:using:options:)``).
+    ///
+    /// ## Signals and tables
+    ///
+    /// Provenance, grounding, merge conflicts, and tables are computed for the final
+    /// result only. A partial is a UI preview, not an evidenced result.
+    public static func stream<T: Extractable>(
+        from source: ExtractionSource,
+        as type: T.Type = T.self,
+        using session: ExtractionSession = .default,
+        options: ExtractionOptions = .init()
+    ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let document = try await SourceIngester.ingest(source)
+                    guard !document.isEmpty else {
+                        throw ExtractionError.emptyDocument
+                    }
+                    try await streamExtract(
+                        from: document,
+                        as: type,
+                        using: session,
+                        options: options,
+                        continuation: continuation
+                    )
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    /// Convenience overload for plain text sources.
+    public static func stream<T: Extractable>(
+        from text: String,
+        as type: T.Type = T.self,
+        using session: ExtractionSession = .default,
+        options: ExtractionOptions = .init()
+    ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error> {
+        stream(from: .text(text), as: type, using: session, options: options)
+    }
+
+    /// Convenience overload for file URLs (UTType sniff, same as ``from(_:using:options:)``).
+    public static func stream<T: Extractable>(
+        from url: URL,
+        as type: T.Type = T.self,
+        using session: ExtractionSession = .default,
+        options: ExtractionOptions = .init()
+    ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error> {
+        stream(from: .fileURL(url), as: type, using: session, options: options)
+    }
+
     // MARK: - Convenience overloads (README hero lines)
 
     public static func from<T: Extractable>(
@@ -332,6 +424,188 @@ public enum Extract {
             lastError: lastError,
             rawOutput: lastRaw
         )
+    }
+
+    // MARK: - Streaming core
+
+    /// Drive the extraction loop while yielding partials (single-chunk) or only
+    /// a final result (multi-chunk).
+    private static func streamExtract<T: Extractable>(
+        from document: ExtractedDocument,
+        as type: T.Type,
+        using session: ExtractionSession,
+        options: ExtractionOptions,
+        continuation: AsyncThrowingStream<ExtractionUpdate<T>, Error>.Continuation
+    ) async throws {
+        let tables = TableDetector.detect(
+            documentBlocks: document.blocks,
+            mode: options.tableDetection
+        )
+        let chunks = resolveChunks(document: document, options: options)
+        let sourceText = document.fullText
+
+        // Chunked documents: partials across chunks are incoherent — merge is what
+        // makes the value meaningful. Emit only `.final` via the existing path.
+        if chunks.count > 1 {
+            let result = try await extract(
+                from: document,
+                as: type,
+                using: session,
+                options: options
+            )
+            continuation.yield(.final(result))
+            return
+        }
+
+        try await streamExtractSingle(
+            from: chunks[0],
+            as: type,
+            using: session,
+            options: options,
+            chunksUsed: 1,
+            sourceText: sourceText,
+            tables: tables,
+            documentBlocks: document.blocks,
+            continuation: continuation
+        )
+    }
+
+    private static func streamExtractSingle<T: Extractable>(
+        from document: ExtractedDocument,
+        as type: T.Type,
+        using session: ExtractionSession,
+        options: ExtractionOptions,
+        chunksUsed: Int,
+        sourceText: String,
+        tables: [ExtractedTable],
+        documentBlocks: [ExtractedDocument.Block],
+        continuation: AsyncThrowingStream<ExtractionUpdate<T>, Error>.Continuation
+    ) async throws {
+        var lastError: Error = ExtractionError.internalError("no attempt")
+        var lastRaw = ""
+        let maxAttempts = max(1, options.maxRetries + 1)
+        let temperature = options.resolvedTemperature(session: session)
+        let schema = T.extractionSchema
+        let promptTables = tablesForPrompt(tables, schema: schema)
+
+        for attempt in 0..<maxAttempts {
+            try Task.checkCancellation()
+            let repair: PromptBuilder.RepairContext?
+            if attempt == 0 {
+                repair = nil
+            } else {
+                repair = PromptBuilder.RepairContext(
+                    previousOutput: lastRaw,
+                    errorDescription: ValidationErrorFormatter.describe(lastError)
+                )
+            }
+            let user = PromptBuilder.userPrompt(
+                type: type,
+                document: document,
+                locale: options.locale,
+                repair: repair,
+                tables: promptTables
+            )
+
+            let raw: String
+            if attempt == 0 {
+                // Stream partials only on the first attempt.
+                raw = try await streamFirstAttempt(
+                    system: PromptBuilder.systemInstructions,
+                    user: user,
+                    temperature: temperature,
+                    schema: schema,
+                    using: session,
+                    locale: options.locale,
+                    continuation: continuation
+                )
+            } else {
+                // Retries are not streamed — one-shot generate.
+                raw = try await session.generate(
+                    system: PromptBuilder.systemInstructions,
+                    user: user,
+                    temperature: temperature,
+                    schema: schema
+                )
+            }
+            lastRaw = raw
+            do {
+                let value = try T.decodeExtractedWithoutInvariants(
+                    from: raw,
+                    locale: options.locale
+                )
+                try value.validateInvariants()
+                let attempts = attempt + 1
+                let signals = FieldGrounding.compute(
+                    value: value,
+                    sourceText: sourceText,
+                    attempts: attempts,
+                    chunksUsed: chunksUsed,
+                    blocks: documentBlocks,
+                    tables: tables
+                )
+                let result = ExtractionResult(
+                    value: value,
+                    attempts: attempts,
+                    rawModelOutput: raw,
+                    chunksUsed: chunksUsed,
+                    signals: signals,
+                    tables: tables
+                )
+                continuation.yield(.final(result))
+                return
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw ExtractionError.validationFailed(
+            attempts: maxAttempts,
+            lastError: lastError,
+            rawOutput: lastRaw
+        )
+    }
+
+    /// Consume the model stream, yield ``ExtractionUpdate/partial`` for each new
+    /// completed-token snapshot, and return the full cumulative text.
+    private static func streamFirstAttempt<T: Extractable>(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema,
+        using session: ExtractionSession,
+        locale: Locale?,
+        continuation: AsyncThrowingStream<ExtractionUpdate<T>, Error>.Continuation
+    ) async throws -> String {
+        var lastSnapshot: String?
+        var lastText = ""
+        let textStream = session.streamGenerate(
+            system: system,
+            user: user,
+            temperature: temperature,
+            schema: schema
+        )
+        for try await cumulative in textStream {
+            try Task.checkCancellation()
+            lastText = cumulative
+            guard
+                let snapshot = CompletedTokenJSON.snapshot(
+                    from: cumulative,
+                    expectedRoot: schema.type
+                )
+            else {
+                continue
+            }
+            // Skip unchanged snapshots (common as non-token chars arrive).
+            if snapshot == lastSnapshot {
+                continue
+            }
+            lastSnapshot = snapshot
+            if let partial = try? T.decodePartial(from: snapshot, locale: locale) {
+                continuation.yield(.partial(partial))
+            }
+        }
+        return lastText
     }
 
     private static func resolveChunks(

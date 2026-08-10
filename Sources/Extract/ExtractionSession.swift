@@ -39,6 +39,21 @@ public struct ExtractionSession: Sendable {
             schema: schema
         )
     }
+
+    /// Stream cumulative model text. Each element is the full text so far (not a delta).
+    func streamGenerate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) -> AsyncThrowingStream<String, Error> {
+        backend.streamGenerate(
+            system: system,
+            user: user,
+            temperature: temperature,
+            schema: schema
+        )
+    }
 }
 
 // MARK: - Generation seam
@@ -52,6 +67,46 @@ package protocol ExtractionGenerating: Sendable {
         temperature: Double,
         schema: ExtractionSchema?
     ) async throws -> String
+
+    /// Stream cumulative response text. Default implementation calls ``generate``
+    /// once and yields the full string — existing mock conformances keep working.
+    func streamGenerate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) -> AsyncThrowingStream<String, Error>
+}
+
+extension ExtractionGenerating {
+    /// Default: one-shot generate, yield once. Safe for mocks and backends without
+    /// true token streaming.
+    package func streamGenerate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let text = try await generate(
+                        system: system,
+                        user: user,
+                        temperature: temperature,
+                        schema: schema
+                    )
+                    continuation.yield(text)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
 }
 
 private struct LanguageModelBackend: ExtractionGenerating {
@@ -81,6 +136,35 @@ private struct LanguageModelBackend: ExtractionGenerating {
         let options = GenerationOptions(temperature: temperature)
         let response = try await session.respond(to: user, options: options)
         return response.content
+    }
+
+    func streamGenerate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) -> AsyncThrowingStream<String, Error> {
+        _ = schema
+        let model = self.model
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let session = LanguageModelSession(model: model, instructions: system)
+                    let options = GenerationOptions(temperature: temperature)
+                    let stream = session.streamResponse(to: user, options: options)
+                    for try await snapshot in stream {
+                        // String.PartiallyGenerated == String; cumulative text so far.
+                        continuation.yield(snapshot.content)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 }
 
@@ -127,15 +211,26 @@ private struct UnavailableGenerator: ExtractionGenerating {
 ///
 /// Not used by the demo app success path — only tests, CLI `--mock`, and explicit
 /// ``ExtractionSession/mock(_:temperature:)`` callers.
+///
+/// ## Streaming
+///
+/// By default ``streamGenerate`` yields each configured response as a single
+/// cumulative string (via the protocol default that calls ``generate``). Construct
+/// with ``init(streamingPieces:)`` or ``init(streamingResponses:)`` to emit a
+/// document in several pieces — used by streaming partial tests.
 public struct MockLanguageModel: ExtractionGenerating, Sendable {
     public typealias Responder = @Sendable (_ system: String, _ user: String, _ callIndex: Int) async throws -> String
 
     private let responder: Responder
     private let counter: CallCounter
+    /// When non-nil, ``streamGenerate`` yields cumulative joins of these pieces
+    /// per call index instead of a single generate().
+    private let streamingPieces: [[String]]?
 
     public init(responses: [String]) {
         let list = responses
         self.counter = CallCounter()
+        self.streamingPieces = nil
         self.responder = { _, _, index in
             if index < list.count {
                 return list[index]
@@ -146,7 +241,32 @@ public struct MockLanguageModel: ExtractionGenerating, Sendable {
 
     public init(responder: @escaping Responder) {
         self.counter = CallCounter()
+        self.streamingPieces = nil
         self.responder = responder
+    }
+
+    /// Single-call mock that streams `pieces` in order (each yield is the
+    /// cumulative concatenation so far, matching real backends).
+    public init(streamingPieces: [String]) {
+        let pieces = streamingPieces
+        self.counter = CallCounter()
+        self.streamingPieces = [pieces]
+        let full = pieces.joined()
+        self.responder = { _, _, _ in full }
+    }
+
+    /// Multi-call mock: `streamingResponses[callIndex]` is the piece list for that
+    /// generate/stream invocation. ``generate`` returns the joined string.
+    public init(streamingResponses: [[String]]) {
+        let responses = streamingResponses
+        self.counter = CallCounter()
+        self.streamingPieces = responses
+        self.responder = { _, _, index in
+            if index < responses.count {
+                return responses[index].joined()
+            }
+            return responses.last?.joined() ?? "{}"
+        }
     }
 
     public func generate(
@@ -158,6 +278,64 @@ public struct MockLanguageModel: ExtractionGenerating, Sendable {
         _ = schema
         let index = await counter.next()
         return try await responder(system, user, index)
+    }
+
+    public func streamGenerate(
+        system: String,
+        user: String,
+        temperature: Double,
+        schema: ExtractionSchema?
+    ) -> AsyncThrowingStream<String, Error> {
+        _ = temperature
+        _ = schema
+        if let streamingPieces {
+            let counter = self.counter
+            let responder = self.responder
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        let index = await counter.next()
+                        if index < streamingPieces.count {
+                            var cumulative = ""
+                            for piece in streamingPieces[index] {
+                                cumulative += piece
+                                continuation.yield(cumulative)
+                            }
+                        } else {
+                            // Fall back to full generate text for extra calls (repairs).
+                            let text = try await responder(system, user, index)
+                            continuation.yield(text)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in
+                    task.cancel()
+                }
+            }
+        }
+        // One-shot: yield the full generate() result once.
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let text = try await generate(
+                        system: system,
+                        user: user,
+                        temperature: temperature,
+                        schema: schema
+                    )
+                    continuation.yield(text)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 }
 

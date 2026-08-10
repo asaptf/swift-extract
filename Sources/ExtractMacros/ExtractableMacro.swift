@@ -18,6 +18,7 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
         return [
             generateCodingKeys(properties: properties),
             generateExtractionSchema(typeName: typeName, properties: properties),
+            generatePartialType(properties: properties),
         ]
     }
 
@@ -498,6 +499,129 @@ public struct ExtractableMacro: MemberMacro, ExtensionMacro {
         }
         lines.append("}")
         return DeclSyntax(stringLiteral: lines.joined(separator: "\n"))
+    }
+
+    // MARK: - Partial type (streaming previews)
+
+    /// Nested `Partial` with every stored property optional.
+    ///
+    /// - Nested `@Extractable` types use `Child.Partial`
+    /// - Arrays become arrays of the element partial (`[LineItem.Partial]`)
+    /// - Primitives stay themselves inside the optional (`String?`, `[String]?`)
+    private static func generatePartialType(properties: [PropertyInfo]) -> DeclSyntax {
+        if properties.isEmpty {
+            return """
+                public struct Partial: Decodable, Sendable {
+                    public init(from decoder: Decoder) throws {
+                        let _ = try decoder.container(keyedBy: CodingKeys.self)
+                    }
+                }
+                """
+        }
+
+        var lines: [String] = [
+            "public struct Partial: Decodable, Sendable {"
+        ]
+        for prop in properties {
+            lines.append("    public let \(prop.name): \(partialPropertyType(for: prop))")
+        }
+        lines.append("")
+        lines.append("    public init(from decoder: Decoder) throws {")
+        lines.append("        let container = try decoder.container(keyedBy: CodingKeys.self)")
+        if properties.contains(where: { needsLenientDecimal($0) }) {
+            lines.append(
+                "        let extractionLocale = decoder.userInfo[.swiftExtractLocale] as? Locale"
+            )
+        }
+        for prop in properties {
+            lines.append("        \(partialDecodeLine(for: prop))")
+        }
+        lines.append("    }")
+        lines.append("}")
+        return DeclSyntax(stringLiteral: lines.joined(separator: "\n"))
+    }
+
+    /// Whether this property's partial decode needs the extraction locale (Decimal).
+    private static func needsLenientDecimal(_ prop: PropertyInfo) -> Bool {
+        if baseTypeName(prop.baseTypeSyntax) == "Decimal" {
+            return true
+        }
+        // Arrays of Decimal are uncommon but possible.
+        if let array = prop.baseTypeSyntax.as(ArrayTypeSyntax.self),
+            baseTypeName(array.element) == "Decimal"
+        {
+            return true
+        }
+        return false
+    }
+
+    /// Type of the stored property on `Partial` (always optional at the top level).
+    private static func partialPropertyType(for prop: PropertyInfo) -> String {
+        // Already-optional source properties stay single-optional with the partial element type.
+        let element = partialElementType(prop.baseTypeSyntax)
+        return "\(element)?"
+    }
+
+    /// Element type used inside Partial — nested extractables become `.Partial`,
+    /// arrays become arrays of element partials, primitives stay as-is.
+    private static func partialElementType(_ type: TypeSyntax) -> String {
+        if let array = type.as(ArrayTypeSyntax.self) {
+            return "[\(partialElementType(array.element))]"
+        }
+        if let ident = type.as(IdentifierTypeSyntax.self),
+            ident.name.text == "Array",
+            let generic = ident.genericArgumentClause?.arguments.first
+        {
+            let elementType = TypeSyntax(stringLiteral: generic.argument.trimmedDescription)
+            return "[\(partialElementType(elementType))]"
+        }
+
+        let name = baseTypeName(type)
+        if supportedPrimitives.contains(name) {
+            return type.trimmedDescription
+        }
+        // Nested @Extractable / string enum: use associatedtype Partial.
+        return "\(type.trimmedDescription).Partial"
+    }
+
+    private static func partialDecodeLine(for prop: PropertyInfo) -> String {
+        let name = prop.name
+        let key = ".\(name)"
+        let base = prop.baseTypeSyntax
+        let baseName = baseTypeName(base)
+
+        // Arrays: decode the partial array type if present.
+        if base.is(ArrayTypeSyntax.self)
+            || (base.as(IdentifierTypeSyntax.self)?.name.text == "Array")
+        {
+            let arrayPartial = partialElementType(base)
+            return
+                "self.\(name) = try container.decodeIfPresent(\(arrayPartial).self, forKey: \(key))"
+        }
+
+        switch baseName {
+        case "String":
+            return "self.\(name) = try container.decodeLenientStringIfPresent(forKey: \(key))"
+        case "Decimal":
+            return
+                "self.\(name) = try container.decodeLenientDecimalIfPresent(forKey: \(key), locale: extractionLocale)"
+        case "Date":
+            return "self.\(name) = try container.decodeLenientDateIfPresent(forKey: \(key))"
+        case "URL":
+            return "self.\(name) = try container.decodeLenientURLIfPresent(forKey: \(key))"
+        case "Bool":
+            return "self.\(name) = try container.decodeLenientBoolIfPresent(forKey: \(key))"
+        case "Int", "Int8", "Int16", "Int32", "Int64",
+            "UInt", "UInt8", "UInt16", "UInt32", "UInt64",
+            "Float", "Double", "CGFloat":
+            return
+                "self.\(name) = try container.decodeIfPresent(\(base.trimmedDescription).self, forKey: \(key))"
+        default:
+            // Nested Partial or string-enum Partial (== Self).
+            let partialType = partialElementType(base)
+            return
+                "self.\(name) = try container.decodeIfPresent(\(partialType).self, forKey: \(key))"
+        }
     }
 }
 

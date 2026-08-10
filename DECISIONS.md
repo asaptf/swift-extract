@@ -289,3 +289,49 @@ EN16931 code 381 carry positive amounts in the XML against negatives on the page
 A document-reading library that follows the page is *correct* in those cases, so
 ground-truth mismatches cap measurable accuracy and should be reported separately
 rather than chased as defects.
+
+## Streaming partials (`Extract.stream`)
+
+### Why `Partial` is a separate generated type
+
+`Extractable` gains `associatedtype Partial: Decodable & Sendable = Self`. The
+default keeps hand-written conformances (string enums, custom schemas) compiling
+without changes — the protocol doc has always allowed those.
+
+The `@Extractable` macro synthesizes a nested `Partial` struct where every stored
+property is optional, nested extractables use *their* `Partial`, and arrays become
+arrays of the element partial. That shape is what UI code needs: “not yet known”
+is `nil`, which collides with neither a decoded value nor JSON `null` once the
+token is complete.
+
+Using `Self` with all-optional decoding, or a single shared “partial JSON
+dictionary”, would either break required-field types mid-stream or force callers
+into untyped maps. A generated sibling type is the smallest addition that keeps
+the non-streaming path byte-stable and the streaming path fully typed.
+
+### Why half-tokens are withheld
+
+A partial snapshot must never show a value that a later snapshot contradicts
+*within the same token*. While the model is still writing `473.00`, surfacing
+`47` puts a wrong total on screen — worse than an empty field. The assembler
+(`CompletedTokenJSON`) therefore emits a scalar only when its JSON token is
+provably complete: closing quote for strings, a delimiter (`,`, `}`, `]`, or
+whitespace) after a number, full keyword for `true`/`false`/`null`. Nested
+objects used as property values or array elements surface only when closed;
+arrays themselves may grow element by element as each element completes.
+
+This is a deliberate trade of latency for truthfulness. Do not “optimise” it by
+streaming half-tokens.
+
+### Generation seam and honesty over cleverness
+
+`ExtractionGenerating` has a streaming counterpart with a default implementation
+that calls `generate` once and yields — so `MockLanguageModel` and every existing
+test conformance keep working. The real `LanguageModelBackend` path uses
+AnyLanguageModel’s `LanguageModelSession.streamResponse`.
+
+Repair retries stream partials from the **first** attempt only; retries are
+one-shot and the stream still ends with `.final` (or throws). Chunked documents
+emit no `.partial` updates: per-chunk snapshots are incoherent before the
+deterministic merge. Signals, provenance, grounding, and tables attach to
+`.final` only — a partial is a preview, not an evidenced result.
