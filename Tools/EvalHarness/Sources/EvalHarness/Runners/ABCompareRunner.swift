@@ -16,6 +16,9 @@ public struct ABFileDelta: Sendable {
 public struct ABCompareSummary: Sendable {
     public var configA: String
     public var configB: String
+    /// Full report labels (backend, tableDetection, invariant mode).
+    public var configALabel: String
+    public var configBLabel: String
     public var summaryA: AccuracySummary
     public var summaryB: AccuracySummary
     public var perFieldDeltaPP: [String: Double]
@@ -86,6 +89,8 @@ public enum ABCompareRunner {
         return ABCompareSummary(
             configA: configA.name,
             configB: configB.name,
+            configALabel: configA.reportLabel,
+            configBLabel: configB.reportLabel,
             summaryA: a,
             summaryB: b,
             perFieldDeltaPP: deltas,

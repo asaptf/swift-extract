@@ -201,6 +201,10 @@ public enum ReportWriter {
         var mdLines: [String] = [
             "# A/B comparison",
             "",
+            "Arm A: \(summary.configALabel)",
+            "",
+            "Arm B: \(summary.configBLabel)",
+            "",
             "| | \(summary.configA) | \(summary.configB) | Δ (pp) |",
             "| --- | ---: | ---: | ---: |",
             "| Overall accuracy | \(pct(summary.summaryA.overallAccuracy)) | \(pct(summary.summaryB.overallAccuracy)) | \(fmtSigned(summary.overallDeltaPP)) |",

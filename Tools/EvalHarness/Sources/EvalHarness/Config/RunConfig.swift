@@ -15,6 +15,11 @@ public struct RunConfig: Sendable, Equatable {
     public var softContextCharacterBudget: Int
     /// Chunking strategy (default `.automatic`).
     public var chunkingStrategy: ChunkingStrategy
+    /// When `true` (default), `EvalInvoice.validateInvariants()` enforces
+    /// sum(lineTotals) + tax ≈ grandTotal. Set `false` so low-capacity models
+    /// still yield scored fields instead of `validationFailed` with empty scores.
+    /// Per-arm in compare runs; observable in ``reportLabel``.
+    public var arithmeticInvariant: Bool
 
     public init(
         name: String,
@@ -24,7 +29,8 @@ public struct RunConfig: Sendable, Equatable {
         temperature: Double = 0,
         maxRetries: Int = 1,
         softContextCharacterBudget: Int = 12_000,
-        chunkingStrategy: ChunkingStrategy = .automatic
+        chunkingStrategy: ChunkingStrategy = .automatic,
+        arithmeticInvariant: Bool = true
     ) {
         self.name = name
         self.backend = backend
@@ -34,6 +40,7 @@ public struct RunConfig: Sendable, Equatable {
         self.maxRetries = maxRetries
         self.softContextCharacterBudget = softContextCharacterBudget
         self.chunkingStrategy = chunkingStrategy
+        self.arithmeticInvariant = arithmeticInvariant
     }
 
     public var extractionOptions: ExtractionOptions {
@@ -44,6 +51,21 @@ public struct RunConfig: Sendable, Equatable {
             temperature: temperature,
             tableDetection: tableDetection
         )
+    }
+
+    /// Human-readable config summary for reports (includes invariant mode).
+    public var reportLabel: String {
+        var parts = [
+            "name=\(name)",
+            "backend=\(backend.rawValue)",
+            "tableDetection=\(TableDetectionParsing.label(tableDetection))",
+            "model=\(modelId ?? "-")",
+            "invariant=\(arithmeticInvariant)",
+        ]
+        if !arithmeticInvariant {
+            parts.append("note=arithmetic-invariant-off")
+        }
+        return parts.joined(separator: " ")
     }
 
     public func makeSession() throws -> ExtractionSession {
@@ -81,6 +103,7 @@ public enum CLIParseError: Error, CustomStringConvertible {
     case unknownOption(String)
     case invalidMode(String)
     case invalidInteger(String, String)
+    case invalidBoolean(String, String)
 
     public var description: String {
         switch self {
@@ -94,6 +117,8 @@ public enum CLIParseError: Error, CustomStringConvertible {
             return "Invalid mode '\(m)' (use survey|accuracy|compare|anchors|chunk-merge)"
         case .invalidInteger(let o, let v):
             return "Invalid integer for \(o): '\(v)'"
+        case .invalidBoolean(let o, let v):
+            return "Invalid boolean for \(o): '\(v)' (use true|false)"
         }
     }
 }
