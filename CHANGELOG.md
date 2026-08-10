@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-10
+
+Streaming partial results, and two changes to how this project reports its own numbers.
+
+The feature is `Extract.stream`. The theme underneath it is the same one as 0.4.0 — say
+what is actually known, and when. A partial result withholds half-written values; the
+accuracy report stops hiding extractions that failed outright; and a direction we
+investigated at length is recorded as a negative about the *engine* rather than about the
+idea, because those are not the same claim.
+
+### Added
+
+- **Streaming partials for `@Extractable` (`Extract.stream`).** One
+  `AsyncThrowingStream<ExtractionUpdate<T>, Error>` whose terminal element is `.final`
+  carrying the same `ExtractionResult<T>` that `detailed` returns, so a caller never needs
+  a second call.
+
+  ```swift
+  for try await update in Extract.stream(from: pdfURL, as: Receipt.self, using: session) {
+      switch update {
+      case .partial(let p):   // Receipt.Partial — every field optional
+      case .final(let r):     // ExtractionResult<Receipt>
+      }
+  }
+  ```
+
+  **A partial never shows a value that a later snapshot contradicts within the same
+  token.** While the model is writing `473.00`, the caller does not see `47` — a wrong
+  total on screen is worse than an empty field. A scalar surfaces only once its JSON token
+  is provably complete: closing quote for strings, a delimiter after a number, the full
+  keyword for `true`/`false`/`null`. This trades latency for truthfulness on purpose.
+  Pinned as a table so the boundary is visible in one place:
+
+  | Buffer | Snapshot |
+  | --- | --- |
+  | `{"total":473` | `{}` |
+  | `{"total":473.00` | `{}` |
+  | `{"total":473.00}` | `{"total":473.00}` |
+  | `{"name":"Ada","total":47` | `{"name":"Ada"}` |
+  | `{"lineItems":[{"sku":"A","qty":1` | `{"lineItems":[]}` |
+  | `{"lineItems":[{"sku":"A","qty":1}` | `{"lineItems":[{"sku":"A","qty":1}]}` |
+
+  Arrays grow element by element as each element completes.
+
+  Limits, stated rather than papered over: **chunked documents emit no `.partial`**, only
+  `.final`, because per-chunk snapshots are incoherent before the deterministic merge;
+  **signals, provenance, grounding and tables attach to `.final` only** — a partial is a
+  UI preview, not an evidenced result; and **repair retries are not streamed** — partials
+  come from the first attempt, and the stream still ends with `.final` or throws exactly
+  as `detailed` does.
+
+  Additive throughout: `Extractable` gains `associatedtype Partial: Decodable & Sendable =
+  Self`, so hand-written conformances keep compiling, and the macro generates a real
+  `Partial` (nested extractables use *their* `Partial`, arrays become arrays of the element
+  partial). The package-internal generation seam gains a streaming method whose default
+  implementation calls the existing one once, so `MockLanguageModel` and every existing
+  test conformance are untouched.
+
+- **Hard extraction failures are visible in harness accuracy.** A failed extraction used to
+  contribute *nothing* to the denominator — so a run where every file failed printed
+  `0.0% (0/0)`, which reads as "very low accuracy" but means "nothing was scored at all",
+  and a run where half the files failed silently reported the accuracy of the survivors.
+  Both mislead in the same direction. Hard failures are now counted, shown as a share, and
+  listed with their errors, and a **failure-inclusive accuracy** scores every
+  ground-truth-bearing field on a failed file as incorrect.
+
+  The existing `overallAccuracy` / `presentAccuracy` keep their definition, because the
+  numbers published for 0.3.0 and 0.4.0 were computed with it and silently changing what
+  those names mean would make this project's own history incomparable. Every row in the
+  report now states which definition it uses. In compare reports, a field the baseline got
+  right and the other arm never produced was previously an invisible Δ 0; it is now a
+  visible −1.
+
+- **Run-level switch for the harness arithmetic invariant** (`invariant=true|false` on a
+  compare arm, `--invariant` on the accuracy path; default unchanged). The
+  sum-equals-total check rejects nearly every extraction from a small model — measured on
+  Factur-X, 6 of 6 files ended in `validationFailed` and the report scored nothing — which
+  makes an A/B measure the gate instead of the extractor. The mode is always printed in the
+  report label.
+
+- **Per-file progress on stderr during harness runs** (`[arm i/n] path (elapsed s)`).
+  Model-backed runs print nothing until the end, which makes a slow run indistinguishable
+  from a hung one; one corpus run here was left going for seven hours before that became
+  clear. Reports stay metrics-only — progress never goes into them.
+
+### Documented
+
+- **Guided (constrained) JSON generation, recorded as a measured negative about the
+  engine.** AnyLanguageModel 0.8.0 does implement token-level constrained JSON, but
+  `respond(to:schema:)` discards a runtime schema, so it is unreachable for schemas built
+  at runtime. We patched around that and measured on 30 Factur-X documents. Four readings
+  — −41.4, −44.3, −83.8 (7B guided at **0.0%**) and −67.2 pp — were each an artifact of a
+  distinct defect in the generator, not a property of constrained decoding: optional
+  properties chosen by a hash of the field *name*; array length derived from the token
+  budget; `{}` being schema-valid when nothing is required; and the decimal point missing
+  from the number mask, so `473.00` became `4.73e+31`.
+
+  So the honest statement is that **the engine is not usable for extraction**, and the
+  original question — whether constrained decoding helps a small model — is still
+  unanswered. Recording the stronger-sounding claim would close a promising direction on a
+  false basis. `DECISIONS.md` keeps the fingerprints that separated artifact from result,
+  since those transfer: a field at exactly −100 pp across all documents is never being
+  emitted; a guided arm running *faster* than the unconstrained one is terminating early;
+  numbers working while strings collapse points at branch selection, not capability. Four
+  of the five defects are fixed with tests in `Tools/EvalHarness/experiments/`, intended
+  for upstream.
+
 ## [0.4.0] — 2026-08-08
 
 Measurement, provenance, and a merge that no longer asks a model to do arithmetic.
