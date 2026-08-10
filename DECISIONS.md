@@ -186,6 +186,10 @@ ExtractionSchema.array → array node with items
 When that lands, `Extract` can short-circuit the JSON parse path for backends
 that return typed `Generable` values directly.
 
+That mapping now exists (`SchemaBridge.toDynamicGenerationSchema`), and it has been
+tried end to end. It did not land — see *Guided (constrained) JSON generation* under
+measured negatives for what blocks it and what a repeat attempt should know.
+
 ## Measured negatives (things we tried and did not ship)
 
 Recording these so they are not retried blind.
@@ -214,6 +218,68 @@ aggregate:
 
 So measured seller accuracy is ~97% rather than the 96% the raw score suggested, and
 the residue is not a prompt-wording problem.
+
+### Guided (constrained) JSON generation — the engine is not ready, the question is still open
+
+Read the conclusion precisely: **AnyLanguageModel 0.8.0's constrained JSON generator
+is unusable for extraction.** That is *not* the same as "constrained decoding hurts
+extraction" — we never managed to measure the technique at all, and writing it off
+would close a promising direction on a false basis.
+
+AnyLanguageModel does implement token-level constrained JSON
+(`ConstrainedJSONGenerator` + a per-backend `TokenBackend`, wired into MLX, Core ML
+and llama.cpp). It is unreachable for us: `LanguageModelSession.respond(to:schema:)`
+accepts a `GenerationSchema` and then discards it, forwarding to `GeneratedContent`,
+whose static schema is a placeholder string node. Our schemas are built at runtime,
+so no static `Generable` type can carry them. We patched the clone to pass a runtime
+schema through, then measured on 30 Factur-X documents (arithmetic invariant off on
+both arms, identical prompts, equal token budgets, `temperature = 0`).
+
+Four measurements, four artifacts — none of them a property of constrained decoding:
+
+| Reading | What it turned out to be |
+| --- | --- |
+| −41.4 pp | Optional properties were included by a **hash of the field name** mod 2 — constant per field across every document |
+| −44.3 pp | Array length came from `totalTokenBudget / divisor`; the model could not choose how many line items to emit |
+| −83.8 pp (7B guided **0.0%**) | With no required properties, `{}` is schema-valid; 7B at temperature 0 took it every time, in two tokens |
+| −67.2 pp | The decimal point was excluded from the number mask (Qwen encodes `473.00` as `4` `7` `3` `.` `0` `0`), so amounts padded to `4.73e+31`; and the `null`-vs-string branch collapses strings |
+
+Each artifact had a **fingerprint**, and the fingerprints are the transferable part:
+
+- A field at exactly **−100 pp across all documents** means it is never emitted —
+  a schema/engine decision, not a model weakness. Predicting parity from the field
+  names in advance correctly called which fields would collapse (`currency`,
+  `taxTotal`, `issueDate`) and which would survive (`invoiceNumber`, `grandTotal`).
+- **The guided arm running faster than the unconstrained one** (68 s vs 115 s over
+  30 files, where the same pair was 2.5× slower on the smaller model) means it is
+  terminating early, not decoding carefully.
+- **Numbers working while strings collapse** (`grandTotal` −13 pp against
+  `invoiceNumber`/`issueDate`/`sellerName` all ≈ −95 pp) points at branch selection,
+  not at capability — a model that reads 87% of grand totals correctly is not
+  "preferring null" for the invoice number.
+
+Two process notes worth keeping. The 7B run was added only as a guard against a
+small-model artifact — the precedent being table injection, which was −11.4 pp on
+1.5B and +0.8 pp on 7B — and it is what exposed the `{}` collapse; a single model
+would have produced a coherent and entirely false story. And one fix we specified
+ourselves (allow `}` once required properties are satisfied) is what *made* the
+empty object legal: the previous code was wrong, and its wrongness had been hiding
+the hole.
+
+Four of the five defects are fixed, with tests, in
+`Tools/EvalHarness/experiments/anylanguagemodel-runtime-schema-constrained-generation.patch`
+on the `experiment/guided-generation` branch — intended for upstream, since they
+reproduce outside our scenario. The fifth (the `null`-vs-string branch bias) is
+diagnosed but unfixed. Also worth knowing before any repeat attempt: ~85% of a
+corpus run's wall clock goes to `NaiveStreamingDetokenizer`, which re-decodes the
+whole token array each step — quadratic in output length, and enough on its own to
+make a full-corpus run on a local model impractical.
+
+Revisit when upstream takes the fixes or the generator matures. The design question
+worth carrying over: **optional-in-Swift is not optional-in-JSON for constrained
+decoding.** The shape that works is the one strict structured-output modes converged
+on — every key required to appear, absence expressed as `null` — so the model can
+neither skip everything nor be forced to invent a value.
 
 ### General caution on this corpus
 
