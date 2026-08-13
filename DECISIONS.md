@@ -421,3 +421,43 @@ The existing `invariant=` key is a three-way, not a second switch:
 An A/B of `invariant=true` vs `invariant=report` measures the gate against a
 scored extract on the same documents. `true`/`false` labels are unchanged so
 historical reports stay comparable.
+
+## Line items from geometry (`LineItemSource`)
+
+Line items are the weakest field on every measurement we have run. The repair
+loop cannot fix arithmetic — the model re-derives the same numbers because it
+does not consider them wrong. The rows already exist on `ExtractionResult.tables`.
+Asking the model to transcribe them is the one job it is worst at.
+
+### What we shipped
+
+`ExtractionOptions.lineItemSource` is `.model` by default. Prompts and results
+are byte-identical to today. `.geometry` is opt-in:
+
+1. Prefer `ExtractedTable.isLineItemShaped` (rows ≥ 3, columns 3–6, density ≥
+   0.80 — the same numbers the harness already used). When none match, any
+   dense 2×2+ grid is offered so a two-item invoice is not dropped.
+2. One mapping call: header + sample rows of every candidate. The model
+   chooses the table and maps columns onto the **first** array-of-objects in
+   the schema. Later collections stay on the model path.
+3. Every data row is parsed with `LenientDecoding` (German commas, trailing
+   minus, currency). Totals / tax / subtotal rows are skipped by exact token.
+4. Header fields are extracted with the collection omitted from the prompt
+   schema, then the geometry-built array is spliced in before decode.
+
+An unusable mapping (named column out of range, omitted required field, no
+usable rows) **falls back** to the model path. The fallback is visible:
+`ExtractionResult.collectionSource` is `.geometryFallback(reason:)`, never
+silent `.model`. A measurement that cannot tell those two apart is comparing
+the model path to itself — a mistake this project has already made once.
+
+Provenance is not a special case. Geometry-built values are ordinary leaves;
+`FieldGrounding` already prefers table-cell boxes, so those fields get tighter
+rects than the model path.
+
+### Harness
+
+`lineItemSource=model|geometry` on a compare arm (aliases `line-item-source`,
+`lineItems`). The accuracy report always prints how many scored files used
+geometry versus fell back. An A/B that cannot show that split is not a
+geometry measurement.

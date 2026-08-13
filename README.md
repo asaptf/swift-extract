@@ -435,6 +435,9 @@ let receipt: Receipt = try await Extract.from(photoURL, using: session, options:
   Cell merge is lossy (no spanning or nested cells, no cross-page merge); header
   detection is keyword-based and often absent; skewed scans break it. Linear
   document text is always kept — tables are additive, never a substitute.
+  `lineItemSource: .geometry` is an opt-in that builds the first array-of-objects
+  from those grids instead of asking the model to transcribe them; default
+  `.model` is unchanged. See [API → Options](docs/API.md#options-results-errors).
 - Grounding reports `absent` only for text fields; numeric and date fields never do. Use
   [invariants](#how-much-can-you-trust-a-result) to catch a wrong number.
 - Chunk-and-merge on long documents: partials are merged **deterministically** (tree

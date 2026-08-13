@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Line items from table geometry (`LineItemSource.geometry`).** Line items were the
+  weakest field on every measurement we have: the model is asked to transcribe rows
+  `TableDetector` already reconstructed exactly. This opt-in swaps the roles. The
+  model is asked once, cheaply, to map columns onto the first array-of-objects in
+  the schema; every row is then parsed from cell text with the existing lenient
+  decoder (German decimal commas, trailing-minus accounting, currency symbols).
+  Header / scalar fields still come from the model.
+
+  Off by default (`ExtractionOptions.lineItemSource == .model`): prompts and
+  results are byte-identical to today. When geometry is requested,
+  `ExtractionResult.collectionSource` is `.geometry`, or
+  `.geometryFallback(reason:)` when no qualifying table is found or the mapping
+  is unusable — never a silent model path. Only the first array-of-objects is in
+  scope; later collections stay on the model. Candidate tables prefer the shared
+  line-item-shaped predicate (`ExtractedTable.isLineItemShaped`, the same numbers
+  the harness already used); when none match, any dense 2×2+ grid is offered so
+  a two-item invoice is not dropped. Several candidates stay in the mapping
+  prompt — the model chooses; we do not pick by size.
+
+  Harness: `lineItemSource=geometry` on a compare arm. The accuracy report
+  states, for that arm, how many scored files used geometry versus fell back.
+
 - **Opt-in invariant policy (`InvariantPolicy`).** `validateInvariants()` still couples the fields
   it names — that is the point of the check — but the caller can now say what should happen when
   retries cannot reconcile them. Default `ExtractionOptions.invariantPolicy` is `.strict`: repair,

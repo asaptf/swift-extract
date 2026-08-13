@@ -307,6 +307,7 @@ public struct ExtractionOptions: Sendable {
     public var temperature: Double?            // nil → session.temperature
     public var tableDetection: TableDetectionMode  // .automatic (default) | .off
     public var invariantPolicy: InvariantPolicy    // .strict (default) | .reportViolations
+    public var lineItemSource: LineItemSource      // .model (default) | .geometry
 }
 
 public enum InvariantPolicy: Sendable {
@@ -322,6 +323,18 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     public let signals: ExtractionSignals   // grounding evidence (not a score)
     public let tables: [ExtractedTable]     // geometric grids; empty when none / off
     public let invariantViolations: [InvariantIssue]  // empty unless .reportViolations exhausted
+    public let collectionSource: CollectionSource     // .model | .geometry | .geometryFallback(reason)
+}
+
+public enum LineItemSource: String, Sendable {
+    case model      // model transcribes the collection (default; today's path)
+    case geometry   // map columns once, parse every row from table geometry
+}
+
+public enum CollectionSource: Sendable {
+    case model
+    case geometry
+    case geometryFallback(reason: String)  // geometry requested but not used; reason is required
 }
 
 public enum TableDetectionMode: Sendable {
@@ -348,6 +361,32 @@ a labelled Markdown section **only when the target schema contains a collection*
 a prompt byte-identical to `.off`. The linearised document text is left unchanged either
 way (cell merge is lossy, so substituting would drop content). When no tables are found
 or mode is `.off`, the prompt is also byte-identical to a build without this feature.
+
+`lineItemSource` defaults to `.model`. That path is today's behaviour: the model
+transcribes every collection element and the extraction prompt is unchanged.
+`.geometry` is opt-in. It asks the model once to map columns (header row plus a
+couple of sample rows, all qualifying tables listed so the model can choose),
+then parses each data row from cell text with the same lenient decoder the
+JSON path uses. Only the **first array-of-objects** in the schema is handled
+this way; later collections stay on the model. `result.collectionSource` is
+always set — `.geometryFallback(reason:)` when geometry was requested but
+could not be used (no qualifying table, mapping named a column that does not
+exist, …). A measurement that cannot tell those two apart is comparing the
+model path to itself.
+
+```swift
+var options = ExtractionOptions()
+options.lineItemSource = .geometry
+let result = try await Extract.detailed(from: pdfURL, as: Invoice.self, using: session, options: options)
+switch result.collectionSource {
+case .geometry:
+    break  // rows parsed from result.tables
+case .geometryFallback(let reason):
+    print("fell back to model:", reason)
+case .model:
+    break
+}
+```
 
 ```swift
 public enum ExtractionError: Error {

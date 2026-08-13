@@ -238,6 +238,7 @@ struct TableReconstructionTests {
         // Source-compatible default init still compiles with prior argument lists.
         let legacy = ExtractionOptions(maxRetries: 1, locale: Locale(identifier: "en_US"))
         #expect(legacy.tableDetection == .automatic)
+        #expect(legacy.lineItemSource == .model)
         #expect(
             TableDetector.detect(in: blocks, mode: legacy.tableDetection).count
                 == TableDetector.detect(in: blocks).count

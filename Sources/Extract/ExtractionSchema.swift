@@ -197,6 +197,88 @@ public struct ExtractionSchema: Sendable, Equatable, Codable {
         return false
     }
 
+    /// First array-of-objects property in document (``propertyOrder``) walk order.
+    ///
+    /// Nested objects are visited. Arrays of scalars or of arrays are skipped.
+    /// Only this first collection is in scope for ``LineItemSource/geometry``;
+    /// later collections stay on the model path.
+    public var firstObjectCollection: ObjectCollectionSpec? {
+        firstObjectCollection(prefix: [])
+    }
+
+    public struct ObjectCollectionSpec: Sendable, Equatable {
+        /// Property path from the root object, e.g. `["lineItems"]` or `["payload", "lines"]`.
+        public var path: [String]
+        /// Schema of each array element (an object).
+        public var itemSchema: ExtractionSchema
+
+        public var dottedPath: String { path.joined(separator: ".") }
+    }
+
+    private func firstObjectCollection(prefix: [String]) -> ObjectCollectionSpec? {
+        guard type == .object, let properties else { return nil }
+        let order = propertyOrder ?? Array(properties.keys).sorted()
+        var seen = Set<String>()
+        for key in order {
+            seen.insert(key)
+            if let found = objectCollection(at: key, in: properties, prefix: prefix) {
+                return found
+            }
+        }
+        // `propertyOrder` may be only `required` (the `.object` factory default).
+        for key in properties.keys.sorted() where !seen.contains(key) {
+            if let found = objectCollection(at: key, in: properties, prefix: prefix) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func objectCollection(
+        at key: String,
+        in properties: [String: ExtractionSchema],
+        prefix: [String]
+    ) -> ObjectCollectionSpec? {
+        guard let child = properties[key] else { return nil }
+        let childPath = prefix + [key]
+        if child.type == .array, let items = child.items, items.type == .object {
+            return ObjectCollectionSpec(path: childPath, itemSchema: items)
+        }
+        if child.type == .object {
+            return child.firstObjectCollection(prefix: childPath)
+        }
+        return nil
+    }
+
+    /// Copy with the object-collection at `path` removed from properties / required.
+    ///
+    /// Used so a geometry-path header prompt does not ask the model to transcribe
+    /// rows that will be overwritten. Missing path is a no-op.
+    public func omittingObjectCollection(path: [String]) -> ExtractionSchema {
+        var copy = self
+        guard let key = path.first else { return copy }
+        if path.count == 1 {
+            if var properties {
+                properties.removeValue(forKey: key)
+                copy.properties = properties
+            }
+            if var required {
+                required.removeAll { $0 == key }
+                copy.required = required
+            }
+            if var propertyOrder {
+                propertyOrder.removeAll { $0 == key }
+                copy.propertyOrder = propertyOrder
+            }
+            return copy
+        }
+        if var properties, let child = properties[key] {
+            properties[key] = child.omittingObjectCollection(path: Array(path.dropFirst()))
+            copy.properties = properties
+        }
+        return copy
+    }
+
     // MARK: - Rendering
 
     /// Pretty-printed JSON Schema document suitable for prompts.

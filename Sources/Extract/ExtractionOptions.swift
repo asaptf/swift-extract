@@ -28,6 +28,46 @@ public enum InvariantPolicy: Sendable, Equatable {
     case reportViolations
 }
 
+/// Where the first array-of-objects collection is filled from.
+///
+/// Default ``model`` keeps today's behaviour: the model transcribes every
+/// collection element. ``geometry`` is opt-in — see ``ExtractionOptions/lineItemSource``.
+public enum LineItemSource: String, Sendable, Equatable {
+    /// Model transcribes the collection as part of the extraction JSON (default).
+    case model
+    /// Map columns with one cheap model call, then parse each row from table geometry.
+    case geometry
+}
+
+/// Which path produced the first array-of-objects collection on a result.
+///
+/// Always populated. A geometry run that fell back to the model is
+/// ``geometryFallback(reason:)``, never silent ``model`` — otherwise a
+/// measurement can compare the model path against itself.
+public enum CollectionSource: Sendable, Equatable {
+    /// The model transcribed the collection, or geometry was not requested.
+    case model
+    /// Rows were built from detected table geometry after a column mapping.
+    case geometry
+    /// Geometry was requested but could not be used; the model transcribed the collection.
+    case geometryFallback(reason: String)
+
+    /// Stable token for reports (`model` / `geometry` / `geometryFallback`).
+    public var reportToken: String {
+        switch self {
+        case .model: return "model"
+        case .geometry: return "geometry"
+        case .geometryFallback: return "geometryFallback"
+        }
+    }
+
+    /// Why geometry was not used, when this is ``geometryFallback(reason:)``.
+    public var fallbackReason: String? {
+        if case .geometryFallback(let reason) = self { return reason }
+        return nil
+    }
+}
+
 /// Options controlling a single extraction run.
 public struct ExtractionOptions: Sendable, Equatable {
     /// Instructor-style repair retries after the first attempt (default 2 → up to 3 total tries).
@@ -52,6 +92,17 @@ public struct ExtractionOptions: Sendable, Equatable {
     public var tableDetection: TableDetectionMode
     /// How exhausted invariant retries are reported (default ``InvariantPolicy/strict``).
     public var invariantPolicy: InvariantPolicy
+    /// Where the first array-of-objects collection is filled from (default ``LineItemSource/model``).
+    ///
+    /// ``LineItemSource/model`` is today's path: the model transcribes the collection
+    /// as part of the extraction JSON. Prompts and results are byte-identical to a
+    /// build without this option.
+    ///
+    /// ``LineItemSource/geometry`` asks the model only to map columns, then parses
+    /// every row from detected table geometry. Header / scalar fields still come
+    /// from the model. Only the first array-of-objects in the schema is handled
+    /// this way; later collections stay on the model path.
+    public var lineItemSource: LineItemSource
 
     public init(
         maxRetries: Int = 2,
@@ -60,7 +111,8 @@ public struct ExtractionOptions: Sendable, Equatable {
         softContextCharacterBudget: Int = 12_000,
         temperature: Double? = nil,
         tableDetection: TableDetectionMode = .automatic,
-        invariantPolicy: InvariantPolicy = .strict
+        invariantPolicy: InvariantPolicy = .strict,
+        lineItemSource: LineItemSource = .model
     ) {
         self.maxRetries = maxRetries
         self.chunkingStrategy = chunkingStrategy
@@ -69,6 +121,7 @@ public struct ExtractionOptions: Sendable, Equatable {
         self.temperature = temperature
         self.tableDetection = tableDetection
         self.invariantPolicy = invariantPolicy
+        self.lineItemSource = lineItemSource
     }
 
     /// Resolve sampling temperature: explicit options override, else session.
@@ -107,6 +160,16 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     /// Empty unless ``InvariantPolicy/reportViolations`` was set and retries
     /// were exhausted with a decoded value.
     public let invariantViolations: [InvariantIssue]
+    /// Which path produced the first array-of-objects collection.
+    ///
+    /// ``CollectionSource/model`` when ``ExtractionOptions/lineItemSource`` is
+    /// ``LineItemSource/model`` (the default) or the type has no such collection.
+    /// ``CollectionSource/geometry`` when rows were parsed from a detected table.
+    /// ``CollectionSource/geometryFallback(reason:)`` when geometry was requested
+    /// but could not be used (no qualifying table, unusable mapping, …). The
+    /// reason is part of the value so a measurement cannot treat fallback as
+    /// geometry.
+    public let collectionSource: CollectionSource
 
     /// ``InvariantValidationError`` wrapping ``invariantViolations``, or `nil`
     /// when there are none.
@@ -127,6 +190,9 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     ///     (source-compatible with call sites that omit tables).
     ///   - invariantViolations: Remaining issues after an opted-in report. Defaults
     ///     to `[]` (source-compatible with call sites that omit the field).
+    ///   - collectionSource: Which path produced the first array-of-objects
+    ///     collection. Defaults to ``CollectionSource/model`` (source-compatible
+    ///     with call sites that omit the field).
     public init(
         value: T,
         attempts: Int,
@@ -134,7 +200,8 @@ public struct ExtractionResult<T: Extractable>: Sendable {
         chunksUsed: Int = 1,
         signals: ExtractionSignals? = nil,
         tables: [ExtractedTable]? = nil,
-        invariantViolations: [InvariantIssue] = []
+        invariantViolations: [InvariantIssue] = [],
+        collectionSource: CollectionSource = .model
     ) {
         self.value = value
         self.attempts = attempts
@@ -145,5 +212,6 @@ public struct ExtractionResult<T: Extractable>: Sendable {
             ?? ExtractionSignals(attempts: attempts, chunksUsed: chunksUsed, fields: [])
         self.tables = tables ?? []
         self.invariantViolations = invariantViolations
+        self.collectionSource = collectionSource
     }
 }

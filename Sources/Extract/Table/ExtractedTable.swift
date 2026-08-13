@@ -105,11 +105,95 @@ public struct ExtractedTable: Sendable, Equatable {
         return lines.joined(separator: "\n")
     }
 
+    /// Compact preview for the column-mapping prompt: header plus a couple of
+    /// sample body rows. Full ``markdown()`` of a long table would blow the
+    /// mapping call past the document chunk budget.
+    public func mappingPreview(sampleBodyRows: Int = 2) -> String {
+        guard rowCount > 0, columnCount > 0 else { return "" }
+
+        var grid = Array(
+            repeating: Array(repeating: "", count: columnCount),
+            count: rowCount
+        )
+        for cell in cells {
+            guard cell.row >= 0, cell.row < rowCount, cell.column >= 0, cell.column < columnCount
+            else { continue }
+            grid[cell.row][cell.column] = cell.text
+        }
+
+        func pipeRow(_ values: [String]) -> String {
+            "| " + values.map(escapeCell).joined(separator: " | ") + " |"
+        }
+        let separator =
+            "| " + Array(repeating: "---", count: columnCount).joined(separator: " | ") + " |"
+
+        var lines: [String] = []
+        if let header = headerRowIndex, header >= 0, header < rowCount {
+            lines.append(pipeRow(grid[header]))
+            lines.append(separator)
+            var shown = 0
+            for r in 0..<rowCount where r != header {
+                lines.append(pipeRow(grid[r]))
+                shown += 1
+                if shown >= sampleBodyRows { break }
+            }
+        } else {
+            lines.append(pipeRow(Array(repeating: "", count: columnCount)))
+            lines.append(separator)
+            for r in 0..<min(rowCount, sampleBodyRows) {
+                lines.append(pipeRow(grid[r]))
+            }
+        }
+        if rowCount > sampleBodyRows + (headerRowIndex == nil ? 0 : 1) {
+            lines.append("_… \(rowCount) rows total; only sample rows shown._")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func escapeCell(_ text: String) -> String {
         text
             .replacingOccurrences(of: "|", with: "\\|")
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Line-item shape
+
+    /// Minimum row count for the corpus line-item-shaped metric (not a viability floor).
+    public static let lineItemShapedMinimumRowCount = 3
+    /// Column count range for the corpus line-item-shaped metric.
+    public static let lineItemShapedColumnRange = 3...6
+    /// Minimum fill density (non-empty cells / capacity) for the corpus metric
+    /// and for geometry-path candidates.
+    public static let lineItemShapedMinimumFillDensity = 0.80
+
+    /// Fill density: non-empty cells / (rows × cols).
+    public var fillDensity: Double {
+        let capacity = max(rowCount * columnCount, 1)
+        return Double(cells.count) / Double(capacity)
+    }
+
+    /// Corpus line-item-shaped grid: rows ≥ 3, columns 3–6, density ≥ 0.80.
+    ///
+    /// This is the metric that exposed pure-XY-cut fragmentation. A two-row
+    /// invoice or a two-column receipt is a complete line-item table and still
+    /// qualifies as a geometry-path candidate (see ``isGeometryCollectionCandidate``);
+    /// this predicate stays strict so harness recall numbers stay comparable.
+    public var isLineItemShaped: Bool {
+        rowCount >= Self.lineItemShapedMinimumRowCount
+            && Self.lineItemShapedColumnRange.contains(columnCount)
+            && fillDensity >= Self.lineItemShapedMinimumFillDensity
+    }
+
+    /// Whether this table can be offered to the geometry collection path.
+    ///
+    /// Same density floor as ``isLineItemShaped``. Row/column floors are those
+    /// of ``TableDetector`` (2 × 2) so a two-item invoice or a two-column
+    /// receipt is not silently sent down the model path.
+    public var isGeometryCollectionCandidate: Bool {
+        rowCount >= 2
+            && columnCount >= 2
+            && fillDensity >= Self.lineItemShapedMinimumFillDensity
     }
 }
 

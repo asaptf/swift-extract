@@ -26,7 +26,9 @@ struct AccuracySummaryTests {
         paired: Bool = true,
         hardFailure: Bool = false,
         fields: [FieldScore] = [],
-        extractionError: String? = nil
+        extractionError: String? = nil,
+        collectionSource: String = "model",
+        collectionFallbackReason: String? = nil
     ) -> AccuracyFileRecord {
         AccuracyFileRecord(
             file: "/tmp/\(path)",
@@ -39,6 +41,8 @@ struct AccuracySummaryTests {
             hardFailure: hardFailure,
             tableCount: 0,
             hasLineItemShaped: false,
+            collectionSource: collectionSource,
+            collectionFallbackReason: collectionFallbackReason,
             ingestionSeconds: 0,
             extractionSeconds: 0
         )
@@ -191,6 +195,41 @@ struct AccuracySummaryTests {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    @Test("geometry used vs fallback counts are visible in reduce and the report")
+    func geometryCountsInReport() throws {
+        let records = [
+            record(path: "geo.pdf", collectionSource: "geometry"),
+            record(
+                path: "fb.pdf",
+                collectionSource: "geometryFallback",
+                collectionFallbackReason: "no qualifying table"
+            ),
+            record(path: "model.pdf", collectionSource: "model"),
+        ]
+        let s = AccuracySummary.reduce(records)
+        #expect(s.geometryUsed == 1)
+        #expect(s.geometryFallback == 1)
+        #expect(s.collectionFromModel == 1)
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("eval-geo-\(UUID().uuidString)", isDirectory: true)
+        try ReportWriter.writeAccuracy(s, outputDir: dir, configLabel: "lineItemSource=geometry")
+        let md = try String(
+            contentsOf: dir.appendingPathComponent("accuracy.md"),
+            encoding: .utf8
+        )
+        #expect(md.contains("Geometry collection used"))
+        #expect(md.contains("Geometry fell back to model"))
+        let jsonl = try String(
+            contentsOf: dir.appendingPathComponent("accuracy.jsonl"),
+            encoding: .utf8
+        )
+        #expect(jsonl.contains("\"collectionSource\":\"geometry\""))
+        #expect(jsonl.contains("geometryFallback"))
+        #expect(jsonl.contains("no qualifying table"))
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     @Test("AB field delta treats nil as incorrect")
     func abFieldDeltaNilAsMiss() {
         #expect(ABCompareRunner.fieldDelta(aCorrect: true, bCorrect: nil) == -1)
@@ -217,6 +256,21 @@ struct ArithmeticInvariantModeTests {
         #expect(throws: CLIParseError.self) {
             _ = try ArithmeticInvariantMode.parse("maybe")
         }
+    }
+
+    @Test("lineItemSource parse and report label")
+    func lineItemSourceConfig() throws {
+        #expect(try LineItemSourceParsing.parse("geometry") == .geometry)
+        #expect(try LineItemSourceParsing.parse("model") == .model)
+        #expect(throws: CLIParseError.self) {
+            _ = try LineItemSourceParsing.parse("maybe")
+        }
+        let geo = RunConfig(name: "g", lineItemSource: .geometry)
+        let model = RunConfig(name: "m")
+        #expect(geo.reportLabel.contains("lineItemSource=geometry"))
+        #expect(model.reportLabel.contains("lineItemSource=model"))
+        #expect(geo.extractionOptions.lineItemSource == .geometry)
+        #expect(model.extractionOptions.lineItemSource == .model)
     }
 
     @Test("report labels keep true/false and print report")

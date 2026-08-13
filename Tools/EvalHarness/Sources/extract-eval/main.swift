@@ -171,7 +171,7 @@ struct ExtractEvalMain {
         return result.exitCode
     }
 
-    /// Parse `name:backend=mock,tableDetection=off,model=…,invariant=true|false|report`
+    /// Parse `name:backend=mock,tableDetection=off,model=…,invariant=true|false|report,lineItemSource=model|geometry`
     static func parseConfigSpec(_ raw: String?, defaultName: String) throws -> RunConfig {
         guard let raw, !raw.isEmpty else {
             throw CLIParseError.missingValue("--config-a / --config-b")
@@ -181,6 +181,7 @@ struct ExtractEvalMain {
         var modelId: String?
         var tableDetection = TableDetectionMode.automatic
         var arithmeticInvariant = ArithmeticInvariantMode.on
+        var lineItemSource = LineItemSource.model
         var rest = raw
         if let colon = raw.firstIndex(of: ":") {
             name = String(raw[..<colon])
@@ -198,6 +199,8 @@ struct ExtractEvalMain {
                 tableDetection = try TableDetectionParsing.parse(kv[1])
             case "invariant", "arithmeticinvariant", "arithmetic-invariant":
                 arithmeticInvariant = try ArithmeticInvariantMode.parse(kv[1])
+            case "lineitemsource", "line-item-source", "lineitems", "line-items":
+                lineItemSource = try LineItemSourceParsing.parse(kv[1])
             default:
                 break
             }
@@ -207,7 +210,8 @@ struct ExtractEvalMain {
             backend: backend,
             modelId: modelId,
             tableDetection: tableDetection,
-            arithmeticInvariant: arithmeticInvariant
+            arithmeticInvariant: arithmeticInvariant,
+            lineItemSource: lineItemSource
         )
     }
 
@@ -252,11 +256,13 @@ struct ExtractEvalMain {
 
         A/B:
           --config-a name:backend=mock,tableDetection=off,invariant=true
-          --config-b name:backend=mock,tableDetection=automatic,invariant=report
+          --config-b name:backend=mock,tableDetection=automatic,invariant=report,lineItemSource=geometry
           Config keys: backend, model, tables|tableDetection,
                        invariant=true|false|report
-                       (aliases: arithmeticInvariant, arithmetic-invariant)
-          Per-arm invariant switch is independent (strict vs report A/B is expressible).
+                       (aliases: arithmeticInvariant, arithmetic-invariant),
+                       lineItemSource=model|geometry
+                       (aliases: line-item-source, lineItems, line-items)
+          Per-arm invariant and lineItemSource switches are independent.
 
         Chunk-merge:
           --chunk-budget <n>    Arm B softContextCharacterBudget (default 400)

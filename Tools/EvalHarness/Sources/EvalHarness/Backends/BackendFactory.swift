@@ -58,6 +58,22 @@ public enum BackendFactory {
     /// Deterministic offline responder. Fixture-aware for hermetic CI; generic empty object otherwise.
     private static let mockResponder: MockLanguageModel.Responder = { _, user, _ in
         let lower = user.lowercased()
+        // Geometry-path mapping call (distinct system/user; must not return an invoice).
+        if lower.contains("## candidate tables") || lower.contains("map every required field") {
+            if lower.contains("widget pro") {
+                return """
+                    {"table": 1, "columns": {"description": 0, "quantity": 1, "lineTotal": 2, "amount": 2}}
+                    """
+            }
+            if lower.contains("latte") || lower.contains("croissant") {
+                return """
+                    {"table": 1, "columns": {"description": 0, "lineTotal": 1, "amount": 1, "name": 0, "price": 1}}
+                    """
+            }
+            return """
+                {"table": 1, "columns": {"description": 0}}
+                """
+        }
         if lower.contains("acme supplies") || lower.contains("widget pro") {
             return """
                 {

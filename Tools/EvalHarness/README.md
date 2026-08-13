@@ -167,6 +167,30 @@ the default (check on, throw). `false`/`off` disable the check. `report` /
   independently (strict vs report, or on vs off, A/B is expressible). Arm labels
   in the compare report always show `invariant=true|false|report`.
 
+### Line items from geometry (`lineItemSource=model|geometry`)
+
+Default **`model`** — the model transcribes line items (today's path). Set
+**`lineItemSource=geometry`** on a compare arm to map columns with one cheap
+call and parse every row from detected table geometry.
+
+```bash
+swift run extract-eval --mode compare \
+  --corpus "$EXTRACT_EVAL_CORPUS" \
+  --config-a model:backend=mlx,model=mlx-community/Qwen2.5-7B-Instruct-4bit,invariant=false,lineItemSource=model \
+  --config-b geometry:backend=mlx,model=mlx-community/Qwen2.5-7B-Instruct-4bit,invariant=false,lineItemSource=geometry \
+  --output /tmp/eval-geometry
+```
+
+Aliases: `line-item-source`, `lineItems`, `line-items`. Values: `model` /
+`geometry` (`table` / `tables` also parse as geometry).
+
+The accuracy report **must** show, for the geometry arm, how many scored files
+used geometry versus fell back (`Geometry collection used` /
+`Geometry fell back to model`). A geometry arm that silently used the model on
+every file is not a geometry measurement — that split is the reason the
+library surfaces `collectionSource` at all. Per-file JSONL carries
+`collectionSource` and `collectionFallbackReason`.
+
 Per-file progress during accuracy/compare extraction is written to **stderr**
 only (`[arm i/n] path (elapsed s)`). Report files stay metrics-only.
 

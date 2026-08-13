@@ -13,6 +13,10 @@ public struct AccuracyFileRecord: Sendable {
     public var hardFailure: Bool
     public var tableCount: Int
     public var hasLineItemShaped: Bool
+    /// ``CollectionSource/reportToken`` (`model` / `geometry` / `geometryFallback`).
+    public var collectionSource: String
+    /// Set when ``collectionSource`` is `geometryFallback`.
+    public var collectionFallbackReason: String?
     public var ingestionSeconds: Double
     public var extractionSeconds: Double
 }
@@ -42,6 +46,12 @@ public struct AccuracySummary: Sendable {
     public var sellerAccuracy: Double?
     public var filesWithLineItemShaped: Int
     public var lineItemShapedShare: Double
+    /// Scored files whose collection came from table geometry.
+    public var geometryUsed: Int
+    /// Scored files that requested geometry but fell back to the model path.
+    public var geometryFallback: Int
+    /// Scored files whose collection came from the model (including default path).
+    public var collectionFromModel: Int
 
     /// Field accuracy over successful extractions only (historical definition; hard failures excluded).
     public var overallAccuracy: Double {
@@ -132,6 +142,10 @@ public struct AccuracySummary: Sendable {
         let pairedCount = successful.count + hardFailed.count
         let hardShare =
             pairedCount == 0 ? 0.0 : Double(hardFailed.count) / Double(pairedCount)
+        let geometryUsed = successful.filter { $0.collectionSource == "geometry" }.count
+        let geometryFallback = successful.filter { $0.collectionSource == "geometryFallback" }
+            .count
+        let collectionFromModel = successful.filter { $0.collectionSource == "model" }.count
 
         return AccuracySummary(
             records: records,
@@ -153,7 +167,10 @@ public struct AccuracySummary: Sendable {
             perFieldPresent: perFieldPresent,
             sellerAccuracy: sellerAcc,
             filesWithLineItemShaped: shaped,
-            lineItemShapedShare: Double(shaped) / Double(n)
+            lineItemShapedShare: Double(shaped) / Double(n),
+            geometryUsed: geometryUsed,
+            geometryFallback: geometryFallback,
+            collectionFromModel: collectionFromModel
         )
     }
 }
@@ -220,6 +237,8 @@ public enum AccuracyRunner {
                 hardFailure: false,
                 tableCount: 0,
                 hasLineItemShaped: false,
+                collectionSource: "model",
+                collectionFallbackReason: nil,
                 ingestionSeconds: elapsed,
                 extractionSeconds: 0
             )
@@ -243,6 +262,8 @@ public enum AccuracyRunner {
                 hardFailure: false,
                 tableCount: inspection.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(inspection.tables),
+                collectionSource: "model",
+                collectionFallbackReason: nil,
                 ingestionSeconds: ingestSec,
                 extractionSeconds: 0
             )
@@ -262,6 +283,8 @@ public enum AccuracyRunner {
                 hardFailure: false,
                 tableCount: inspection.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(inspection.tables),
+                collectionSource: "model",
+                collectionFallbackReason: nil,
                 ingestionSeconds: ingestSec,
                 extractionSeconds: 0
             )
@@ -293,6 +316,8 @@ public enum AccuracyRunner {
                 hardFailure: false,
                 tableCount: result.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(result.tables),
+                collectionSource: result.collectionSource.reportToken,
+                collectionFallbackReason: result.collectionSource.fallbackReason,
                 ingestionSeconds: ingestSec,
                 extractionSeconds: extractSec
             )
@@ -317,6 +342,8 @@ public enum AccuracyRunner {
                 hardFailure: true,
                 tableCount: inspection.tables.count,
                 hasLineItemShaped: TableMetrics.hasLineItemShapedTable(inspection.tables),
+                collectionSource: "model",
+                collectionFallbackReason: nil,
                 ingestionSeconds: ingestSec,
                 extractionSeconds: extractSec
             )

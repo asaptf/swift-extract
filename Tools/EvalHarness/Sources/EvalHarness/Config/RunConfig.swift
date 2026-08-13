@@ -72,6 +72,8 @@ public struct RunConfig: Sendable, Equatable {
     /// library for the last decoded value plus remaining issues.
     /// Per-arm in compare runs; observable in ``reportLabel``.
     public var arithmeticInvariant: ArithmeticInvariantMode
+    /// Where line items come from (`lineItemSource=`). Default ``LineItemSource/model``.
+    public var lineItemSource: LineItemSource
 
     public init(
         name: String,
@@ -82,7 +84,8 @@ public struct RunConfig: Sendable, Equatable {
         maxRetries: Int = 1,
         softContextCharacterBudget: Int = 12_000,
         chunkingStrategy: ChunkingStrategy = .automatic,
-        arithmeticInvariant: ArithmeticInvariantMode = .on
+        arithmeticInvariant: ArithmeticInvariantMode = .on,
+        lineItemSource: LineItemSource = .model
     ) {
         self.name = name
         self.backend = backend
@@ -93,6 +96,7 @@ public struct RunConfig: Sendable, Equatable {
         self.softContextCharacterBudget = softContextCharacterBudget
         self.chunkingStrategy = chunkingStrategy
         self.arithmeticInvariant = arithmeticInvariant
+        self.lineItemSource = lineItemSource
     }
 
     public var extractionOptions: ExtractionOptions {
@@ -102,7 +106,8 @@ public struct RunConfig: Sendable, Equatable {
             softContextCharacterBudget: softContextCharacterBudget,
             temperature: temperature,
             tableDetection: tableDetection,
-            invariantPolicy: arithmeticInvariant.invariantPolicy
+            invariantPolicy: arithmeticInvariant.invariantPolicy,
+            lineItemSource: lineItemSource
         )
     }
 
@@ -114,6 +119,7 @@ public struct RunConfig: Sendable, Equatable {
             "tableDetection=\(TableDetectionParsing.label(tableDetection))",
             "model=\(modelId ?? "-")",
             "invariant=\(arithmeticInvariant.reportToken)",
+            "lineItemSource=\(LineItemSourceParsing.label(lineItemSource))",
         ]
         if arithmeticInvariant == .off {
             parts.append("note=arithmetic-invariant-off")
@@ -150,6 +156,26 @@ public enum TableDetectionParsing {
     }
 }
 
+public enum LineItemSourceParsing {
+    public static func parse(_ raw: String) throws -> LineItemSource {
+        switch raw.lowercased() {
+        case "model", "llm", "transcription":
+            return .model
+        case "geometry", "table", "tables":
+            return .geometry
+        default:
+            throw CLIParseError.invalidLineItemSource(raw)
+        }
+    }
+
+    public static func label(_ source: LineItemSource) -> String {
+        switch source {
+        case .model: return "model"
+        case .geometry: return "geometry"
+        }
+    }
+}
+
 public enum CLIParseError: Error, CustomStringConvertible {
     case invalidTableDetection(String)
     case missingValue(String)
@@ -158,6 +184,7 @@ public enum CLIParseError: Error, CustomStringConvertible {
     case invalidInteger(String, String)
     case invalidBoolean(String, String)
     case invalidInvariantMode(String)
+    case invalidLineItemSource(String)
 
     public var description: String {
         switch self {
@@ -175,6 +202,8 @@ public enum CLIParseError: Error, CustomStringConvertible {
             return "Invalid boolean for \(o): '\(v)' (use true|false)"
         case .invalidInvariantMode(let v):
             return "Invalid invariant mode '\(v)' (use true|false|report)"
+        case .invalidLineItemSource(let v):
+            return "Invalid lineItemSource '\(v)' (use model|geometry)"
         }
     }
 }

@@ -234,7 +234,8 @@ public enum Extract {
         blocks: [ExtractedDocument.Block],
         tables: [ExtractedTable],
         mergeConflicts: [MergeConflict] = [],
-        invariantViolations: [InvariantIssue] = []
+        invariantViolations: [InvariantIssue] = [],
+        collectionSource: CollectionSource = .model
     ) -> ExtractionResult<T> {
         let grounded = FieldGrounding.compute(
             value: value,
@@ -257,7 +258,8 @@ public enum Extract {
             chunksUsed: chunksUsed,
             signals: signals,
             tables: tables,
-            invariantViolations: invariantViolations
+            invariantViolations: invariantViolations,
+            collectionSource: collectionSource
         )
     }
 
@@ -271,7 +273,8 @@ public enum Extract {
         sourceText: String,
         blocks: [ExtractedDocument.Block],
         tables: [ExtractedTable],
-        mergeConflicts: [MergeConflict] = []
+        mergeConflicts: [MergeConflict] = [],
+        collectionSource: CollectionSource = .model
     ) -> ExtractionResult<T>? {
         guard policy == .reportViolations, let lastDecoded else { return nil }
         return makeResult(
@@ -283,8 +286,20 @@ public enum Extract {
             blocks: blocks,
             tables: tables,
             mergeConflicts: mergeConflicts,
-            invariantViolations: lastDecoded.issues
+            invariantViolations: lastDecoded.issues,
+            collectionSource: collectionSource
         )
+    }
+
+    /// Splice a geometry-built collection into model JSON when an overlay is set.
+    private static func materializeRaw(
+        _ raw: String,
+        overlay: GeometryLineItems.Overlay?,
+        expectedRoot: ExtractionSchema.SchemaType
+    ) -> String {
+        guard let overlay else { return raw }
+        return (try? GeometryLineItems.splice(raw, overlay: overlay, expectedRoot: expectedRoot))
+            ?? raw
     }
 
     static func extract<T: Extractable>(
@@ -298,6 +313,13 @@ public enum Extract {
             documentBlocks: document.blocks,
             mode: options.tableDetection
         )
+        let preparation = try await GeometryLineItems.prepare(
+            schema: T.extractionSchema,
+            tables: tables,
+            using: session,
+            options: options
+        )
+        let headerSchema = headerSchema(for: type, preparation: preparation)
         let chunks = resolveChunks(document: document, options: options)
         let sourceText = document.fullText
         if chunks.count == 1 {
@@ -308,7 +330,9 @@ public enum Extract {
                 options: options,
                 chunksUsed: 1,
                 sourceText: sourceText,
-                tables: tables
+                tables: tables,
+                headerSchema: headerSchema,
+                preparation: preparation
             )
         }
 
@@ -324,7 +348,8 @@ public enum Extract {
                 as: type,
                 using: session,
                 options: options,
-                tables: tablesByChunk[index]
+                tables: tablesByChunk[index],
+                headerSchema: headerSchema
             )
             partials.append(result.json)
             totalAttempts += result.attempts
@@ -335,9 +360,12 @@ public enum Extract {
             fullDocumentText: sourceText
         )
         let temperature = options.resolvedTemperature(session: session)
-        let schema = T.extractionSchema
+        let schema = headerSchema
         // Schema-gate prompt injection for repair; result.tables stays full-document.
         let promptTables = tablesForPrompt(tables, schema: schema)
+        let overlay = preparation.overlay
+        let collectionSource = preparation.collectionSource
+        let mappingAttempts = preparation.mappingAttempts
         var lastError: Error = ExtractionError.mergeFailed("deterministic merge produced undecodable JSON")
         var lastRaw = merged.json
         var lastDecoded: LastDecodedValue<T>?
@@ -360,6 +388,7 @@ public enum Extract {
                     type: type,
                     document: document,
                     locale: options.locale,
+                    schema: schema,
                     repair: repair,
                     tables: promptTables
                 )
@@ -371,21 +400,22 @@ public enum Extract {
                 )
                 modelRepairAttempts += 1
             }
-            lastRaw = raw
-            switch evaluateAttempt(raw: raw, locale: options.locale) as AttemptEvaluation<T> {
+            lastRaw = materializeRaw(raw, overlay: overlay, expectedRoot: T.extractionSchema.type)
+            switch evaluateAttempt(raw: lastRaw, locale: options.locale) as AttemptEvaluation<T> {
             case .accepted(let value):
                 return makeResult(
                     value: value,
-                    attempts: totalAttempts + modelRepairAttempts,
-                    raw: raw,
+                    attempts: totalAttempts + modelRepairAttempts + mappingAttempts,
+                    raw: lastRaw,
                     chunksUsed: chunks.count,
                     sourceText: sourceText,
                     blocks: document.blocks,
                     tables: tables,
-                    mergeConflicts: merged.conflicts
+                    mergeConflicts: merged.conflicts,
+                    collectionSource: collectionSource
                 )
             case .rejected(let value, let error):
-                lastDecoded = LastDecodedValue(value: value, raw: raw, issues: error.issues)
+                lastDecoded = LastDecodedValue(value: value, raw: lastRaw, issues: error.issues)
                 lastError = error
             case .failed(let error):
                 lastError = error
@@ -395,18 +425,19 @@ public enum Extract {
         if let reported = reportedResultIfAllowed(
             policy: options.invariantPolicy,
             lastDecoded: lastDecoded,
-            attempts: totalAttempts + modelRepairAttempts,
+            attempts: totalAttempts + modelRepairAttempts + mappingAttempts,
             chunksUsed: chunks.count,
             sourceText: sourceText,
             blocks: document.blocks,
             tables: tables,
-            mergeConflicts: merged.conflicts
+            mergeConflicts: merged.conflicts,
+            collectionSource: collectionSource
         ) {
             return reported
         }
 
         throw ExtractionError.validationFailed(
-            attempts: totalAttempts + modelRepairAttempts,
+            attempts: totalAttempts + modelRepairAttempts + mappingAttempts,
             lastError: lastError,
             rawOutput: lastRaw
         )
@@ -417,18 +448,19 @@ public enum Extract {
         as type: T.Type,
         using session: ExtractionSession,
         options: ExtractionOptions,
-        tables: [ExtractedTable]
+        tables: [ExtractedTable],
+        headerSchema: ExtractionSchema
     ) async throws -> (json: String, attempts: Int) {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
         let maxAttempts = max(1, options.maxRetries + 1)
         let temperature = options.resolvedTemperature(session: session)
-        var schema = T.extractionSchema
+        var schema = headerSchema
         if schema.type == .object {
             schema.required = []
         }
         // Schema-gate prompt injection; detection list on the result is unfiltered.
-        let promptTables = tablesForPrompt(tables, schema: T.extractionSchema)
+        let promptTables = tablesForPrompt(tables, schema: headerSchema)
 
         for attempt in 0..<maxAttempts {
             let repair: PromptBuilder.RepairContext?
@@ -484,16 +516,21 @@ public enum Extract {
         options: ExtractionOptions,
         chunksUsed: Int,
         sourceText: String,
-        tables: [ExtractedTable]
+        tables: [ExtractedTable],
+        headerSchema: ExtractionSchema,
+        preparation: GeometryLineItems.Preparation
     ) async throws -> ExtractionResult<T> {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
         var lastDecoded: LastDecodedValue<T>?
         let maxAttempts = max(1, options.maxRetries + 1)
         let temperature = options.resolvedTemperature(session: session)
-        let schema = T.extractionSchema
+        let schema = headerSchema
         // Schema-gate prompt injection; `tables` on the result stays unfiltered.
         let promptTables = tablesForPrompt(tables, schema: schema)
+        let overlay = preparation.overlay
+        let collectionSource = preparation.collectionSource
+        let mappingAttempts = preparation.mappingAttempts
 
         for attempt in 0..<maxAttempts {
             let repair: PromptBuilder.RepairContext?
@@ -509,6 +546,7 @@ public enum Extract {
                 type: type,
                 document: document,
                 locale: options.locale,
+                schema: schema,
                 repair: repair,
                 tables: promptTables
             )
@@ -518,20 +556,21 @@ public enum Extract {
                 temperature: temperature,
                 schema: schema
             )
-            lastRaw = raw
-            switch evaluateAttempt(raw: raw, locale: options.locale) as AttemptEvaluation<T> {
+            lastRaw = materializeRaw(raw, overlay: overlay, expectedRoot: T.extractionSchema.type)
+            switch evaluateAttempt(raw: lastRaw, locale: options.locale) as AttemptEvaluation<T> {
             case .accepted(let value):
                 return makeResult(
                     value: value,
-                    attempts: attempt + 1,
-                    raw: raw,
+                    attempts: attempt + 1 + mappingAttempts,
+                    raw: lastRaw,
                     chunksUsed: chunksUsed,
                     sourceText: sourceText,
                     blocks: document.blocks,
-                    tables: tables
+                    tables: tables,
+                    collectionSource: collectionSource
                 )
             case .rejected(let value, let error):
-                lastDecoded = LastDecodedValue(value: value, raw: raw, issues: error.issues)
+                lastDecoded = LastDecodedValue(value: value, raw: lastRaw, issues: error.issues)
                 lastError = error
             case .failed(let error):
                 lastError = error
@@ -541,17 +580,18 @@ public enum Extract {
         if let reported = reportedResultIfAllowed(
             policy: options.invariantPolicy,
             lastDecoded: lastDecoded,
-            attempts: maxAttempts,
+            attempts: maxAttempts + mappingAttempts,
             chunksUsed: chunksUsed,
             sourceText: sourceText,
             blocks: document.blocks,
-            tables: tables
+            tables: tables,
+            collectionSource: collectionSource
         ) {
             return reported
         }
 
         throw ExtractionError.validationFailed(
-            attempts: maxAttempts,
+            attempts: maxAttempts + mappingAttempts,
             lastError: lastError,
             rawOutput: lastRaw
         )
@@ -588,6 +628,12 @@ public enum Extract {
             return
         }
 
+        let preparation = try await GeometryLineItems.prepare(
+            schema: T.extractionSchema,
+            tables: tables,
+            using: session,
+            options: options
+        )
         try await streamExtractSingle(
             from: chunks[0],
             as: type,
@@ -597,6 +643,8 @@ public enum Extract {
             sourceText: sourceText,
             tables: tables,
             documentBlocks: document.blocks,
+            headerSchema: headerSchema(for: type, preparation: preparation),
+            preparation: preparation,
             continuation: continuation
         )
     }
@@ -610,6 +658,8 @@ public enum Extract {
         sourceText: String,
         tables: [ExtractedTable],
         documentBlocks: [ExtractedDocument.Block],
+        headerSchema: ExtractionSchema,
+        preparation: GeometryLineItems.Preparation,
         continuation: AsyncThrowingStream<ExtractionUpdate<T>, Error>.Continuation
     ) async throws {
         var lastError: Error = ExtractionError.internalError("no attempt")
@@ -617,8 +667,11 @@ public enum Extract {
         var lastDecoded: LastDecodedValue<T>?
         let maxAttempts = max(1, options.maxRetries + 1)
         let temperature = options.resolvedTemperature(session: session)
-        let schema = T.extractionSchema
+        let schema = headerSchema
         let promptTables = tablesForPrompt(tables, schema: schema)
+        let overlay = preparation.overlay
+        let collectionSource = preparation.collectionSource
+        let mappingAttempts = preparation.mappingAttempts
 
         for attempt in 0..<maxAttempts {
             try Task.checkCancellation()
@@ -635,6 +688,7 @@ public enum Extract {
                 type: type,
                 document: document,
                 locale: options.locale,
+                schema: schema,
                 repair: repair,
                 tables: promptTables
             )
@@ -660,22 +714,23 @@ public enum Extract {
                     schema: schema
                 )
             }
-            lastRaw = raw
-            switch evaluateAttempt(raw: raw, locale: options.locale) as AttemptEvaluation<T> {
+            lastRaw = materializeRaw(raw, overlay: overlay, expectedRoot: T.extractionSchema.type)
+            switch evaluateAttempt(raw: lastRaw, locale: options.locale) as AttemptEvaluation<T> {
             case .accepted(let value):
                 let result = makeResult(
                     value: value,
-                    attempts: attempt + 1,
-                    raw: raw,
+                    attempts: attempt + 1 + mappingAttempts,
+                    raw: lastRaw,
                     chunksUsed: chunksUsed,
                     sourceText: sourceText,
                     blocks: documentBlocks,
-                    tables: tables
+                    tables: tables,
+                    collectionSource: collectionSource
                 )
                 continuation.yield(.final(result))
                 return
             case .rejected(let value, let error):
-                lastDecoded = LastDecodedValue(value: value, raw: raw, issues: error.issues)
+                lastDecoded = LastDecodedValue(value: value, raw: lastRaw, issues: error.issues)
                 lastError = error
             case .failed(let error):
                 lastError = error
@@ -685,18 +740,19 @@ public enum Extract {
         if let reported = reportedResultIfAllowed(
             policy: options.invariantPolicy,
             lastDecoded: lastDecoded,
-            attempts: maxAttempts,
+            attempts: maxAttempts + mappingAttempts,
             chunksUsed: chunksUsed,
             sourceText: sourceText,
             blocks: documentBlocks,
-            tables: tables
+            tables: tables,
+            collectionSource: collectionSource
         ) {
             continuation.yield(.final(reported))
             return
         }
 
         throw ExtractionError.validationFailed(
-            attempts: maxAttempts,
+            attempts: maxAttempts + mappingAttempts,
             lastError: lastError,
             rawOutput: lastRaw
         )
@@ -759,6 +815,17 @@ public enum Extract {
             }
             return document.chunks(budget: options.softContextCharacterBudget)
         }
+    }
+
+    /// Schema used for header / scalar generation when geometry owns the collection.
+    private static func headerSchema<T: Extractable>(
+        for _: T.Type,
+        preparation: GeometryLineItems.Preparation
+    ) -> ExtractionSchema {
+        guard let overlay = preparation.overlay else {
+            return T.extractionSchema
+        }
+        return T.extractionSchema.omittingObjectCollection(path: overlay.path)
     }
 
     /// Tables to pass into ``PromptBuilder`` for a given target schema.

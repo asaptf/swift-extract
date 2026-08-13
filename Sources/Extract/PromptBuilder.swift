@@ -11,6 +11,17 @@ enum PromptBuilder {
         Numbers must be JSON numbers (not words).
         """
 
+    /// System prompt for the geometry-path column-mapping call only.
+    ///
+    /// Distinct from ``systemInstructions`` so a mapping response cannot be
+    /// mistaken for an extraction JSON object, and so the default extraction
+    /// prompt bytes stay unchanged.
+    static let columnMappingSystemInstructions = """
+        You map table columns onto a typed schema.
+        Respond with a single JSON object only — no prose, no markdown fences, no comments.
+        Do not transcribe row values. Do not invent columns.
+        """
+
     static func userPrompt<T: Extractable>(
         type: T.Type,
         document: ExtractedDocument,
@@ -103,6 +114,91 @@ enum PromptBuilder {
             parts.append("### Table \(index + 1) (page \(table.pageIndex + 1))\n\n\(md)")
         }
         return parts.joined(separator: "\n\n")
+    }
+
+    /// Prompt for one cheap column-mapping call over candidate tables.
+    ///
+    /// `candidates` is already filtered; table numbers are 1-based in this
+    /// prompt and column indices are 0-based.
+    static func columnMappingPrompt(
+        collectionPath: String,
+        itemSchema: ExtractionSchema,
+        candidates: [ExtractedTable]
+    ) -> String {
+        var parts: [String] = []
+        parts.append(
+            """
+            ## Task
+            Choose the table that holds the `\(collectionPath)` line items and map \
+            its columns onto the element fields. Several tables may be listed; pick \
+            the line-item grid, not a totals or label block.
+            """
+        )
+
+        let fieldLines = itemFieldLines(itemSchema)
+        parts.append(
+            """
+            ## Collection
+            The first array-of-objects in the target schema is `\(collectionPath)`.
+            Each element has these fields:
+            \(fieldLines)
+            """
+        )
+
+        var tableParts: [String] = [
+            """
+            ## Candidate tables
+            Columns are 0-based left to right (column 0 is the leftmost).
+            """
+        ]
+        for (index, table) in candidates.enumerated() {
+            let md = table.mappingPreview()
+            guard !md.isEmpty else { continue }
+            tableParts.append(
+                """
+                ### Table \(index + 1) (page \(table.pageIndex + 1), \
+                \(table.rowCount) rows × \(table.columnCount) columns)
+
+                \(md)
+                """
+            )
+        }
+        parts.append(tableParts.joined(separator: "\n\n"))
+
+        parts.append(
+            """
+            ## Response format
+            {
+              "table": <1-based table number>,
+              "columns": {
+                "<fieldName>": <0-based column index>
+              }
+            }
+
+            Map every required field. Omit optional fields you cannot identify. \
+            Do not name a column index that does not exist on the chosen table.
+            Return the JSON object now.
+            """
+        )
+        return parts.joined(separator: "\n\n")
+    }
+
+    private static func itemFieldLines(_ schema: ExtractionSchema) -> String {
+        let properties = schema.properties ?? [:]
+        let order = schema.propertyOrder ?? Array(properties.keys).sorted()
+        let required = Set(schema.required ?? [])
+        var lines: [String] = []
+        var seen = Set<String>()
+        for key in order + properties.keys.sorted() {
+            guard seen.insert(key).inserted, let child = properties[key] else { continue }
+            let req = required.contains(key) ? "required" : "optional"
+            var line = "- `\(key)` (\(child.type.rawValue), \(req))"
+            if let description = child.description, !description.isEmpty {
+                line += ": \(description)"
+            }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
     }
 
     struct RepairContext: Sendable {

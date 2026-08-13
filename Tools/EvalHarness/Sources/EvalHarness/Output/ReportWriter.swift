@@ -97,11 +97,15 @@ public enum ReportWriter {
                 "hardFailure": r.hardFailure,
                 "tableCount": r.tableCount,
                 "hasLineItemShaped": r.hasLineItemShaped,
+                "collectionSource": r.collectionSource,
                 "ingestionSeconds": round6(r.ingestionSeconds),
                 "extractionSeconds": round6(r.extractionSeconds),
             ]
             if let u = r.unpairedReason { obj["unpairedReason"] = u }
             if let e = r.extractionError { obj["extractionError"] = e }
+            if let reason = r.collectionFallbackReason {
+                obj["collectionFallbackReason"] = reason
+            }
             // Metrics only — no predicted free-text values unless they are already
             // field score strings (truth/pred labels are short identifiers/amounts).
             // Hard-failure fields are synthetic all-miss scores from ground truth.
@@ -138,12 +142,16 @@ public enum ReportWriter {
             "| Failure-inclusive present-in-text accuracy | \(pct(summary.failureInclusivePresentAccuracy)) (\(summary.failureInclusivePresentCorrect)/\(summary.failureInclusivePresentTotal)) |",
             "| Seller accuracy (successful extractions only) | \(summary.sellerAccuracy.map(pct) ?? "n/a") |",
             "| Line-item-shaped share | \(pct(summary.lineItemShapedShare)) (\(summary.filesWithLineItemShaped)/\(max(summary.filesTotal - summary.records.filter { $0.extractionError != nil }.count, 1))) |",
+            "| Geometry collection used | \(summary.geometryUsed) / \(summary.scored) scored |",
+            "| Geometry fell back to model | \(summary.geometryFallback) / \(summary.scored) scored |",
+            "| Collection from model (default or no geometry request) | \(summary.collectionFromModel) / \(summary.scored) scored |",
             "",
             "### How to read the accuracy rows",
             "",
             "- **Overall / present-in-text (successful extractions only)** — historical definition used in published CHANGELOG numbers. Hard-failed files contribute **nothing** to the denominator; a total wipeout can still print `0.0% (0/0)` on this row alone.",
             "- **Failure-inclusive** — every ground-truth-bearing field on a hard-failed file is scored incorrect (the user got an exception, so they got no value). Use this when comparing runs that can fail outright.",
             "- **Hard failures** are paired files (have GT, passed the pairing guard) whose extraction threw. They are never silent.",
+            "- **Geometry collection used / fell back** — of successfully extracted files, how many built line items from table geometry versus requested geometry and then used the model path. A geometry arm that silently used the model on every file would show used 0 and fallback = scored; do not compare that arm as if it measured geometry.",
             "",
             "Present-in-text accuracy restricts to fields whose truth value appears in the extracted text (ZUGFeRD MINIMUM XML-only values are excluded).",
             "",
@@ -244,6 +252,8 @@ public enum ReportWriter {
             "| Present-in-text accuracy (successful only) | \(pct(summary.summaryA.presentAccuracy)) | \(pct(summary.summaryB.presentAccuracy)) | \(fmtSigned(summary.presentDeltaPP)) |",
             "| Failure-inclusive field accuracy | \(pct(summary.summaryA.failureInclusiveAccuracy)) | \(pct(summary.summaryB.failureInclusiveAccuracy)) | \(fmtSigned(summary.failureInclusiveDeltaPP)) |",
             "| Failure-inclusive present-in-text | \(pct(summary.summaryA.failureInclusivePresentAccuracy)) | \(pct(summary.summaryB.failureInclusivePresentAccuracy)) | \(fmtSigned(summary.failureInclusivePresentDeltaPP)) |",
+            "| Geometry collection used | \(summary.summaryA.geometryUsed) | \(summary.summaryB.geometryUsed) | \(summary.summaryB.geometryUsed - summary.summaryA.geometryUsed) files |",
+            "| Geometry fell back to model | \(summary.summaryA.geometryFallback) | \(summary.summaryB.geometryFallback) | \(summary.summaryB.geometryFallback - summary.summaryA.geometryFallback) files |",
             "",
             "Hard failures are paired extractions that threw. Overall / present-in-text rows exclude them (historical definition); failure-inclusive rows count every GT field on a hard-failed file as incorrect.",
             "",
