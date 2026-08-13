@@ -99,7 +99,8 @@ public struct EvalInvoice {
     ///
     /// Also owns the run-level arithmetic gate: ``Extractable/validateInvariants()``
     /// has no options channel, so the harness installs enable/disable here before
-    /// an arm's extractions (see ``RunConfig/arithmeticInvariant``).
+    /// an arm's extractions (see ``RunConfig/arithmeticInvariant`` /
+    /// ``ArithmeticInvariantMode/isEnabled``).
     public enum InvariantProbe: Sendable {
         private static let lock = NSLock()
         nonisolated(unsafe) private static var checks = 0

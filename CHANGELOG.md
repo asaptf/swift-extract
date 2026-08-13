@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in invariant policy (`InvariantPolicy`).** `validateInvariants()` still couples the fields
+  it names — that is the point of the check — but the caller can now say what should happen when
+  retries cannot reconcile them. Default `ExtractionOptions.invariantPolicy` is `.strict`: repair,
+  then throw `ExtractionError.validationFailed`. Same value, same error, same attempt count as
+  0.5.0. Opt into `.reportViolations` and `Extract.detailed` / `Extract.stream` return the last
+  decoded value with the remaining `InvariantIssue`s on `ExtractionResult.invariantViolations`
+  (the existing field-addressable type; not a parallel representation). The repair loop still
+  runs the same number of attempts; only exhaustion changes.
+
+  `Extract.from` still throws under either policy. It returns a bare `T` with nowhere to attach
+  the issues, and handing one back silently would make the documented guarantee — *if you received
+  a value, those invariants held* — a lie. The doc comment, README, and `DECISIONS.md` spell that
+  out.
+
+  Harness: the existing `invariant=` key grows a third value rather than a second switch.
+  `true` / `false` keep their meaning; `invariant=report` turns the check on and uses
+  `.reportViolations`, so an A/B can compare the gate against a scored extract on the same
+  documents.
+
 ## [0.5.0] — 2026-08-10
 
 Streaming partial results, and two changes to how this project reports its own numbers.

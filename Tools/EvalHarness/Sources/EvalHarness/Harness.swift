@@ -30,9 +30,9 @@ public struct HarnessOptions: Sendable {
     public var chunkBudgetB: Int
     /// Optional max files for expensive model runs (chunk-merge / accuracy smoke).
     public var fileLimit: Int?
-    /// Accuracy-mode arithmetic invariant (`EvalInvoice`). Default `true`.
+    /// Accuracy-mode arithmetic invariant (`EvalInvoice`). Default ``ArithmeticInvariantMode/on``.
     /// Compare mode uses each arm's ``RunConfig/arithmeticInvariant`` instead.
-    public var arithmeticInvariant: Bool
+    public var arithmeticInvariant: ArithmeticInvariantMode
 
     public init(
         mode: HarnessMode,
@@ -51,7 +51,7 @@ public struct HarnessOptions: Sendable {
         chunkBudgetA: Int = ChunkMergeRunner.defaultBudgetA,
         chunkBudgetB: Int = ChunkMergeRunner.defaultBudgetB,
         fileLimit: Int? = nil,
-        arithmeticInvariant: Bool = true
+        arithmeticInvariant: ArithmeticInvariantMode = .on
     ) {
         self.mode = mode
         self.corpus = corpus

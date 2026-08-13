@@ -165,6 +165,7 @@ options.maxRetries = 3                          // Instructor-style repair loop
 options.locale = Locale(identifier: "en_US")  // date/number hints
 options.chunkingStrategy = .automatic         // large documents
 options.temperature = 0                       // or nil to use session.temperature
+options.invariantPolicy = .strict             // or .reportViolations to keep a failed check
 
 let detailed = try await Extract.detailed(
     from: .pdf(url),

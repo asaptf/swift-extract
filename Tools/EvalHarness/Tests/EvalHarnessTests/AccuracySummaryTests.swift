@@ -200,3 +200,40 @@ struct AccuracySummaryTests {
         #expect(ABCompareRunner.fieldDelta(aCorrect: true, bCorrect: true) == 0)
     }
 }
+
+@Suite("Arithmetic invariant mode")
+struct ArithmeticInvariantModeTests {
+    @Test("parse accepts historical booleans and the report token")
+    func parseModes() throws {
+        #expect(try ArithmeticInvariantMode.parse("true") == .on)
+        #expect(try ArithmeticInvariantMode.parse("TRUE") == .on)
+        #expect(try ArithmeticInvariantMode.parse("on") == .on)
+        #expect(try ArithmeticInvariantMode.parse("strict") == .on)
+        #expect(try ArithmeticInvariantMode.parse("false") == .off)
+        #expect(try ArithmeticInvariantMode.parse("off") == .off)
+        #expect(try ArithmeticInvariantMode.parse("0") == .off)
+        #expect(try ArithmeticInvariantMode.parse("report") == .report)
+        #expect(try ArithmeticInvariantMode.parse("reportViolations") == .report)
+        #expect(throws: CLIParseError.self) {
+            _ = try ArithmeticInvariantMode.parse("maybe")
+        }
+    }
+
+    @Test("report labels keep true/false and print report")
+    func reportLabels() {
+        let on = RunConfig(name: "a", arithmeticInvariant: .on)
+        let off = RunConfig(name: "b", arithmeticInvariant: .off)
+        let report = RunConfig(name: "c", arithmeticInvariant: .report)
+        #expect(on.reportLabel.contains("invariant=true"))
+        #expect(!on.reportLabel.contains("note=arithmetic-invariant-off"))
+        #expect(off.reportLabel.contains("invariant=false"))
+        #expect(off.reportLabel.contains("note=arithmetic-invariant-off"))
+        #expect(report.reportLabel.contains("invariant=report"))
+        #expect(on.extractionOptions.invariantPolicy == .strict)
+        #expect(off.extractionOptions.invariantPolicy == .strict)
+        #expect(report.extractionOptions.invariantPolicy == .reportViolations)
+        #expect(on.arithmeticInvariant.isEnabled)
+        #expect(!off.arithmeticInvariant.isEnabled)
+        #expect(report.arithmeticInvariant.isEnabled)
+    }
+}

@@ -116,9 +116,16 @@ struct Receipt {
 
 1. The issue is rendered into the same field-shaped repair prompt as `DecodingError`.
 2. The previous JSON is attached; the model retries.
-3. After `maxRetries + 1` total attempts the call throws
+3. After `maxRetries + 1` total attempts the default ``InvariantPolicy/strict`` throws
    `ExtractionError.validationFailed` (same case as decode exhaustion), with the last
    `InvariantValidationError` as `lastError` and the raw model output.
+
+Opt into ``InvariantPolicy/reportViolations`` when a usable extract beats no extract.
+The loop still runs the same number of attempts; when they are exhausted,
+``Extract/detailed`` and ``Extract/stream`` return the last decoded value with the
+remaining ``InvariantIssue``s on ``ExtractionResult/invariantViolations``. Decode
+failures still throw. ``Extract/from`` still throws under either policy — it returns
+a bare `T` with nowhere to attach the issues.
 
 Both the single-chunk path and the chunk-merge path run `validateInvariants()` on the
 fully decoded value (partials from individual chunks are not invariant-checked). On the
@@ -128,7 +135,10 @@ merged tree fails, the usual repair loop still runs against the full document.
 
 **Useful consequence:** if a type declares invariants and you got a value back, those
 invariants held on that value. That is arithmetic, not inference — unlike
-`ExtractionSignals`, which are only grounding evidence.
+`ExtractionSignals`, which are only grounding evidence. That sentence is the default
+path (`Extract.from`, and `detailed` / `stream` under `.strict`). Under
+`.reportViolations`, read `result.invariantViolations` before treating the value as
+arithmetically sound.
 
 See [Examples → Cross-field invariants](Examples.md#9-cross-field-invariants-repair-loop)
 for a full Receipt recipe.
@@ -242,7 +252,9 @@ Extract.stream(from: fileURL, as: T.self, using: session)
 **Streaming rules:** partials surface only completed JSON tokens (no half-numbers /
 truncated strings). Arrays may grow as elements complete. Chunked documents emit
 no `.partial` — only `.final` after merge. Repair retries are not streamed; the
-stream still ends with `.final` or throws. Signals / tables attach to `.final` only.
+stream still ends with `.final` or throws (under ``InvariantPolicy/reportViolations``,
+`.final` is yielded with remaining issues listed). Signals / tables attach to
+`.final` only.
 
 ### Extraction loop
 
@@ -251,7 +263,10 @@ stream still ends with `.final` or throws. Signals / tables attach to `.final` o
 3. Generate (`String` via AnyLanguageModel)
 4. Strip markdown fences → lenient decode
 5. Run ``Extractable/validateInvariants()`` (default no-op)
-6. On decode **or** invariant failure: repair prompt with field-level errors; retry up to `maxRetries`
+6. On decode **or** invariant failure: repair prompt with field-level errors; retry up to `maxRetries`.
+   Exhausted invariants throw under ``InvariantPolicy/strict`` (default); under
+   ``InvariantPolicy/reportViolations`` the last decoded value is returned with
+   ``ExtractionResult/invariantViolations``.
 7. Large docs: chunk extract → **deterministic** JSON-tree merge → decode + invariants
    (repair loop on the full document if the merged tree fails)
 
@@ -291,6 +306,12 @@ public struct ExtractionOptions: Sendable {
     public var softContextCharacterBudget: Int // default 12_000
     public var temperature: Double?            // nil → session.temperature
     public var tableDetection: TableDetectionMode  // .automatic (default) | .off
+    public var invariantPolicy: InvariantPolicy    // .strict (default) | .reportViolations
+}
+
+public enum InvariantPolicy: Sendable {
+    case strict             // repair, then throw validationFailed (today)
+    case reportViolations   // repair, then return value + remaining InvariantIssues
 }
 
 public struct ExtractionResult<T: Extractable>: Sendable {
@@ -300,6 +321,7 @@ public struct ExtractionResult<T: Extractable>: Sendable {
     public let chunksUsed: Int
     public let signals: ExtractionSignals   // grounding evidence (not a score)
     public let tables: [ExtractedTable]     // geometric grids; empty when none / off
+    public let invariantViolations: [InvariantIssue]  // empty unless .reportViolations exhausted
 }
 
 public enum TableDetectionMode: Sendable {
