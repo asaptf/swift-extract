@@ -281,6 +281,38 @@ decoding.** The shape that works is the one strict structured-output modes conve
 on — every key required to appear, absence expressed as `null` — so the model can
 neither skip everything nor be forced to invent a value.
 
+### Stopping the repair loop at a byte-identical fixed point — never fires
+
+Measured that repair retries driven by the arithmetic invariant cost 47% wall clock
+(116s → 171s on 30 Factur-X documents, Qwen2.5-7B-4bit, `temperature = 0`) while
+producing **identical field scores** to the invariant-off run. The inference was that
+the model reaches a fixed point: told the line items do not sum to the total, it
+re-emits the same numbers. So we implemented the provable version — if a repair
+attempt reproduces the previous attempt's raw output verbatim, and temperature is 0,
+the next prompt would be identical and further attempts cannot differ, so stop.
+
+It never fires. On the same 30 documents, **zero files got faster** (169s → 167s, noise).
+
+The inference was wrong, and the mistake is worth naming: identical *field scores* are
+not identical *raw output*. The model varies formatting, ordering, and fields that no
+metric scores, while the scored values land the same. A byte-identical fixed point does
+not occur, so a rule predicated on one is dead code.
+
+Not shipped, because the costs were real where the benefit was not: a source-breaking
+fourth associated value on `ExtractionError.validationFailed` (payload-binding switches
+stop compiling), a changed repair prompt, and tests to maintain.
+
+Comparing *decoded values* instead of raw text would fire — but that is a heuristic, not
+a proof: the prompt genuinely differs between those attempts, so the model could answer
+differently next time. This project spends its effort removing arbitrary decision rules,
+not adding them.
+
+The transferable conclusion: **the repair loop cannot fix arithmetic.** The model
+re-derives the same numbers from the same document because it does not consider them
+wrong. The lever is not stopping more cleverly — it is not asking the model to do
+arithmetic. That is what `InvariantPolicy.reportViolations` provides, and why line items
+reconstructed from detected table geometry are the more promising direction.
+
 ### General caution on this corpus
 
 Several synthetic ZUGFeRD/Factur-X samples disagree with their own visual layer: a
