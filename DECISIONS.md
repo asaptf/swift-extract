@@ -335,3 +335,57 @@ one-shot and the stream still ends with `.final` (or throws). Chunked documents
 emit no `.partial` updates: per-chunk snapshots are incoherent before the
 deterministic merge. Signals, provenance, grounding, and tables attach to
 `.final` only — a partial is a preview, not an evidenced result.
+
+## Invariant policy (`InvariantPolicy`)
+
+0.4.0 documented the cost of `validateInvariants()`: on single-pass runs the
+sum-equals-total check took correct grand totals from 96.0% to 61.3%, with 24
+outright failures where there had been none, because a correct total dies when
+the line items come back messy. The check was doing its job. The missing piece
+was a way for the caller to say "give me the value, tell me what did not add
+up, I will decide."
+
+### What we shipped
+
+`ExtractionOptions.invariantPolicy` is `.strict` by default — repair, then throw
+`ExtractionError.validationFailed`. Byte-identical to today. `.reportViolations`
+keeps the same retry budget and, when it is exhausted, returns the last
+successfully decoded value with the existing `InvariantIssue` list on
+`ExtractionResult.invariantViolations`. Decode failures still throw: there is
+no value to hand back. A later repair attempt that fails to decode does not
+discard an earlier decoded-but-invalid value.
+
+Violations reuse `InvariantIssue` / `InvariantValidationError` rather than a
+new type. Field-level repair (re-asking the model for only the failing fields)
+is out of scope; this change is measurable on its own.
+
+### Why `Extract.from` still throws
+
+`Extract.from` returns a bare `T`. Under `.reportViolations` that value can have
+failed its invariants, and the convenience path has nowhere to say so. Two
+options were acceptable: keep `from` throwing, or rewrite the headline
+guarantee so the opt-in is in the sentence.
+
+We kept `from` throwing. The guarantee in `Extractable.swift` and the README
+then stays true for every value that API can produce, and `detailed` / `stream`
+are the surfaces that can carry `invariantViolations`. Silently weakening the
+promise — returning a broken `T` from `from` — is the option that was not
+acceptable.
+
+`Extract.stream` matches `detailed`: under `.reportViolations` the terminal
+`.final` carries the result with the issues listed; under `.strict` the stream
+throws. A partial is still a preview and is not invariant-checked.
+
+### Harness
+
+The existing `invariant=` key is a three-way, not a second switch:
+
+| Value | Arithmetic check | Library policy |
+| --- | --- | --- |
+| `true` (default) | on | `.strict` |
+| `false` | off | n/a |
+| `report` | on | `.reportViolations` |
+
+An A/B of `invariant=true` vs `invariant=report` measures the gate against a
+scored extract on the same documents. `true`/`false` labels are unchanged so
+historical reports stay comparable.

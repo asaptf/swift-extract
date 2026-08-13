@@ -722,7 +722,8 @@ extension Extractable {
     /// ``validateInvariants()``.
     ///
     /// A successfully returned value has already passed any type-declared
-    /// cross-field invariants — the same guarantee as both extraction paths.
+    /// cross-field invariants — the same guarantee as ``Extract/from`` and as
+    /// ``Extract/detailed`` / ``Extract/stream`` under ``InvariantPolicy/strict``.
     ///
     /// The extraction loop uses ``decodeExtractedWithoutInvariants(from:locale:)``
     /// and then validates once, so a non-idempotent or expensive validator is

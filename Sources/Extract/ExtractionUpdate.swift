@@ -27,5 +27,10 @@ public enum ExtractionUpdate<T: Extractable>: Sendable {
     /// absent means "not yet complete", not "null in the document".
     case partial(T.Partial)
     /// Terminal success value — identical shape to ``Extract/detailed(from:as:using:options:)``.
+    ///
+    /// Under ``InvariantPolicy/reportViolations``, this is still yielded when
+    /// invariants failed after retries (``ExtractionResult/invariantViolations``
+    /// is non-empty). Under the default ``InvariantPolicy/strict``, the stream
+    /// throws instead — same as ``Extract/detailed``.
     case final(ExtractionResult<T>)
 }

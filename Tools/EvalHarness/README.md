@@ -140,7 +140,7 @@ on the documented top-left normalised convention.
 **If a backend cannot initialise, the harness fails loudly.** It never silently
 falls back to mock — mock accuracy numbers look precise and mean nothing.
 
-### Arithmetic invariant (`invariant=true|false`)
+### Arithmetic invariant (`invariant=true|false|report`)
 
 `EvalInvoice.validateInvariants()` checks `sum(lineTotals) + tax ≈ grandTotal`.
 Default **`true`** — historical behaviour; a violated check can end the file in
@@ -148,20 +148,24 @@ Default **`true`** — historical behaviour; a violated check can end the file i
 show `0.0% (0/0)` for a total wipeout, but the report always surfaces hard-failure
 count/share and **failure-inclusive** accuracy (GT fields counted incorrect).
 For low-capacity model measurement, set **`invariant=false`** so the run measures
-the extractor, not the arithmetic gate.
+the extractor, not the arithmetic gate. Set **`invariant=report`** to keep the
+check on and score the last decoded value (library `InvariantPolicy.reportViolations`)
+instead of treating the file as a hard failure.
 
 | Key | Values | Notes |
 | --- | --- | --- |
-| `invariant` | `true` / `false` | Per-arm in compare; also accuracy CLI |
+| `invariant` | `true` / `false` / `report` | Per-arm in compare; also accuracy CLI |
 
-Aliases: `arithmeticInvariant`, `arithmetic-invariant`.
+Aliases: `arithmeticInvariant`, `arithmetic-invariant`. `true`/`on`/`strict` are
+the default (check on, throw). `false`/`off` disable the check. `report` /
+`reportViolations` keep the check and return the value with remaining issues.
 
-- **Accuracy mode**: `--invariant true|false` (alias `--arithmetic-invariant`).
+- **Accuracy mode**: `--invariant true|false|report` (alias `--arithmetic-invariant`).
   Default `true`. The accuracy report `Config:` line includes `invariant=…`
   (and `note=arithmetic-invariant-off` when disabled).
 - **Compare mode**: each `--config-a` / `--config-b` may set `invariant=`
-  independently (invariant-on vs off A/B is expressible). Arm labels in the
-  compare report always show `invariant=true|false`.
+  independently (strict vs report, or on vs off, A/B is expressible). Arm labels
+  in the compare report always show `invariant=true|false|report`.
 
 Per-file progress during accuracy/compare extraction is written to **stderr**
 only (`[arm i/n] path (elapsed s)`). Report files stay metrics-only.
@@ -293,7 +297,7 @@ temperature / retries, soft context budget, **invariant**. Nothing else varies
 silently.
 
 Config spec keys: `backend=`, `model=`, `tables=` / `tableDetection=`,
-`invariant=true|false`.
+`invariant=true|false|report`.
 
 ```bash
 swift run extract-eval --mode compare \
@@ -312,6 +316,17 @@ swift run extract-eval --mode compare \
   --config-a "inv-on:backend=mock,invariant=true" \
   --config-b "inv-off:backend=mock,invariant=false" \
   --output /tmp/eval-invariant-ab
+```
+
+Strict (throw) vs report (keep the last decoded value and list remaining issues)
+on the same documents:
+
+```bash
+swift run extract-eval --mode compare \
+  --corpus "$EXTRACT_EVAL_CORPUS" \
+  --config-a "strict:backend=mlx,model=mlx-community/Qwen2.5-7B-Instruct-4bit,invariant=true" \
+  --config-b "report:backend=mlx,model=mlx-community/Qwen2.5-7B-Instruct-4bit,invariant=report" \
+  --output /tmp/eval-invariant-policy-ab
 ```
 
 ## Output
@@ -347,11 +362,11 @@ extract-eval --mode survey|accuracy|compare|anchors
   --backend mock|mlx         # default mock
   --model <id>
   --table-detection automatic|off
-  --invariant true|false     # accuracy mode; default true (alias: --arithmetic-invariant)
+  --invariant true|false|report  # accuracy mode; default true (alias: --arithmetic-invariant)
   --anchors <file.json>
   --no-anchors
-  --config-a name:backend=…,tableDetection=…,invariant=true|false
-  --config-b name:backend=…,tableDetection=…,invariant=true|false
+  --config-a name:backend=…,tableDetection=…,invariant=true|false|report
+  --config-b name:backend=…,tableDetection=…,invariant=true|false|report
   --output <dir>
   --include-content          # privacy opt-in
 ```

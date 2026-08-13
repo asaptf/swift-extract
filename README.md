@@ -100,8 +100,15 @@ computed rather than inferred. See [MRZ](docs/Examples.md).
 
 **Enforced — `validateInvariants()`.** Declare semantic constraints on your own type in plain Swift
 (line items + tax ≈ total, expiry after issue). A violation is treated like a decode failure: the
-specific complaint goes back to the model, which retries, and the call throws if it cannot be
-satisfied. So if a type declares invariants and you received a value, those invariants held.
+specific complaint goes back to the model, which retries. By default the call throws if it cannot
+be satisfied. So if a type declares invariants and you received a value, those invariants held.
+
+That sentence is the default path (`Extract.from`, and `detailed` / `stream` under
+`InvariantPolicy.strict`). Opt into `InvariantPolicy.reportViolations` when a usable extract beats
+no extract: after the same retries, `detailed` and `stream` return the last decoded value with the
+remaining issues on `result.invariantViolations`. `Extract.from` still throws — it returns a bare
+`T` with nowhere to attach those issues, and handing one back silently would make the sentence a
+lie.
 
 ```swift
 func validateInvariants() throws {
@@ -119,7 +126,8 @@ that got it right 61% of the time, because a correct `total` was thrown out when
 came back messy — the check did its job and refused to reconcile, and a usable extract died with it.
 On chunked runs the same check helps a great deal (totals roughly double), because there the total
 itself is what goes wrong. Couple fields of similar reliability, expect extra attempts, and decide
-deliberately whether a partial answer or no answer serves your caller better.
+deliberately whether a partial answer or no answer serves your caller better — that is what
+`InvariantPolicy.reportViolations` is for.
 
 **Evidence — `result.signals`.** Per field, whether the value was actually found in the source text
 (`verbatim`, `normalized`, `reformatted`, `absent`), plus attempt and chunk counts. On chunked

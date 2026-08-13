@@ -18,12 +18,22 @@ import Foundation
 /// Override ``validateInvariants()`` to declare semantic constraints that cannot be
 /// expressed in the JSON Schema alone (e.g. line items + tax ≈ total). A violation is
 /// treated like a decode failure: the structured issue is fed back to the model and the
-/// extraction retries. When retries are exhausted the call throws
+/// extraction retries. When retries are exhausted the default
+/// ``InvariantPolicy/strict`` throws
 /// ``ExtractionError/validationFailed(attempts:lastError:rawOutput:)``.
 ///
 /// **Useful consequence:** if a type declares invariants and you received a value back,
 /// those invariants held on that value. That is arithmetic, not inference — unlike
 /// ``ExtractionSignals``, which are only grounding evidence.
+///
+/// That sentence is the default path: ``Extract/from`` always, and
+/// ``Extract/detailed`` / ``Extract/stream`` under ``InvariantPolicy/strict``.
+/// Opt into ``InvariantPolicy/reportViolations`` when a usable extract beats no
+/// extract — after the same retries, `detailed` and `stream` return the last
+/// decoded value with remaining ``InvariantIssue``s on
+/// ``ExtractionResult/invariantViolations``. ``Extract/from`` still throws: it
+/// returns a bare `T` with nowhere to attach those issues, and handing one back
+/// silently would make the sentence above a lie.
 public protocol Extractable: Codable, Sendable {
     /// Preview type used by ``Extract/stream(from:as:using:options:)``.
     ///

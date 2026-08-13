@@ -455,7 +455,8 @@ let receipt: Receipt = try await Extract.from(photo, using: session)
 
 **Useful consequence:** if a type declares invariants and you got a value back, those
 invariants held on that value. That is arithmetic, not a confidence score — unlike
-grounding signals, which are only evidence.
+grounding signals, which are only evidence. That sentence is the default path
+(`Extract.from`, and `detailed` / `stream` under `InvariantPolicy.strict`).
 
 When the model still cannot satisfy the invariant after `maxRetries + 1` attempts:
 
@@ -465,6 +466,18 @@ do {
 } catch let ExtractionError.validationFailed(attempts, last, raw) {
     // last is typically InvariantValidationError with path / expected / found
     print(attempts, last, raw)
+}
+```
+
+To keep the last decoded value instead of throwing, opt in. `Extract.from` still
+throws — it returns a bare `T` with nowhere to list the issues:
+
+```swift
+var options = ExtractionOptions()
+options.invariantPolicy = .reportViolations
+let result = try await Extract.detailed(from: source, as: Receipt.self, using: session, options: options)
+if !result.invariantViolations.isEmpty {
+    // value is usable; the listed fields did not add up
 }
 ```
 

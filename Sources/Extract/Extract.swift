@@ -3,22 +3,33 @@ import Foundation
 /// Entry point for typed structured extraction.
 public enum Extract {
     /// Type inferred from context: `let r: Receipt = try await Extract.from(url)`.
+    ///
+    /// Always throws ``ExtractionError/validationFailed`` when invariants fail,
+    /// including under ``InvariantPolicy/reportViolations`` — this method returns
+    /// a bare `T` with nowhere to attach remaining issues. Use ``detailed`` or
+    /// ``stream`` to receive the value with ``ExtractionResult/invariantViolations``.
     public static func from<T: Extractable>(
         _ source: ExtractionSource,
         using session: ExtractionSession = .default,
         options: ExtractionOptions = .init()
     ) async throws -> T {
-        try await detailed(from: source, as: T.self, using: session, options: options).value
+        try valueOrThrow(
+            from: await detailed(from: source, as: T.self, using: session, options: options)
+        )
     }
 
     /// Explicit type form.
+    ///
+    /// Always throws when invariants fail — see ``from(_:using:options:)``.
     public static func from<T: Extractable>(
         _ source: ExtractionSource,
         as type: T.Type,
         using session: ExtractionSession = .default,
         options: ExtractionOptions = .init()
     ) async throws -> T {
-        try await detailed(from: source, as: type, using: session, options: options).value
+        try valueOrThrow(
+            from: await detailed(from: source, as: type, using: session, options: options)
+        )
     }
 
     /// Full result including attempts and raw model output.
@@ -77,8 +88,10 @@ public enum Extract {
     /// Partials stream from the **first** generation attempt only. If decode or
     /// ``Extractable/validateInvariants()`` fails and the loop retries, the retry is
     /// not streamed; the stream still ends with ``ExtractionUpdate/final(_:)`` carrying
-    /// the repaired result (or throws if retries are exhausted — same errors as
-    /// ``detailed(from:as:using:options:)``).
+    /// the repaired result (or, if retries are exhausted, the same outcome as
+    /// ``detailed(from:as:using:options:)``: a throw, or under
+    /// ``InvariantPolicy/reportViolations`` a ``ExtractionUpdate/final(_:)`` whose
+    /// ``ExtractionResult/invariantViolations`` lists what did not add up).
     ///
     /// ## Signals and tables
     ///
@@ -155,6 +168,125 @@ public enum Extract {
 
     // MARK: - Core loop
 
+    /// `from` returns a bare `T`. Re-throw remaining invariant issues so a
+    /// caller cannot hold a value whose invariants failed with no way to know.
+    private static func valueOrThrow<T: Extractable>(
+        from result: ExtractionResult<T>
+    ) throws -> T {
+        if let error = result.invariantValidationError {
+            throw ExtractionError.validationFailed(
+                attempts: result.attempts,
+                lastError: error,
+                rawOutput: result.rawModelOutput
+            )
+        }
+        return result.value
+    }
+
+    /// Outcome of one decode + invariant pass. Decode / exotic invariant
+    /// failures stay `.failed`; a decoded value with field issues is `.rejected`
+    /// so ``InvariantPolicy/reportViolations`` can still return it.
+    private enum AttemptEvaluation<T: Extractable> {
+        case accepted(T)
+        case rejected(T, InvariantValidationError)
+        case failed(Error)
+    }
+
+    private struct LastDecodedValue<T: Extractable> {
+        var value: T
+        var raw: String
+        var issues: [InvariantIssue]
+    }
+
+    private static func evaluateAttempt<T: Extractable>(
+        raw: String,
+        locale: Locale?
+    ) -> AttemptEvaluation<T> {
+        let value: T
+        do {
+            value = try T.decodeExtractedWithoutInvariants(from: raw, locale: locale)
+        } catch {
+            return .failed(error)
+        }
+        do {
+            try value.validateInvariants()
+            return .accepted(value)
+        } catch let error as InvariantValidationError {
+            // An empty issue list is legal on the error type but cannot be
+            // reported field-by-field. Treat it like any other non-addressable
+            // failure so `from` still throws and a report result cannot look
+            // like a clean success.
+            if error.issues.isEmpty {
+                return .failed(error)
+            }
+            return .rejected(value, error)
+        } catch {
+            return .failed(error)
+        }
+    }
+
+    private static func makeResult<T: Extractable>(
+        value: T,
+        attempts: Int,
+        raw: String,
+        chunksUsed: Int,
+        sourceText: String,
+        blocks: [ExtractedDocument.Block],
+        tables: [ExtractedTable],
+        mergeConflicts: [MergeConflict] = [],
+        invariantViolations: [InvariantIssue] = []
+    ) -> ExtractionResult<T> {
+        let grounded = FieldGrounding.compute(
+            value: value,
+            sourceText: sourceText,
+            attempts: attempts,
+            chunksUsed: chunksUsed,
+            blocks: blocks,
+            tables: tables
+        )
+        let signals = ExtractionSignals(
+            attempts: grounded.attempts,
+            chunksUsed: grounded.chunksUsed,
+            fields: grounded.fields,
+            mergeConflicts: mergeConflicts
+        )
+        return ExtractionResult(
+            value: value,
+            attempts: attempts,
+            rawModelOutput: raw,
+            chunksUsed: chunksUsed,
+            signals: signals,
+            tables: tables,
+            invariantViolations: invariantViolations
+        )
+    }
+
+    /// After retries are exhausted: return the last decoded value with its
+    /// issues when the caller opted in; otherwise `nil` so the caller throws.
+    private static func reportedResultIfAllowed<T: Extractable>(
+        policy: InvariantPolicy,
+        lastDecoded: LastDecodedValue<T>?,
+        attempts: Int,
+        chunksUsed: Int,
+        sourceText: String,
+        blocks: [ExtractedDocument.Block],
+        tables: [ExtractedTable],
+        mergeConflicts: [MergeConflict] = []
+    ) -> ExtractionResult<T>? {
+        guard policy == .reportViolations, let lastDecoded else { return nil }
+        return makeResult(
+            value: lastDecoded.value,
+            attempts: attempts,
+            raw: lastDecoded.raw,
+            chunksUsed: chunksUsed,
+            sourceText: sourceText,
+            blocks: blocks,
+            tables: tables,
+            mergeConflicts: mergeConflicts,
+            invariantViolations: lastDecoded.issues
+        )
+    }
+
     static func extract<T: Extractable>(
         from document: ExtractedDocument,
         as type: T.Type,
@@ -208,6 +340,7 @@ public enum Extract {
         let promptTables = tablesForPrompt(tables, schema: schema)
         var lastError: Error = ExtractionError.mergeFailed("deterministic merge produced undecodable JSON")
         var lastRaw = merged.json
+        var lastDecoded: LastDecodedValue<T>?
         var modelRepairAttempts = 0
         let maxRepairAttempts = max(0, options.maxRetries)
 
@@ -239,42 +372,37 @@ public enum Extract {
                 modelRepairAttempts += 1
             }
             lastRaw = raw
-            do {
-                // Decode without invariants, then validate once. Public
-                // `decodeExtracted` also validates; calling it here would run
-                // validators twice (non-idempotent validators can then fail the
-                // second pass and turn a good extraction into validationFailed).
-                let value = try T.decodeExtractedWithoutInvariants(
-                    from: raw,
-                    locale: options.locale
-                )
-                try value.validateInvariants()
-                let attempts = totalAttempts + modelRepairAttempts
-                let grounded = FieldGrounding.compute(
+            switch evaluateAttempt(raw: raw, locale: options.locale) as AttemptEvaluation<T> {
+            case .accepted(let value):
+                return makeResult(
                     value: value,
-                    sourceText: sourceText,
-                    attempts: attempts,
+                    attempts: totalAttempts + modelRepairAttempts,
+                    raw: raw,
                     chunksUsed: chunks.count,
+                    sourceText: sourceText,
                     blocks: document.blocks,
-                    tables: tables
-                )
-                let signals = ExtractionSignals(
-                    attempts: grounded.attempts,
-                    chunksUsed: grounded.chunksUsed,
-                    fields: grounded.fields,
+                    tables: tables,
                     mergeConflicts: merged.conflicts
                 )
-                return ExtractionResult(
-                    value: value,
-                    attempts: attempts,
-                    rawModelOutput: raw,
-                    chunksUsed: chunks.count,
-                    signals: signals,
-                    tables: tables
-                )
-            } catch {
+            case .rejected(let value, let error):
+                lastDecoded = LastDecodedValue(value: value, raw: raw, issues: error.issues)
+                lastError = error
+            case .failed(let error):
                 lastError = error
             }
+        }
+
+        if let reported = reportedResultIfAllowed(
+            policy: options.invariantPolicy,
+            lastDecoded: lastDecoded,
+            attempts: totalAttempts + modelRepairAttempts,
+            chunksUsed: chunks.count,
+            sourceText: sourceText,
+            blocks: document.blocks,
+            tables: tables,
+            mergeConflicts: merged.conflicts
+        ) {
+            return reported
         }
 
         throw ExtractionError.validationFailed(
@@ -360,6 +488,7 @@ public enum Extract {
     ) async throws -> ExtractionResult<T> {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
+        var lastDecoded: LastDecodedValue<T>?
         let maxAttempts = max(1, options.maxRetries + 1)
         let temperature = options.resolvedTemperature(session: session)
         let schema = T.extractionSchema
@@ -390,33 +519,35 @@ public enum Extract {
                 schema: schema
             )
             lastRaw = raw
-            do {
-                // Decode without invariants, then validate once (see merge path).
-                let value = try T.decodeExtractedWithoutInvariants(
-                    from: raw,
-                    locale: options.locale
-                )
-                try value.validateInvariants()
-                let attempts = attempt + 1
-                let signals = FieldGrounding.compute(
+            switch evaluateAttempt(raw: raw, locale: options.locale) as AttemptEvaluation<T> {
+            case .accepted(let value):
+                return makeResult(
                     value: value,
-                    sourceText: sourceText,
-                    attempts: attempts,
+                    attempts: attempt + 1,
+                    raw: raw,
                     chunksUsed: chunksUsed,
+                    sourceText: sourceText,
                     blocks: document.blocks,
                     tables: tables
                 )
-                return ExtractionResult(
-                    value: value,
-                    attempts: attempts,
-                    rawModelOutput: raw,
-                    chunksUsed: chunksUsed,
-                    signals: signals,
-                    tables: tables
-                )
-            } catch {
+            case .rejected(let value, let error):
+                lastDecoded = LastDecodedValue(value: value, raw: raw, issues: error.issues)
+                lastError = error
+            case .failed(let error):
                 lastError = error
             }
+        }
+
+        if let reported = reportedResultIfAllowed(
+            policy: options.invariantPolicy,
+            lastDecoded: lastDecoded,
+            attempts: maxAttempts,
+            chunksUsed: chunksUsed,
+            sourceText: sourceText,
+            blocks: document.blocks,
+            tables: tables
+        ) {
+            return reported
         }
 
         throw ExtractionError.validationFailed(
@@ -483,6 +614,7 @@ public enum Extract {
     ) async throws {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
+        var lastDecoded: LastDecodedValue<T>?
         let maxAttempts = max(1, options.maxRetries + 1)
         let temperature = options.resolvedTemperature(session: session)
         let schema = T.extractionSchema
@@ -529,34 +661,38 @@ public enum Extract {
                 )
             }
             lastRaw = raw
-            do {
-                let value = try T.decodeExtractedWithoutInvariants(
-                    from: raw,
-                    locale: options.locale
-                )
-                try value.validateInvariants()
-                let attempts = attempt + 1
-                let signals = FieldGrounding.compute(
+            switch evaluateAttempt(raw: raw, locale: options.locale) as AttemptEvaluation<T> {
+            case .accepted(let value):
+                let result = makeResult(
                     value: value,
+                    attempts: attempt + 1,
+                    raw: raw,
+                    chunksUsed: chunksUsed,
                     sourceText: sourceText,
-                    attempts: attempts,
-                    chunksUsed: chunksUsed,
                     blocks: documentBlocks,
-                    tables: tables
-                )
-                let result = ExtractionResult(
-                    value: value,
-                    attempts: attempts,
-                    rawModelOutput: raw,
-                    chunksUsed: chunksUsed,
-                    signals: signals,
                     tables: tables
                 )
                 continuation.yield(.final(result))
                 return
-            } catch {
+            case .rejected(let value, let error):
+                lastDecoded = LastDecodedValue(value: value, raw: raw, issues: error.issues)
+                lastError = error
+            case .failed(let error):
                 lastError = error
             }
+        }
+
+        if let reported = reportedResultIfAllowed(
+            policy: options.invariantPolicy,
+            lastDecoded: lastDecoded,
+            attempts: maxAttempts,
+            chunksUsed: chunksUsed,
+            sourceText: sourceText,
+            blocks: documentBlocks,
+            tables: tables
+        ) {
+            continuation.yield(.final(reported))
+            return
         }
 
         throw ExtractionError.validationFailed(

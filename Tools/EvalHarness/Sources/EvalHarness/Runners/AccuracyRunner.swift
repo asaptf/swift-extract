@@ -168,7 +168,7 @@ public enum AccuracyRunner {
         // Install arithmetic gate for this arm; restore previous so A/B arms and
         // later runs do not leak state. validateInvariants has no options channel.
         let previousInvariant = EvalInvoice.InvariantProbe.isArithmeticEnabled
-        EvalInvoice.InvariantProbe.setArithmeticEnabled(config.arithmeticInvariant)
+        EvalInvoice.InvariantProbe.setArithmeticEnabled(config.arithmeticInvariant.isEnabled)
         defer { EvalInvoice.InvariantProbe.setArithmeticEnabled(previousInvariant) }
 
         let session = try config.makeSession()

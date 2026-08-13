@@ -1,6 +1,53 @@
 import Extract
 import Foundation
 
+/// Values of the harness `invariant=` key (one switch, three modes).
+///
+/// `true` / `false` keep their historical meaning so existing reports stay
+/// comparable. `report` turns the arithmetic check on and asks the library for
+/// the last decoded value plus remaining issues instead of `validationFailed`.
+public enum ArithmeticInvariantMode: Sendable, Equatable {
+    /// Arithmetic check disabled (`EvalInvoice.validateInvariants` is a no-op).
+    case off
+    /// Arithmetic check on; library ``InvariantPolicy/strict`` (default).
+    case on
+    /// Arithmetic check on; library ``InvariantPolicy/reportViolations``.
+    case report
+
+    /// Whether `EvalInvoice` should actually run the sum-equals-total check.
+    public var isEnabled: Bool { self != .off }
+
+    /// Library policy installed on ``RunConfig/extractionOptions``.
+    public var invariantPolicy: InvariantPolicy {
+        switch self {
+        case .off, .on: return .strict
+        case .report: return .reportViolations
+        }
+    }
+
+    /// Token printed in report labels (`true` / `false` / `report`).
+    public var reportToken: String {
+        switch self {
+        case .off: return "false"
+        case .on: return "true"
+        case .report: return "report"
+        }
+    }
+
+    public static func parse(_ raw: String) throws -> ArithmeticInvariantMode {
+        switch raw.lowercased() {
+        case "true", "1", "yes", "on", "strict":
+            return .on
+        case "false", "0", "no", "off":
+            return .off
+        case "report", "reportviolations", "report-violations":
+            return .report
+        default:
+            throw CLIParseError.invalidInvariantMode(raw)
+        }
+    }
+}
+
 /// Named extraction configuration for A/B runs.
 ///
 /// Only these fields may differ between arms — nothing else varies silently.
@@ -15,11 +62,16 @@ public struct RunConfig: Sendable, Equatable {
     public var softContextCharacterBudget: Int
     /// Chunking strategy (default `.automatic`).
     public var chunkingStrategy: ChunkingStrategy
-    /// When `true` (default), `EvalInvoice.validateInvariants()` enforces
-    /// sum(lineTotals) + tax ≈ grandTotal. Set `false` so low-capacity models
-    /// still yield scored fields instead of `validationFailed` with empty scores.
+    /// Arithmetic invariant mode (`invariant=`). Default ``ArithmeticInvariantMode/on``.
+    ///
+    /// When ``ArithmeticInvariantMode/on``, `EvalInvoice.validateInvariants()`
+    /// enforces sum(lineTotals) + tax ≈ grandTotal and a violation can end the
+    /// file in `validationFailed`. ``ArithmeticInvariantMode/off`` skips the
+    /// check so low-capacity models still yield scored fields.
+    /// ``ArithmeticInvariantMode/report`` keeps the check on and asks the
+    /// library for the last decoded value plus remaining issues.
     /// Per-arm in compare runs; observable in ``reportLabel``.
-    public var arithmeticInvariant: Bool
+    public var arithmeticInvariant: ArithmeticInvariantMode
 
     public init(
         name: String,
@@ -30,7 +82,7 @@ public struct RunConfig: Sendable, Equatable {
         maxRetries: Int = 1,
         softContextCharacterBudget: Int = 12_000,
         chunkingStrategy: ChunkingStrategy = .automatic,
-        arithmeticInvariant: Bool = true
+        arithmeticInvariant: ArithmeticInvariantMode = .on
     ) {
         self.name = name
         self.backend = backend
@@ -49,7 +101,8 @@ public struct RunConfig: Sendable, Equatable {
             chunkingStrategy: chunkingStrategy,
             softContextCharacterBudget: softContextCharacterBudget,
             temperature: temperature,
-            tableDetection: tableDetection
+            tableDetection: tableDetection,
+            invariantPolicy: arithmeticInvariant.invariantPolicy
         )
     }
 
@@ -60,9 +113,9 @@ public struct RunConfig: Sendable, Equatable {
             "backend=\(backend.rawValue)",
             "tableDetection=\(TableDetectionParsing.label(tableDetection))",
             "model=\(modelId ?? "-")",
-            "invariant=\(arithmeticInvariant)",
+            "invariant=\(arithmeticInvariant.reportToken)",
         ]
-        if !arithmeticInvariant {
+        if arithmeticInvariant == .off {
             parts.append("note=arithmetic-invariant-off")
         }
         return parts.joined(separator: " ")
@@ -104,6 +157,7 @@ public enum CLIParseError: Error, CustomStringConvertible {
     case invalidMode(String)
     case invalidInteger(String, String)
     case invalidBoolean(String, String)
+    case invalidInvariantMode(String)
 
     public var description: String {
         switch self {
@@ -119,6 +173,8 @@ public enum CLIParseError: Error, CustomStringConvertible {
             return "Invalid integer for \(o): '\(v)'"
         case .invalidBoolean(let o, let v):
             return "Invalid boolean for \(o): '\(v)' (use true|false)"
+        case .invalidInvariantMode(let v):
+            return "Invalid invariant mode '\(v)' (use true|false|report)"
         }
     }
 }

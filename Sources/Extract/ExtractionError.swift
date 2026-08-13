@@ -12,6 +12,12 @@ public enum ExtractionError: Error, Sendable, LocalizedError {
     ///
     /// `lastError` is either a ``DecodingError`` or an ``InvariantValidationError`` from
     /// ``Extractable/validateInvariants()``.
+    ///
+    /// Under ``InvariantPolicy/reportViolations``, ``Extract/detailed`` and
+    /// ``Extract/stream`` do not throw this case for an invariant failure that
+    /// still produced a decoded value — they return that value with the issues on
+    /// ``ExtractionResult/invariantViolations``. Decode failures still throw.
+    /// ``Extract/from`` always throws this case when invariants fail.
     case validationFailed(attempts: Int, lastError: Error, rawOutput: String)
     /// Chunk merge could not produce a valid combined object.
     case mergeFailed(String)
