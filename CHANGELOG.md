@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-08-24
+
+Stop throwing away extractions that were good enough.
+
+One opt-in feature and one recorded failure. The feature lets a caller keep a decoded
+value whose cross-field invariants could not be reconciled, with the violations listed
+instead of an exception — measured to recover **9 of 23** documents on the Factur-X
+corpus. The failure is an optimisation proposed on the strength of that measurement,
+implemented, measured, and dropped because it never fires.
+
 ### Added
 
 - **Opt-in invariant policy (`InvariantPolicy`).** `validateInvariants()` still couples the fields
@@ -27,6 +37,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `true` / `false` keep their meaning; `invariant=report` turns the check on and uses
   `.reportViolations`, so an A/B can compare the gate against a scored extract on the same
   documents.
+
+### Documented
+
+- **Stopping the repair loop at a byte-identical fixed point — never fires.** The
+  invariant measurement showed repair retries costing 47% wall clock (116s → 171s on 30
+  Factur-X documents, Qwen2.5-7B-4bit, `temperature = 0`) while producing *identical field
+  scores* to the invariant-off run. The inference: the model reaches a fixed point, since
+  told the line items do not sum to the total it re-emits the same numbers. So the provable
+  version was implemented — if an attempt reproduces the previous attempt's raw output at
+  temperature 0, the next prompt would be identical and a deterministic model cannot
+  differ.
+
+  On the same 30 documents, **zero files got faster** (169s → 167s, noise). The inference
+  was wrong: identical *field scores* are not identical *raw output*. The model varies
+  formatting, ordering, and fields no metric scores while the scored values land the same,
+  so a byte-identical fixed point never occurs.
+
+  Not shipped. The costs were real where the benefit was not — a source-breaking fourth
+  associated value on `ExtractionError.validationFailed`, a changed repair prompt, and
+  eleven tests. Comparing *decoded values* instead would fire, but that is a heuristic
+  rather than a proof, and this project spends its effort removing arbitrary decision rules.
+  The transferable conclusion is that **the repair loop cannot fix arithmetic** — the lever
+  is not stopping more cleverly, it is not asking the model to do arithmetic at all. Details
+  in `DECISIONS.md`.
 
 ## [0.5.0] — 2026-08-10
 
