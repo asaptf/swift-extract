@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-08
+
+Runtime schemas, and PDF ingest that does not trust a bad text layer.
+
+The typed `@Extractable` path is unchanged. Callers that only have a field list at
+run time pass an `ExtractionSchema` and get `JSONValue`. PDF pages with a garbled
+OCR text layer are re-read at 300 DPI with `/Rotate` and scan orientation applied.
+OCR and PDF rasterisation sit behind protocols so a later Linux build can inject
+other engines without forking the loop.
+
 ### Added
 
 - **Dynamic schema API.** `Extract.from` / `detailed` / `stream` now accept a runtime
