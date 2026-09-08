@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and auto-orients scans (0°/90° axis score, 180° from character x-order).
   Configure via `ExtractionOptions.textLayerPolicy`, `rasterDPI`, `autoOrient`.
 
+- **Ingest engine protocols.** `OCRRecognizing` (default `VisionOCR`) and
+  `PDFRendering` (default `PDFKitRenderer`) are public. Pass them through
+  `IngestContext` on `Extract.from` / `detailed` / `stream` / `inspect`. No new
+  engines yet — this is the injection seam for tests and later Tesseract/PDFium.
+
 ## [0.6.0] — 2026-08-24
 
 Stop throwing away extractions that were good enough.

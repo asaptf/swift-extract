@@ -4,13 +4,13 @@ import PDFKit
 
 enum PDFAdapter {
     static func ingest(url: URL, options: ExtractionOptions = .init()) throws -> ExtractedDocument {
-        try ingest(url: url, options: options, ocr: VisionOCR())
+        try ingest(url: url, options: options, engines: IngestContext())
     }
 
     static func ingest(
         url: URL,
         options: ExtractionOptions,
-        ocr: OCRRecognizing
+        engines: IngestContext
     ) throws -> ExtractedDocument {
         guard let document = PDFDocument(url: url) else {
             throw ExtractionError.unreadableSource(
@@ -25,19 +25,24 @@ enum PDFAdapter {
             document: document,
             sourceDescription: url.lastPathComponent,
             options: options,
-            ocr: ocr
+            engines: engines
         )
     }
 
     static func ingest(document: PDFDocument, sourceDescription: String) throws -> ExtractedDocument {
-        try ingest(document: document, sourceDescription: sourceDescription, options: .init(), ocr: VisionOCR())
+        try ingest(
+            document: document,
+            sourceDescription: sourceDescription,
+            options: .init(),
+            engines: IngestContext()
+        )
     }
 
     static func ingest(
         document: PDFDocument,
         sourceDescription: String,
         options: ExtractionOptions,
-        ocr: OCRRecognizing
+        engines: IngestContext
     ) throws -> ExtractedDocument {
         let pageCount = document.pageCount
         guard pageCount > 0 else {
@@ -61,7 +66,8 @@ enum PDFAdapter {
                     page,
                     pageIndex: index,
                     options: options,
-                    ocr: ocr
+                    ocr: engines.ocr,
+                    renderer: engines.renderer
                 )
                 if !ocrBlocks.isEmpty {
                     blocks.append(contentsOf: ocrBlocks)

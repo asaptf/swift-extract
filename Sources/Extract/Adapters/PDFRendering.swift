@@ -2,17 +2,29 @@ import CoreGraphics
 import Foundation
 import PDFKit
 
-/// Rasterise a PDF page honouring `/Rotate`, at a configurable DPI.
-enum PDFPageRenderer {
-    static let minimumDPI: Double = 72
-    static let maximumDPI: Double = 400
-    static let defaultDPI: Double = 300
+/// Pluggable PDF rasteriser. Default is ``PDFKitRenderer``; Linux can inject PDFium.
+public protocol PDFRendering: Sendable {
+    /// Oriented bitmap for `page`. `extraRotation` is clockwise degrees on top of `/Rotate`.
+    func render(page: PDFPage, dpi: Double, extraRotation: Int) -> CGImage?
+}
 
-    static func clampedDPI(_ dpi: Double) -> Double {
+/// PDFKit rasteriser: honours `/Rotate`, configurable DPI (clamped `72...400`).
+public struct PDFKitRenderer: PDFRendering {
+    public static let minimumDPI: Double = 72
+    public static let maximumDPI: Double = 400
+    public static let defaultDPI: Double = 300
+
+    public init() {}
+
+    public func render(page: PDFPage, dpi: Double, extraRotation: Int) -> CGImage? {
+        Self.render(page: page, dpi: dpi, extraRotation: extraRotation)
+    }
+
+    public static func clampedDPI(_ dpi: Double) -> Double {
         min(maximumDPI, max(minimumDPI, dpi))
     }
 
-    static func normalizedRotation(_ degrees: Int) -> Int {
+    public static func normalizedRotation(_ degrees: Int) -> Int {
         var rotation = degrees % 360
         if rotation < 0 {
             rotation += 360
@@ -20,7 +32,7 @@ enum PDFPageRenderer {
         return rotation
     }
 
-    static func displaySize(mediaSize: CGSize, rotation: Int) -> CGSize {
+    public static func displaySize(mediaSize: CGSize, rotation: Int) -> CGSize {
         switch normalizedRotation(rotation) {
         case 90, 270:
             return CGSize(width: mediaSize.height, height: mediaSize.width)
@@ -31,7 +43,7 @@ enum PDFPageRenderer {
 
     /// Renders `page` into an oriented bitmap. `extraRotation` is applied on top of
     /// ``PDFPage/rotation`` (`/Rotate`).
-    static func render(page: PDFPage, dpi: Double, extraRotation: Int = 0) -> CGImage? {
+    public static func render(page: PDFPage, dpi: Double, extraRotation: Int = 0) -> CGImage? {
         let media = page.bounds(for: .mediaBox)
         guard media.width > 0, media.height > 0 else {
             return nil

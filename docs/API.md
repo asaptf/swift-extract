@@ -196,10 +196,35 @@ try ExtractionSource.image(nsImage)
 | --- | --- |
 | `text` | Normalize → blocks |
 | `pdf` | Per page: keep a high-quality text layer, else rasterise (honour `/Rotate`, default 300 DPI) + Vision OCR. Auto-orient scans (0/90 axis, 180° from character order). |
-| `image` | Vision `VNRecognizeTextRequest` (reading order by geometry) |
+| `image` | ``OCRRecognizing`` (default ``VisionOCR`` / `VNRecognizeTextRequest`) |
 | `fileURL` | Route by UTType / extension |
 
 Internal model: `ExtractedDocument` (ordered blocks + optional page / bounding box).
+
+### Ingest engines
+
+```swift
+public protocol OCRRecognizing: Sendable {
+    func recognize(image: CGImage) throws -> [RecognizedLine]
+}
+public struct VisionOCR: OCRRecognizing { public init() }
+
+public protocol PDFRendering: Sendable {
+    func render(page: PDFPage, dpi: Double, extraRotation: Int) -> CGImage?
+}
+public struct PDFKitRenderer: PDFRendering { public init() }
+
+public struct IngestContext: Sendable {
+    public var ocr: any OCRRecognizing        // default VisionOCR()
+    public var renderer: any PDFRendering     // default PDFKitRenderer()
+}
+
+Extract.from(source, using: session, ingest: IngestContext(ocr: myOCR))
+Extract.inspect(url, ingest: IngestContext(renderer: myRenderer))
+```
+
+`RecognizedLine` is in oriented page space (top-left, y down, normalised `0...1`).
+`characterXs` feeds 180° disambiguation; leave it empty if the engine has no per-glyph boxes.
 
 ---
 

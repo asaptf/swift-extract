@@ -11,10 +11,17 @@ public enum Extract {
     public static func from<T: Extractable>(
         _ source: ExtractionSource,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> T {
         try valueOrThrow(
-            from: await detailed(from: source, as: T.self, using: session, options: options)
+            from: await detailed(
+                from: source,
+                as: T.self,
+                using: session,
+                options: options,
+                ingest: ingest
+            )
         )
     }
 
@@ -25,10 +32,17 @@ public enum Extract {
         _ source: ExtractionSource,
         as type: T.Type,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> T {
         try valueOrThrow(
-            from: await detailed(from: source, as: type, using: session, options: options)
+            from: await detailed(
+                from: source,
+                as: type,
+                using: session,
+                options: options,
+                ingest: ingest
+            )
         )
     }
 
@@ -36,18 +50,26 @@ public enum Extract {
     public static func detailed<T: Extractable>(
         from source: ExtractionSource,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> ExtractionResult<T> {
-        try await detailed(from: source, as: T.self, using: session, options: options)
+        try await detailed(
+            from: source,
+            as: T.self,
+            using: session,
+            options: options,
+            ingest: ingest
+        )
     }
 
     public static func detailed<T: Extractable>(
         from source: ExtractionSource,
         as type: T.Type,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> ExtractionResult<T> {
-        let document = try await SourceIngester.ingest(source, options: options)
+        let document = try await SourceIngester.ingest(source, options: options, engines: ingest)
         guard !document.isEmpty else {
             throw ExtractionError.emptyDocument
         }
@@ -101,12 +123,13 @@ public enum Extract {
         from source: ExtractionSource,
         as type: T.Type = T.self,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let document = try await SourceIngester.ingest(source, options: options)
+                    let document = try await SourceIngester.ingest(source, options: options, engines: ingest)
                     guard !document.isEmpty else {
                         throw ExtractionError.emptyDocument
                     }
@@ -133,9 +156,10 @@ public enum Extract {
         from text: String,
         as type: T.Type = T.self,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error> {
-        stream(from: .text(text), as: type, using: session, options: options)
+        stream(from: .text(text), as: type, using: session, options: options, ingest: ingest)
     }
 
     /// Convenience overload for file URLs (UTType sniff, same as ``from(_:using:options:)``).
@@ -143,9 +167,10 @@ public enum Extract {
         from url: URL,
         as type: T.Type = T.self,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) -> AsyncThrowingStream<ExtractionUpdate<T>, Error> {
-        stream(from: .fileURL(url), as: type, using: session, options: options)
+        stream(from: .fileURL(url), as: type, using: session, options: options, ingest: ingest)
     }
 
     // MARK: - Convenience overloads (README hero lines)
@@ -153,17 +178,19 @@ public enum Extract {
     public static func from<T: Extractable>(
         _ text: String,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> T {
-        try await from(.text(text), using: session, options: options)
+        try await from(.text(text), using: session, options: options, ingest: ingest)
     }
 
     public static func from<T: Extractable>(
         _ url: URL,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> T {
-        try await from(.fileURL(url), using: session, options: options)
+        try await from(.fileURL(url), using: session, options: options, ingest: ingest)
     }
 
     // MARK: - Core loop

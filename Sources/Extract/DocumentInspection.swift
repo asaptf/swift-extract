@@ -48,9 +48,10 @@ extension Extract {
     public static func inspect(
         _ source: ExtractionSource,
         tableDetection: TableDetectionMode = .automatic,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> DocumentInspection {
-        let document = try await SourceIngester.ingest(source, options: options)
+        let document = try await SourceIngester.ingest(source, options: options, engines: ingest)
         guard !document.isEmpty else {
             throw ExtractionError.emptyDocument
         }
@@ -74,8 +75,9 @@ extension Extract {
     public static func inspect(
         _ url: URL,
         tableDetection: TableDetectionMode = .automatic,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> DocumentInspection {
-        try await inspect(.fileURL(url), tableDetection: tableDetection, options: options)
+        try await inspect(.fileURL(url), tableDetection: tableDetection, options: options, ingest: ingest)
     }
 }

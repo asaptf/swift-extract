@@ -13,10 +13,11 @@ extension Extract {
         schema: ExtractionSchema,
         invariants: (@Sendable (JSONValue) throws -> Void)? = nil,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> JSONValue {
         try await withDynamicSchema(schema, invariants: invariants) {
-            try await from(source, as: JSONValue.self, using: session, options: options)
+            try await from(source, as: JSONValue.self, using: session, options: options, ingest: ingest)
         }
     }
 
@@ -25,9 +26,17 @@ extension Extract {
         schema: ExtractionSchema,
         invariants: (@Sendable (JSONValue) throws -> Void)? = nil,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> JSONValue {
-        try await from(.text(text), schema: schema, invariants: invariants, using: session, options: options)
+        try await from(
+            .text(text),
+            schema: schema,
+            invariants: invariants,
+            using: session,
+            options: options,
+            ingest: ingest
+        )
     }
 
     public static func from(
@@ -35,9 +44,17 @@ extension Extract {
         schema: ExtractionSchema,
         invariants: (@Sendable (JSONValue) throws -> Void)? = nil,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> JSONValue {
-        try await from(.fileURL(url), schema: schema, invariants: invariants, using: session, options: options)
+        try await from(
+            .fileURL(url),
+            schema: schema,
+            invariants: invariants,
+            using: session,
+            options: options,
+            ingest: ingest
+        )
     }
 
     /// Full result for a runtime schema, including grounding against that schema.
@@ -46,10 +63,17 @@ extension Extract {
         schema: ExtractionSchema,
         invariants: (@Sendable (JSONValue) throws -> Void)? = nil,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) async throws -> ExtractionResult<JSONValue> {
         try await withDynamicSchema(schema, invariants: invariants) {
-            try await detailed(from: source, as: JSONValue.self, using: session, options: options)
+            try await detailed(
+                from: source,
+                as: JSONValue.self,
+                using: session,
+                options: options,
+                ingest: ingest
+            )
         }
     }
 
@@ -58,13 +82,20 @@ extension Extract {
         schema: ExtractionSchema,
         invariants: (@Sendable (JSONValue) throws -> Void)? = nil,
         using session: ExtractionSession = .default,
-        options: ExtractionOptions = .init()
+        options: ExtractionOptions = .init(),
+        ingest: IngestContext = IngestContext()
     ) -> AsyncThrowingStream<ExtractionUpdate<JSONValue>, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try await withDynamicSchema(schema, invariants: invariants) {
-                        let inner = stream(from: source, as: JSONValue.self, using: session, options: options)
+                        let inner = stream(
+                            from: source,
+                            as: JSONValue.self,
+                            using: session,
+                            options: options,
+                            ingest: ingest
+                        )
                         for try await update in inner {
                             continuation.yield(update)
                         }

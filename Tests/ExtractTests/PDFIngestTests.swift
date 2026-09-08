@@ -13,12 +13,12 @@ struct PDFIngestTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let document = try #require(PDFDocument(url: url))
         let page = try #require(document.page(at: 0))
-        let upright = try #require(PDFPageRenderer.render(page: page, dpi: 72, extraRotation: 0))
+        let upright = try #require(PDFKitRenderer.render(page: page, dpi: 72, extraRotation: 0))
         #expect(upright.width == 200)
         #expect(upright.height == 400)
 
         page.rotation = 90
-        let rotated = try #require(PDFPageRenderer.render(page: page, dpi: 72, extraRotation: 0))
+        let rotated = try #require(PDFKitRenderer.render(page: page, dpi: 72, extraRotation: 0))
         #expect(rotated.width == 400)
         #expect(rotated.height == 200)
         #expect(page.rotation == 90)
@@ -30,16 +30,16 @@ struct PDFIngestTests {
         defer { try? FileManager.default.removeItem(at: url) }
         let document = try #require(PDFDocument(url: url))
         let page = try #require(document.page(at: 0))
-        let at300 = try #require(PDFPageRenderer.render(page: page, dpi: 300))
+        let at300 = try #require(PDFKitRenderer.render(page: page, dpi: 300))
         #expect(at300.width == 300)
         #expect(at300.height == 600)
 
-        let clamped = try #require(PDFPageRenderer.render(page: page, dpi: 800))
+        let clamped = try #require(PDFKitRenderer.render(page: page, dpi: 800))
         #expect(clamped.width == 400)
         #expect(clamped.height == 800)
 
-        #expect(PDFPageRenderer.clampedDPI(12) == 72)
-        #expect(PDFPageRenderer.clampedDPI(300) == 300)
+        #expect(PDFKitRenderer.clampedDPI(12) == 72)
+        #expect(PDFKitRenderer.clampedDPI(300) == 300)
     }
 
     @Test("extraRotation is applied on top of /Rotate")
@@ -49,7 +49,7 @@ struct PDFIngestTests {
         let document = try #require(PDFDocument(url: url))
         let page = try #require(document.page(at: 0))
         page.rotation = 90
-        let image = try #require(PDFPageRenderer.render(page: page, dpi: 72, extraRotation: 90))
+        let image = try #require(PDFKitRenderer.render(page: page, dpi: 72, extraRotation: 90))
         #expect(image.width == 200)
         #expect(image.height == 400)
         #expect(page.rotation == 90)
@@ -72,7 +72,7 @@ struct PDFIngestTests {
         _ = try PDFAdapter.ingest(
             url: url,
             options: ExtractionOptions(textLayerPolicy: .never, autoOrient: false),
-            ocr: ocr
+            engines: IngestContext(ocr: ocr)
         )
         let size = try #require(ocr.sizes.last)
         #expect(size.width == 2550)
@@ -96,7 +96,7 @@ struct PDFIngestTests {
         let document = try PDFAdapter.ingest(
             url: url,
             options: ExtractionOptions(autoOrient: false),
-            ocr: ocr
+            engines: IngestContext(ocr: ocr)
         )
         #expect(document.usedOCRFallback)
         #expect(document.fullText.contains("FRESH OCR"))
@@ -118,7 +118,7 @@ struct PDFIngestTests {
         let document = try PDFAdapter.ingest(
             url: url,
             options: .init(),
-            ocr: ocr
+            engines: IngestContext(ocr: ocr)
         )
         #expect(!document.usedOCRFallback)
         #expect(ocr.recognizeCount == 0)
@@ -135,7 +135,7 @@ struct PDFIngestTests {
             rasterDPI: 72,
             autoOrient: true
         )
-        _ = try PDFAdapter.ingest(url: url, options: options, ocr: ocr)
+        _ = try PDFAdapter.ingest(url: url, options: options, engines: IngestContext(ocr: ocr))
         let last = try #require(ocr.sizes.last)
         #expect(last.width > last.height)
     }
