@@ -47,7 +47,7 @@ public enum Extract {
         using session: ExtractionSession = .default,
         options: ExtractionOptions = .init()
     ) async throws -> ExtractionResult<T> {
-        let document = try await SourceIngester.ingest(source)
+        let document = try await SourceIngester.ingest(source, options: options)
         guard !document.isEmpty else {
             throw ExtractionError.emptyDocument
         }
@@ -106,7 +106,7 @@ public enum Extract {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let document = try await SourceIngester.ingest(source)
+                    let document = try await SourceIngester.ingest(source, options: options)
                     guard !document.isEmpty else {
                         throw ExtractionError.emptyDocument
                     }

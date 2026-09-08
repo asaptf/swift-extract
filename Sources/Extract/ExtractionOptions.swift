@@ -28,6 +28,16 @@ public enum InvariantPolicy: Sendable, Equatable {
     case reportViolations
 }
 
+/// When to trust a PDF text layer versus rasterising the page and running OCR.
+public enum TextLayerPolicy: String, Sendable, Equatable {
+    /// Per page: missing or low-quality text layer → OCR (default).
+    case auto
+    /// Always use the PDF text layer; never OCR.
+    case always
+    /// Always OCR; ignore the text layer.
+    case never
+}
+
 /// Options controlling a single extraction run.
 public struct ExtractionOptions: Sendable, Equatable {
     /// Instructor-style repair retries after the first attempt (default 2 → up to 3 total tries).
@@ -52,6 +62,16 @@ public struct ExtractionOptions: Sendable, Equatable {
     public var tableDetection: TableDetectionMode
     /// How exhausted invariant retries are reported (default ``InvariantPolicy/strict``).
     public var invariantPolicy: InvariantPolicy
+    /// When a PDF page's text layer is used versus OCR (default ``TextLayerPolicy/auto``).
+    public var textLayerPolicy: TextLayerPolicy
+    /// Minimum ``TextLayerQuality/score(_:)`` to keep a text layer under ``TextLayerPolicy/auto``.
+    /// Default `0.85`.
+    public var textLayerQualityThreshold: Double
+    /// Rasterisation resolution for OCR, in DPI. Default `300`, clamped to `72...400`.
+    public var rasterDPI: Double
+    /// Detect scan orientation (0/90 axis, then 180° via character order) when OCR runs.
+    /// `/Rotate` is always honoured. Default `true`.
+    public var autoOrient: Bool
 
     public init(
         maxRetries: Int = 2,
@@ -60,7 +80,11 @@ public struct ExtractionOptions: Sendable, Equatable {
         softContextCharacterBudget: Int = 12_000,
         temperature: Double? = nil,
         tableDetection: TableDetectionMode = .automatic,
-        invariantPolicy: InvariantPolicy = .strict
+        invariantPolicy: InvariantPolicy = .strict,
+        textLayerPolicy: TextLayerPolicy = .auto,
+        textLayerQualityThreshold: Double = 0.85,
+        rasterDPI: Double = 300,
+        autoOrient: Bool = true
     ) {
         self.maxRetries = maxRetries
         self.chunkingStrategy = chunkingStrategy
@@ -69,6 +93,10 @@ public struct ExtractionOptions: Sendable, Equatable {
         self.temperature = temperature
         self.tableDetection = tableDetection
         self.invariantPolicy = invariantPolicy
+        self.textLayerPolicy = textLayerPolicy
+        self.textLayerQualityThreshold = textLayerQualityThreshold
+        self.rasterDPI = rasterDPI
+        self.autoOrient = autoOrient
     }
 
     /// Resolve sampling temperature: explicit options override, else session.

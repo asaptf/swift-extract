@@ -195,7 +195,7 @@ try ExtractionSource.image(nsImage)
 | Source | Pipeline |
 | --- | --- |
 | `text` | Normalize → blocks |
-| `pdf` | PDFKit text layer; if **&lt; 10 chars/page avg** → rasterize + Vision OCR |
+| `pdf` | Per page: keep a high-quality text layer, else rasterise (honour `/Rotate`, default 300 DPI) + Vision OCR. Auto-orient scans (0/90 axis, 180° from character order). |
 | `image` | Vision `VNRecognizeTextRequest` (reading order by geometry) |
 | `fileURL` | Route by UTType / extension |
 
@@ -284,8 +284,6 @@ lenient coercion (string `"1,234.50"` → number, `"yes"` → bool, `"March 5, 2
 `yyyy-MM-dd`). Prefer these overloads over `as: JSONValue.self` — the schema is
 task-local for the call.
 
-```
-
 **Streaming rules:** partials surface only completed JSON tokens (no half-numbers /
 truncated strings). Arrays may grow as elements complete. Chunked documents emit
 no `.partial` — only `.final` after merge. Repair retries are not streamed; the
@@ -344,6 +342,10 @@ public struct ExtractionOptions: Sendable {
     public var temperature: Double?            // nil → session.temperature
     public var tableDetection: TableDetectionMode  // .automatic (default) | .off
     public var invariantPolicy: InvariantPolicy    // .strict (default) | .reportViolations
+    public var textLayerPolicy: TextLayerPolicy    // .auto (default) | .always | .never
+    public var textLayerQualityThreshold: Double   // default 0.85
+    public var rasterDPI: Double                   // default 300, clamped 72...400
+    public var autoOrient: Bool                    // default true
 }
 
 public enum InvariantPolicy: Sendable {

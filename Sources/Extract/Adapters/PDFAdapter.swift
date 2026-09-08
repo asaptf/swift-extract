@@ -3,10 +3,15 @@ import Foundation
 import PDFKit
 
 enum PDFAdapter {
-    /// Average extractable characters per page below this threshold triggers OCR fallback.
-    static let ocrFallbackThreshold = 10
+    static func ingest(url: URL, options: ExtractionOptions = .init()) throws -> ExtractedDocument {
+        try ingest(url: url, options: options, ocr: VisionOCR())
+    }
 
-    static func ingest(url: URL) throws -> ExtractedDocument {
+    static func ingest(
+        url: URL,
+        options: ExtractionOptions,
+        ocr: OCRRecognizing
+    ) throws -> ExtractedDocument {
         guard let document = PDFDocument(url: url) else {
             throw ExtractionError.unreadableSource(
                 underlying: NSError(
@@ -16,10 +21,24 @@ enum PDFAdapter {
                 )
             )
         }
-        return try ingest(document: document, sourceDescription: url.lastPathComponent)
+        return try ingest(
+            document: document,
+            sourceDescription: url.lastPathComponent,
+            options: options,
+            ocr: ocr
+        )
     }
 
     static func ingest(document: PDFDocument, sourceDescription: String) throws -> ExtractedDocument {
+        try ingest(document: document, sourceDescription: sourceDescription, options: .init(), ocr: VisionOCR())
+    }
+
+    static func ingest(
+        document: PDFDocument,
+        sourceDescription: String,
+        options: ExtractionOptions,
+        ocr: OCRRecognizing
+    ) throws -> ExtractedDocument {
         let pageCount = document.pageCount
         guard pageCount > 0 else {
             throw ExtractionError.emptyDocument
@@ -31,17 +50,31 @@ enum PDFAdapter {
         for index in 0..<pageCount {
             guard let page = document.page(at: index) else { continue }
             let raw = page.string ?? ""
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let useOCR = TextLayerQuality.shouldOCR(
+                text: raw,
+                policy: options.textLayerPolicy,
+                threshold: options.textLayerQualityThreshold
+            )
 
-            if trimmed.count < ocrFallbackThreshold {
-                let ocrBlocks = try OCRAdapter.ocrPDFPage(page, pageIndex: index)
+            if useOCR {
+                let ocrBlocks = try OCRAdapter.ocrPDFPage(
+                    page,
+                    pageIndex: index,
+                    options: options,
+                    ocr: ocr
+                )
                 if !ocrBlocks.isEmpty {
                     blocks.append(contentsOf: ocrBlocks)
                     usedOCRFallback = true
                     continue
                 }
+                if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    continue
+                }
+                // OCR produced nothing; fall back to the text layer if any.
             }
 
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
                 continue
             }
@@ -54,7 +87,6 @@ enum PDFAdapter {
             if !wordBlocks.isEmpty {
                 blocks.append(contentsOf: wordBlocks)
             } else {
-                // Geometry failed; keep plain text so fullText stays usable.
                 blocks.append(
                     ExtractedDocument.Block(text: trimmed, pageIndex: index, boundingBox: nil)
                 )

@@ -14,7 +14,7 @@ public struct DocumentInspection: Sendable, Equatable {
     public let characterCount: Int
     /// Linearised document text (same text the extraction prompt would use).
     public let fullText: String
-    /// True when a PDF used Vision OCR because the text layer was too sparse.
+    /// True when a PDF used OCR because the text layer was missing or below the quality gate.
     public let usedOCRFallback: Bool
     /// Blocks that carried a bounding box (inputs to geometric table detection).
     public let positionedBlockCount: Int
@@ -47,9 +47,10 @@ extension Extract {
     /// - Returns: Text metrics, OCR-fallback flag, and detected tables.
     public static func inspect(
         _ source: ExtractionSource,
-        tableDetection: TableDetectionMode = .automatic
+        tableDetection: TableDetectionMode = .automatic,
+        options: ExtractionOptions = .init()
     ) async throws -> DocumentInspection {
-        let document = try await SourceIngester.ingest(source)
+        let document = try await SourceIngester.ingest(source, options: options)
         guard !document.isEmpty else {
             throw ExtractionError.emptyDocument
         }
@@ -72,8 +73,9 @@ extension Extract {
     /// Convenience: inspect a file URL (type sniff via ``ExtractionSource/fileURL``).
     public static func inspect(
         _ url: URL,
-        tableDetection: TableDetectionMode = .automatic
+        tableDetection: TableDetectionMode = .automatic,
+        options: ExtractionOptions = .init()
     ) async throws -> DocumentInspection {
-        try await inspect(.fileURL(url), tableDetection: tableDetection)
+        try await inspect(.fileURL(url), tableDetection: tableDetection, options: options)
     }
 }

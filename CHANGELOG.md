@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is the dynamic equivalent of `validateInvariants()`. Grounding still runs against
   that schema. Existing typed `Extract.from<T: Extractable>` is unchanged.
 
+- **PDF ingest quality and orientation.** Per-page text-layer quality gate
+  (`TextLayerPolicy.auto`, threshold 0.85) OCRs garbled layers instead of trusting
+  character count. Rasterisation honours `/Rotate`, defaults to 300 DPI (cap 400),
+  and auto-orients scans (0°/90° axis score, 180° from character x-order).
+  Configure via `ExtractionOptions.textLayerPolicy`, `rasterDPI`, `autoOrient`.
+
 ## [0.6.0] — 2026-08-24
 
 Stop throwing away extractions that were good enough.

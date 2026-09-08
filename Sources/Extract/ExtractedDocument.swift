@@ -16,7 +16,7 @@ struct ExtractedDocument: Sendable, Equatable {
 
     var blocks: [Block]
     var sourceDescription: String
-    /// True when a PDF used Vision OCR because the text layer was too sparse.
+    /// True when a PDF used OCR because the text layer was missing or below the quality gate.
     var usedOCRFallback: Bool
 
     var isEmpty: Bool {

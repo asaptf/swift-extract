@@ -5,75 +5,65 @@ import Vision
 
 enum OCRAdapter {
     static func recognize(cgImage: CGImage, pageIndex: Int? = nil) throws -> [ExtractedDocument.Block] {
-        try recognizeWithVision(cgImage: cgImage, pageIndex: pageIndex)
+        try blocks(from: VisionOCR().recognize(image: cgImage), pageIndex: pageIndex)
     }
 
-    static func ocrPDFDocument(_ document: PDFDocument) throws -> [ExtractedDocument.Block] {
-        var blocks: [ExtractedDocument.Block] = []
-        for index in 0..<document.pageCount {
-            guard let page = document.page(at: index) else { continue }
-            blocks.append(contentsOf: try ocrPDFPage(page, pageIndex: index))
+    static func ocrPDFPage(
+        _ page: PDFPage,
+        pageIndex: Int,
+        options: ExtractionOptions,
+        ocr: OCRRecognizing
+    ) throws -> [ExtractedDocument.Block] {
+        let extraRotation: Int
+        if options.autoOrient {
+            extraRotation = detectOrientation(page: page, ocr: ocr)
+        } else {
+            extraRotation = 0
         }
-        return blocks
-    }
-
-    static func ocrPDFPage(_ page: PDFPage, pageIndex: Int) throws -> [ExtractedDocument.Block] {
-        let bounds = page.bounds(for: .mediaBox)
-        let scale: CGFloat = 2.0
-        let width = Int(bounds.width * scale)
-        let height = Int(bounds.height * scale)
-        guard width > 0, height > 0 else { return [] }
-
         guard
-            let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            let image = PDFPageRenderer.render(
+                page: page,
+                dpi: options.rasterDPI,
+                extraRotation: extraRotation
             )
         else {
             return []
         }
-
-        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        context.saveGState()
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: scale, y: -scale)
-        page.draw(with: .mediaBox, to: context)
-        context.restoreGState()
-
-        guard let image = context.makeImage() else { return [] }
-        return try recognize(cgImage: image, pageIndex: pageIndex)
+        return try blocks(from: ocr.recognize(image: image), pageIndex: pageIndex)
     }
 
-    private static func recognizeWithVision(
-        cgImage: CGImage, pageIndex: Int?
-    ) throws
-        -> [ExtractedDocument.Block]
-    {
-        // Prefer newer document recognition when available (iOS 18 / macOS 15+ API surface).
-        if #available(iOS 18.0, macOS 15.0, *) {
-            if let blocks = try? recognizeDocuments(cgImage: cgImage, pageIndex: pageIndex), !blocks.isEmpty {
-                return blocks
-            }
+    static func detectOrientation(page: PDFPage, ocr: OCRRecognizing) -> Int {
+        let probeDPI = PDFPageRenderer.minimumDPI
+        guard
+            let upright = PDFPageRenderer.render(page: page, dpi: probeDPI, extraRotation: 0),
+            let rotated = PDFPageRenderer.render(page: page, dpi: probeDPI, extraRotation: 90)
+        else {
+            return 0
         }
-        return try recognizeTextRequest(cgImage: cgImage, pageIndex: pageIndex)
+        let lines0 = (try? ocr.recognize(image: upright)) ?? []
+        let lines90 = (try? ocr.recognize(image: rotated)) ?? []
+        return OrientationDetector.choose(upright: lines0, rotated90: lines90)
     }
 
-    private static func recognizeTextRequest(
-        cgImage: CGImage, pageIndex: Int?
-    ) throws
-        -> [ExtractedDocument.Block]
-    {
+    static func blocks(from lines: [RecognizedLine], pageIndex: Int?) -> [ExtractedDocument.Block] {
+        lines.compactMap { line in
+            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return ExtractedDocument.Block(
+                text: text,
+                pageIndex: pageIndex,
+                boundingBox: line.boundingBox
+            )
+        }
+    }
+}
+
+struct VisionOCR: OCRRecognizing {
+    func recognize(image: CGImage) throws -> [RecognizedLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        // Vision returns observations roughly in reading order when sorted by geometry.
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
             try handler.perform([request])
         } catch {
@@ -83,7 +73,6 @@ enum OCRAdapter {
         let sorted = observations.sorted { a, b in
             let aBox = a.boundingBox
             let bBox = b.boundingBox
-            // Top-to-bottom, then left-to-right (Vision uses bottom-left origin).
             if abs(aBox.minY - bBox.minY) > 0.02 {
                 return aBox.minY > bBox.minY
             }
@@ -94,32 +83,33 @@ enum OCRAdapter {
             let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             let box = observation.boundingBox
-            // Vision uses bottom-left normalised coords; convert to the library
-            // convention (top-left origin, y down, normalised) — see FieldProvenance.
             let topLeft = CGRect(
                 x: box.minX,
                 y: 1.0 - box.maxY,
                 width: box.width,
                 height: box.height
             )
-            return ExtractedDocument.Block(text: text, pageIndex: pageIndex, boundingBox: topLeft)
+            return RecognizedLine(
+                text: text,
+                boundingBox: topLeft,
+                confidence: Double(candidate.confidence),
+                characterXs: characterXs(in: candidate, text: candidate.string)
+            )
         }
     }
 
-    @available(iOS 18.0, macOS 15.0, *)
-    private static func recognizeDocuments(
-        cgImage: CGImage, pageIndex: Int?
-    ) throws
-        -> [ExtractedDocument.Block]
-    {
-        // RecognizeDocumentsRequest is available in newer Vision; fall back if the
-        // symbol is missing at compile time on older SDKs via text request only.
-        // On SDKs that ship it, this path improves structure slightly.
-        #if swift(>=6.0)
-            // Use the classic path as the reliable baseline; document request is best-effort.
-            return try recognizeTextRequest(cgImage: cgImage, pageIndex: pageIndex)
-        #else
-            return try recognizeTextRequest(cgImage: cgImage, pageIndex: pageIndex)
-        #endif
+    private func characterXs(in candidate: VNRecognizedText, text: String) -> [CGFloat] {
+        var xs: [CGFloat] = []
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(after: index)
+            if let box = try? candidate.boundingBox(for: index..<next) {
+                xs.append(box.boundingBox.midX)
+            } else if let last = xs.last {
+                xs.append(last)
+            }
+            index = next
+        }
+        return xs
     }
 }

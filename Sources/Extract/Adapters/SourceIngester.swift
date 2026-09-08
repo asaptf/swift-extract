@@ -2,18 +2,21 @@ import Foundation
 import UniformTypeIdentifiers
 
 enum SourceIngester {
-    static func ingest(_ source: ExtractionSource) async throws -> ExtractedDocument {
+    static func ingest(
+        _ source: ExtractionSource,
+        options: ExtractionOptions = .init()
+    ) async throws -> ExtractedDocument {
         do {
             switch source {
             case .text(let string):
                 return TextAdapter.ingest(string)
             case .pdf(let url):
-                return try PDFAdapter.ingest(url: url)
+                return try PDFAdapter.ingest(url: url, options: options)
             case .image(let cgImage):
                 let blocks = try OCRAdapter.recognize(cgImage: cgImage)
                 return ExtractedDocument(blocks: blocks, sourceDescription: "image")
             case .fileURL(let url):
-                return try ingestFile(url: url)
+                return try ingestFile(url: url, options: options)
             }
         } catch let error as ExtractionError {
             throw error
@@ -22,13 +25,13 @@ enum SourceIngester {
         }
     }
 
-    private static func ingestFile(url: URL) throws -> ExtractedDocument {
+    private static func ingestFile(url: URL, options: ExtractionOptions) throws -> ExtractedDocument {
         let values = try url.resourceValues(forKeys: [.contentTypeKey])
         let type = values.contentType ?? UTType(filenameExtension: url.pathExtension)
 
         if let type {
             if type.conforms(to: .pdf) {
-                return try PDFAdapter.ingest(url: url)
+                return try PDFAdapter.ingest(url: url, options: options)
             }
             if type.conforms(to: .image) {
                 let data = try Data(contentsOf: url)
@@ -47,7 +50,7 @@ enum SourceIngester {
         // Extension fallback
         switch url.pathExtension.lowercased() {
         case "pdf":
-            return try PDFAdapter.ingest(url: url)
+            return try PDFAdapter.ingest(url: url, options: options)
         case "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff", "gif", "bmp", "webp":
             let data = try Data(contentsOf: url)
             guard let cgImage = CGImageLoader.cgImage(from: data) else {
