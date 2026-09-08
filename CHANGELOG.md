@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dynamic schema API.** `Extract.from` / `detailed` / `stream` now accept a runtime
+  `ExtractionSchema` and return `JSONValue` instead of a compile-time `@Extractable`
+  type. Lenient coercion (decimals, dates, bools, enums) walks the schema with the
+  same parsers the macro uses. Optional `invariants: (JSONValue) throws -> Void`
+  is the dynamic equivalent of `validateInvariants()`. Grounding still runs against
+  that schema. Existing typed `Extract.from<T: Extractable>` is unchanged.
+
 ## [0.6.0] — 2026-08-24
 
 Stop throwing away extractions that were good enough.

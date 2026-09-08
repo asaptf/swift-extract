@@ -249,6 +249,43 @@ Extract.stream(from: "raw text", as: T.self, using: session)
 Extract.stream(from: fileURL, as: T.self, using: session)
 ```
 
+### Runtime schema (`JSONValue`)
+
+When the field list is not a Swift type (a document type edited at run time), pass
+an `ExtractionSchema` and receive `JSONValue`:
+
+```swift
+let schema = ExtractionSchema.object(
+    properties: [
+        "vendor": .string(),
+        "total": .number(),
+        "items": .array(items: .object(
+            properties: ["sku": .string(), "qty": .integer()],
+            required: ["sku"]
+        )),
+    ],
+    required: ["vendor", "total"]
+)
+
+let value: JSONValue = try await Extract.from(
+    source,
+    schema: schema,
+    invariants: { tree in
+        // optional; throw InvariantValidationError to repair
+    },
+    using: session
+)
+value["vendor"]?.stringValue
+value["items"]?[0]?["qty"]?.numberValue
+```
+
+`detailed` and `stream` have the same `schema:` overloads. Decode uses schema-driven
+lenient coercion (string `"1,234.50"` → number, `"yes"` → bool, `"March 5, 2020"` →
+`yyyy-MM-dd`). Prefer these overloads over `as: JSONValue.self` — the schema is
+task-local for the call.
+
+```
+
 **Streaming rules:** partials surface only completed JSON tokens (no half-numbers /
 truncated strings). Arrays may grow as elements complete. Chunked documents emit
 no `.partial` — only `.final` after merge. Repair retries are not streamed; the

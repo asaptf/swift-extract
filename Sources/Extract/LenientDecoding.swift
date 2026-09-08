@@ -739,7 +739,7 @@ extension Extractable {
     /// Used by the extraction loop so invariants are checked exactly once
     /// (and can still trigger retries). Direct callers should prefer
     /// ``decodeExtracted(from:locale:)``, which enforces invariants.
-    static func decodeExtractedWithoutInvariants(
+    public static func decodeExtractedWithoutInvariants(
         from jsonText: String,
         locale: Locale? = nil
     ) throws -> Self {

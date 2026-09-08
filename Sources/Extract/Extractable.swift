@@ -53,6 +53,13 @@ public protocol Extractable: Codable, Sendable {
     /// implementation is a no-op, so existing types and macro-generated conformances
     /// compile without changes.
     func validateInvariants() throws
+
+    /// Lenient decode from raw model JSON, without running ``validateInvariants()``.
+    ///
+    /// The extraction loop calls this, then validates once. The default uses
+    /// ``JSONDecoder`` and the type's ``Codable`` conformance (macro-generated
+    /// types). ``JSONValue`` overrides it with schema-driven coercion.
+    static func decodeExtractedWithoutInvariants(from jsonText: String, locale: Locale?) throws -> Self
 }
 
 extension Extractable {
