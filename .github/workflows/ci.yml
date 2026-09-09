@@ -27,11 +27,7 @@ jobs:
           OPENAI_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           EXTRACT_USE_MOCK: "1"
-        # --no-parallel: the ingest path calls Vision synchronously from async code, so
-        # parallel tests block the Swift cooperative pool and Vision's own capacity-limited
-        # queue, wedging the run forever (this job was cancelled on timeout for 0.7.0).
-        # Serial is 5s. Remove once OCR/raster work runs off the cooperative pool.
-        run: swift test --no-parallel
+        run: swift test
 
       - name: CLI extract (mock, twice)
         env:
