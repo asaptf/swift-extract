@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-09-09
+
+### Fixed
+
+- **`positionedBlockCount` is derived, not stored.** The 0.8.0 initializer took the count as
+  its own parameter while `positionedBlocks` defaulted to empty, for source compatibility —
+  so a caller using the old signature produced a nonzero count beside an empty array,
+  contradicting the equality documented one line above it. The count is now computed from
+  the blocks and the initializer requires them, making the invariant structural instead of
+  promised. Source-breaking only for code constructing `DocumentInspection` by hand.
+  Reported by external review.
+
+
 ## [0.8.0] — 2026-09-09
 
 Provenance you can check without running an extraction — and it now exists for images.
