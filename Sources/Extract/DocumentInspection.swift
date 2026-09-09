@@ -1,4 +1,27 @@
+import CoreGraphics
 import Foundation
+
+/// A text run from ingestion that carried a position: what was read, and where.
+///
+/// Same geometry convention as ``FieldProvenance`` — ``pageIndex`` is 0-based (images are
+/// page `0`) and ``boundingBox`` is normalised with a **top-left** origin, x right / y
+/// down. Both are non-optional here: ``DocumentInspection/positionedBlocks`` contains only
+/// blocks that actually carry a position, which is what makes them useful for checking or
+/// drawing provenance without a model call.
+public struct PositionedBlock: Sendable, Equatable {
+    /// Text as the PDF text layer or OCR read it.
+    public let text: String
+    /// Zero-based page index; images are page `0`.
+    public let pageIndex: Int
+    /// Normalised top-left bounding box.
+    public let boundingBox: CGRect
+
+    public init(text: String, pageIndex: Int, boundingBox: CGRect) {
+        self.text = text
+        self.pageIndex = pageIndex
+        self.boundingBox = boundingBox
+    }
+}
 
 /// Result of inspecting a document **without** calling a language model.
 ///
@@ -17,7 +40,17 @@ public struct DocumentInspection: Sendable, Equatable {
     /// True when a PDF used OCR because the text layer was missing or below the quality gate.
     public let usedOCRFallback: Bool
     /// Blocks that carried a bounding box (inputs to geometric table detection).
+    ///
+    /// Equal to `positionedBlocks.count`; kept as a distinct field so metrics-only callers
+    /// (the harness writes reports from real invoices) can report a count without holding
+    /// document text.
     public let positionedBlockCount: Int
+    /// The positioned blocks themselves — text, page, and box.
+    ///
+    /// `inspect` previously published only the count, so a caller could not verify or draw
+    /// per-page provenance without running an extraction. Carries document text, so the
+    /// same privacy note as ``fullText`` applies.
+    public let positionedBlocks: [PositionedBlock]
     /// Tables from ``TableDetector`` under the requested mode.
     public let tables: [ExtractedTable]
 
@@ -27,6 +60,7 @@ public struct DocumentInspection: Sendable, Equatable {
         fullText: String,
         usedOCRFallback: Bool,
         positionedBlockCount: Int,
+        positionedBlocks: [PositionedBlock] = [],
         tables: [ExtractedTable]
     ) {
         self.sourceDescription = sourceDescription
@@ -34,6 +68,7 @@ public struct DocumentInspection: Sendable, Equatable {
         self.fullText = fullText
         self.usedOCRFallback = usedOCRFallback
         self.positionedBlockCount = positionedBlockCount
+        self.positionedBlocks = positionedBlocks
         self.tables = tables
     }
 }
@@ -60,13 +95,17 @@ extension Extract {
             mode: tableDetection
         )
         let text = document.fullText
-        let positioned = document.blocks.filter { $0.boundingBox != nil }.count
+        let positionedBlocks = document.blocks.compactMap { block -> PositionedBlock? in
+            guard let box = block.boundingBox, let page = block.pageIndex else { return nil }
+            return PositionedBlock(text: block.text, pageIndex: page, boundingBox: box)
+        }
         return DocumentInspection(
             sourceDescription: document.sourceDescription,
             characterCount: text.count,
             fullText: text,
             usedOCRFallback: document.usedOCRFallback,
-            positionedBlockCount: positioned,
+            positionedBlockCount: positionedBlocks.count,
+            positionedBlocks: positionedBlocks,
             tables: tables
         )
     }
