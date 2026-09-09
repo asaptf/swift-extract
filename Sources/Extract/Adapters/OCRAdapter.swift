@@ -3,9 +3,13 @@ import Foundation
 import PDFKit
 
 enum OCRAdapter {
+    /// - Parameter pageIndex: Defaults to `0` — a standalone image *is* page zero, which is
+    ///   the convention ``FieldProvenance`` documents. It used to default to `nil`, and
+    ///   because provenance requires both a box and a page, every image source silently had
+    ///   no provenance at all despite Vision returning boxes for it.
     static func recognize(
         cgImage: CGImage,
-        pageIndex: Int? = nil,
+        pageIndex: Int = 0,
         ocr: OCRRecognizing = VisionOCR()
     ) throws -> [ExtractedDocument.Block] {
         try blocks(from: ocr.recognize(image: cgImage), pageIndex: pageIndex)
