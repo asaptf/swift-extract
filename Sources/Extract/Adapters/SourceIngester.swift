@@ -7,6 +7,18 @@ enum SourceIngester {
         options: ExtractionOptions = .init(),
         engines: IngestContext = IngestContext()
     ) async throws -> ExtractedDocument {
+        // Rasterisation and OCR block the calling thread. Run them off the cooperative
+        // pool so concurrent extractions cannot starve it — see ``IngestExecutor``.
+        try await IngestExecutor.run {
+            try ingestSynchronously(source, options: options, engines: engines)
+        }
+    }
+
+    private static func ingestSynchronously(
+        _ source: ExtractionSource,
+        options: ExtractionOptions,
+        engines: IngestContext
+    ) throws -> ExtractedDocument {
         do {
             switch source {
             case .text(let string):
