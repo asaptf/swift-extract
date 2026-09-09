@@ -75,9 +75,12 @@ public struct PDFKitRenderer: PDFRendering {
         page.rotation = totalRotation
         defer { page.rotation = savedRotation }
 
+        // No flip: a CGBitmapContext and PDF user space are both y-up, and `makeImage()`
+        // already accounts for row order. Translating by the height and negating y (the
+        // recipe for UIKit/AppKit flipped contexts) mirrors the page — Vision then reads
+        // the glyphs backwards. Covered by `RasterOrientationTests`.
         context.saveGState()
-        context.translateBy(x: 0, y: CGFloat(pixelHeight))
-        context.scaleBy(x: scale, y: -scale)
+        context.scaleBy(x: scale, y: scale)
         page.draw(with: .mediaBox, to: context)
         context.restoreGState()
 
