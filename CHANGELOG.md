@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-09-09
+
+Rasterised PDF pages were mirrored. **Do not use 0.7.0 (or 0.6.0) for scanned PDFs.**
+
+### Fixed
+
+- **Rasterised PDF pages are no longer mirrored.** `PDFKitRenderer` translated by the
+  bitmap height and negated y before drawing — the recipe for a flipped UIKit/AppKit
+  context. A `CGBitmapContext` and PDF user space are both y-up and `makeImage()` already
+  accounts for row order, so the transform mirrored every page. Vision read a probe page
+  back as `380Я9 ИОІТАТИЗІЯО` instead of `ORIENTATION PROBE`.
+
+  The same flip was in `OCRAdapter` as far back as 0.6.0, so **every OCR'd PDF page has
+  been mirrored for two releases** — anything that fell back to OCR (scans, garbled text
+  layers) returned garbage. The typed and dynamic extraction paths on documents with a
+  clean text layer were unaffected.
+
+  The suite stayed green because the mixed-PDF fixture mirrored its own scanned page
+  before writing it into the PDF: two mirrors cancelled, so the assertion passed on
+  synthetic input while real scans came out backwards. The fixture now draws straight, and
+  `RasterOrientationTests` renders a known line, runs Vision, and asserts both the text and
+  where the line sits — the three existing rasteriser tests assert only pixel dimensions,
+  which a flip and a mirror both preserve.
+
+### Known issues
+
+- **Concurrent extraction of PDFs that need OCR can deadlock.** The ingest path calls
+  Vision synchronously from `async` code, so parallel callers block Swift's cooperative
+  thread pool and exhaust Vision's capacity-limited internal queue. CI now runs
+  `swift test --no-parallel` for the same reason; the 0.7.0 Build & Test job was cancelled
+  on timeout, which is why that release went out unverified. Locks on PDFKit and on Vision
+  do not help — the blocking is on the cooperative pool itself. The fix needs an async seam
+  for the non-`Sendable` `CGImage` / `PDFPage` work and is the next piece of work.
+
+
 ## [0.7.0] — 2026-09-08
 
 Runtime schemas, and PDF ingest that does not trust a bad text layer.
