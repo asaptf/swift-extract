@@ -241,11 +241,10 @@ struct AdapterTests {
         pdfContext.beginPage(mediaBox: &mediaBox)
         pdfContext.setFillColor(CGColor(gray: 1, alpha: 1))
         pdfContext.fill(pageRect)
-        pdfContext.saveGState()
-        pdfContext.translateBy(x: pageRect.width, y: 0)
-        pdfContext.scaleBy(x: -1, y: 1)
+        // Drawn straight, the way a real scan sits on the page. This used to be mirrored
+        // (translate + scaleBy(x: -1)) which cancelled a mirroring rasteriser and kept this
+        // test green while every real scan came out backwards. See RasterOrientationTests.
         pdfContext.draw(scannedImage, in: CGRect(x: 40, y: 300, width: 532, height: 133))
-        pdfContext.restoreGState()
         pdfContext.endPage()
         pdfContext.closePDF()
 
