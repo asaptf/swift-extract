@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-09-09
+
+Provenance you can check without running an extraction — and it now exists for images.
+
+### Added
+
+- **`inspect` publishes the positioned blocks, not just a count.** `DocumentInspection`
+  gains `positionedBlocks: [PositionedBlock]` — text, page, and a normalised top-left box,
+  the same convention as `FieldProvenance`. Previously only `positionedBlockCount` was
+  exposed, so a caller could not verify or draw per-page provenance without paying for a
+  full extraction. `PositionedBlock` is a narrow new type rather than making the internal
+  `ExtractedDocument` public; `positionedBlockCount` stays as its own field so metrics-only
+  callers can report a count without holding document text.
+
+### Fixed
+
+- **Image sources had no provenance at all.** `OCRAdapter.recognize` defaulted `pageIndex`
+  to `nil` and the ingest path never passed one for images, so image blocks carried boxes
+  but no page. Provenance requires both, so every image source silently produced none
+  despite Vision returning geometry — `fixtures/receipt.png` yields **18 positioned blocks
+  and reported no provenance**. Images are page `0`, which is the convention
+  `FieldProvenance` already documents.
+
+  The existing OCR coordinate test passed `pageIndex: 0` explicitly, exercising a parameter
+  production never used, which is why this stayed invisible. The new tests go through the
+  public `Extract.inspect` / `Extract.detailed` and were verified to fail against the old
+  default.
+
+  Worth knowing when writing grounding tests: linearisation injects page separators into
+  `fullText`, so a value matched against those is grounded `verbatim` with nowhere to point.
+  Draw expected values from `positionedBlocks`, not from `fullText`.
+
+
 ## [0.7.2] — 2026-09-09
 
 Fixes the deadlock listed as a known issue in 0.7.1.
