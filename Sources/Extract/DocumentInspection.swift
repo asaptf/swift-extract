@@ -39,12 +39,12 @@ public struct DocumentInspection: Sendable, Equatable {
     public let fullText: String
     /// True when a PDF used OCR because the text layer was missing or below the quality gate.
     public let usedOCRFallback: Bool
-    /// Blocks that carried a bounding box (inputs to geometric table detection).
+    /// Number of blocks that carried a position (inputs to geometric table detection).
     ///
-    /// Equal to `positionedBlocks.count`; kept as a distinct field so metrics-only callers
-    /// (the harness writes reports from real invoices) can report a count without holding
-    /// document text.
-    public let positionedBlockCount: Int
+    /// Derived from ``positionedBlocks`` rather than stored, so the two can never disagree.
+    /// Kept as a named member because metrics-only callers report the count without holding
+    /// document text — the harness writes reports from real invoices.
+    public var positionedBlockCount: Int { positionedBlocks.count }
     /// The positioned blocks themselves — text, page, and box.
     ///
     /// `inspect` previously published only the count, so a caller could not verify or draw
@@ -59,15 +59,13 @@ public struct DocumentInspection: Sendable, Equatable {
         characterCount: Int,
         fullText: String,
         usedOCRFallback: Bool,
-        positionedBlockCount: Int,
-        positionedBlocks: [PositionedBlock] = [],
+        positionedBlocks: [PositionedBlock],
         tables: [ExtractedTable]
     ) {
         self.sourceDescription = sourceDescription
         self.characterCount = characterCount
         self.fullText = fullText
         self.usedOCRFallback = usedOCRFallback
-        self.positionedBlockCount = positionedBlockCount
         self.positionedBlocks = positionedBlocks
         self.tables = tables
     }
@@ -104,7 +102,6 @@ extension Extract {
             characterCount: text.count,
             fullText: text,
             usedOCRFallback: document.usedOCRFallback,
-            positionedBlockCount: positionedBlocks.count,
             positionedBlocks: positionedBlocks,
             tables: tables
         )
