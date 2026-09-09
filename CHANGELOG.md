@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-09-09
+
+Fixes the deadlock listed as a known issue in 0.7.1.
+
+### Fixed
+
+- **Concurrent extraction no longer deadlocks.** PDFKit rasterisation and
+  `VNImageRequestHandler.perform` are synchronous, and the ingest path called them straight
+  from `async` code. That parks a cooperative-pool thread for the whole operation, and the
+  pool holds about one thread per core — so enough concurrent extractions park every thread
+  and nothing is left to run the work that would release them. Measured on a 15-core
+  machine: 8 concurrent OCR extractions finished in 1.3s, **16 never finished**.
+
+  Moving the blocking section off the pool exposed a second limit: Vision dispatches
+  synchronously onto its own capacity-limited queue (`VNControlledCapacityTasksQueue`) and
+  oversubscribing that wedges just as hard — **64 hung**. Blocking ingest work now runs on
+  a queue bounded to `activeProcessorCount`. That bound is not a tuning constant picked by
+  feel: OCR is CPU-bound, so more in-flight requests than cores buys no throughput and only
+  starves Vision. 64 and 256 concurrent extractions now finish in 7.8s and 30.7s.
+
+  A lock around PDFKit and a lock around Vision were both tried first and neither helps —
+  they move where the blocking happens without taking it off the cooperative pool.
+
+  CI is back to plain `swift test`: the `--no-parallel` stopgap from 0.7.1 is no longer
+  needed, and the full suite now completes in parallel in 6.9s. Before this it hung forever,
+  which is why the 0.7.0 Build & Test job was cancelled on timeout and that release went out
+  unverified.
+
+
 ## [0.7.1] — 2026-09-09
 
 Rasterised PDF pages were mirrored. **Do not use 0.7.0 (or 0.6.0) for scanned PDFs.**
