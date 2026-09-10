@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ExtractionOptions.maximumResponseTokens`, passed through to the model.** The generation
+  seam sent only `temperature`, so nothing a caller could set would stop a model that will not
+  stop: a repair-prone page generates until the request times out. Measured downstream, one
+  twelve-column page on a local 14B model was still generating after fifteen minutes and a
+  six-page run never finished — on an unattended machine that is a queue wedged behind one
+  document. `nil` keeps every backend's own default, so existing behaviour is unchanged.
+
+### Changed
+
+- **The generation seam takes `GenerationSettings` instead of a bare `temperature`.** This is
+  the second sampling knob; threading each new one through the `package` protocol and all six
+  conformances is how a seam becomes hard to extend. `ExtractionOptions.resolvedGeneration(session:)`
+  resolves temperature and the cap together, so every path — single, chunked, repair and
+  streaming — sends the same thing. `resolvedTemperature(session:)` is unchanged for callers
+  that only need the number.
+
 ## [0.8.1] — 2026-09-09
 
 ### Fixed

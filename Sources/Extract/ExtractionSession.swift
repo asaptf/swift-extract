@@ -29,13 +29,13 @@ public struct ExtractionSession: Sendable {
     func generate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String {
         try await backend.generate(
             system: system,
             user: user,
-            temperature: temperature,
+            settings: settings,
             schema: schema
         )
     }
@@ -44,15 +44,33 @@ public struct ExtractionSession: Sendable {
     func streamGenerate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) -> AsyncThrowingStream<String, Error> {
         backend.streamGenerate(
             system: system,
             user: user,
-            temperature: temperature,
+            settings: settings,
             schema: schema
         )
+    }
+}
+
+// MARK: - Generation settings
+
+/// What the extraction loop asks the model to do, resolved once.
+///
+/// This is a type rather than two parameters because it is now the *second* sampling knob:
+/// threading each new one through the seam and every conformance is how a protocol becomes
+/// hard to extend.
+public struct GenerationSettings: Sendable, Equatable {
+    public var temperature: Double
+    /// `nil` leaves the backend's own limit in place.
+    public var maximumResponseTokens: Int?
+
+    public init(temperature: Double, maximumResponseTokens: Int? = nil) {
+        self.temperature = temperature
+        self.maximumResponseTokens = maximumResponseTokens
     }
 }
 
@@ -64,7 +82,7 @@ package protocol ExtractionGenerating: Sendable {
     func generate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String
 
@@ -73,7 +91,7 @@ package protocol ExtractionGenerating: Sendable {
     func streamGenerate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) -> AsyncThrowingStream<String, Error>
 }
@@ -84,7 +102,7 @@ extension ExtractionGenerating {
     package func streamGenerate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -93,7 +111,7 @@ extension ExtractionGenerating {
                     let text = try await generate(
                         system: system,
                         user: user,
-                        temperature: temperature,
+                        settings: settings,
                         schema: schema
                     )
                     continuation.yield(text)
@@ -115,7 +133,7 @@ private struct LanguageModelBackend: ExtractionGenerating {
     func generate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String {
         // Do **not** pre-check `model.isAvailable`.
@@ -133,7 +151,10 @@ private struct LanguageModelBackend: ExtractionGenerating {
         // `String` generation is the correct primary path.
         _ = schema
         let session = LanguageModelSession(model: model, instructions: system)
-        let options = GenerationOptions(temperature: temperature)
+        let options = GenerationOptions(
+            temperature: settings.temperature,
+            maximumResponseTokens: settings.maximumResponseTokens
+        )
         let response = try await session.respond(to: user, options: options)
         return response.content
     }
@@ -141,7 +162,7 @@ private struct LanguageModelBackend: ExtractionGenerating {
     func streamGenerate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) -> AsyncThrowingStream<String, Error> {
         _ = schema
@@ -150,7 +171,10 @@ private struct LanguageModelBackend: ExtractionGenerating {
             let task = Task {
                 do {
                     let session = LanguageModelSession(model: model, instructions: system)
-                    let options = GenerationOptions(temperature: temperature)
+                    let options = GenerationOptions(
+                        temperature: settings.temperature,
+                        maximumResponseTokens: settings.maximumResponseTokens
+                    )
                     let stream = session.streamResponse(to: user, options: options)
                     for try await snapshot in stream {
                         // String.PartiallyGenerated == String; cumulative text so far.
@@ -188,7 +212,7 @@ private struct UnavailableGenerator: ExtractionGenerating {
     func generate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String {
         throw ExtractionError.modelUnavailable(
@@ -272,7 +296,7 @@ public struct MockLanguageModel: ExtractionGenerating, Sendable {
     public func generate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String {
         _ = schema
@@ -283,10 +307,10 @@ public struct MockLanguageModel: ExtractionGenerating, Sendable {
     public func streamGenerate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) -> AsyncThrowingStream<String, Error> {
-        _ = temperature
+        _ = settings
         _ = schema
         if let streamingPieces {
             let counter = self.counter
@@ -323,7 +347,7 @@ public struct MockLanguageModel: ExtractionGenerating, Sendable {
                     let text = try await generate(
                         system: system,
                         user: user,
-                        temperature: temperature,
+                        settings: settings,
                         schema: schema
                     )
                     continuation.yield(text)

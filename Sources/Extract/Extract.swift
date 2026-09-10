@@ -361,7 +361,7 @@ public enum Extract {
             partialJSONObjects: partials,
             fullDocumentText: sourceText
         )
-        let temperature = options.resolvedTemperature(session: session)
+        let settings = options.resolvedGeneration(session: session)
         let schema = T.extractionSchema
         // Schema-gate prompt injection for repair; result.tables stays full-document.
         let promptTables = tablesForPrompt(tables, schema: schema)
@@ -393,7 +393,7 @@ public enum Extract {
                 raw = try await session.generate(
                     system: PromptBuilder.systemInstructions,
                     user: user,
-                    temperature: temperature,
+                    settings: settings,
                     schema: schema
                 )
                 modelRepairAttempts += 1
@@ -449,7 +449,7 @@ public enum Extract {
         var lastError: Error = ExtractionError.internalError("no attempt")
         var lastRaw = ""
         let maxAttempts = max(1, options.maxRetries + 1)
-        let temperature = options.resolvedTemperature(session: session)
+        let settings = options.resolvedGeneration(session: session)
         var schema = T.extractionSchema
         if schema.type == .object {
             schema.required = []
@@ -479,7 +479,7 @@ public enum Extract {
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
                 user: user,
-                temperature: temperature,
+                settings: settings,
                 schema: schema
             )
             lastRaw = raw
@@ -517,7 +517,7 @@ public enum Extract {
         var lastRaw = ""
         var lastDecoded: LastDecodedValue<T>?
         let maxAttempts = max(1, options.maxRetries + 1)
-        let temperature = options.resolvedTemperature(session: session)
+        let settings = options.resolvedGeneration(session: session)
         let schema = T.extractionSchema
         // Schema-gate prompt injection; `tables` on the result stays unfiltered.
         let promptTables = tablesForPrompt(tables, schema: schema)
@@ -542,7 +542,7 @@ public enum Extract {
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
                 user: user,
-                temperature: temperature,
+                settings: settings,
                 schema: schema
             )
             lastRaw = raw
@@ -643,7 +643,7 @@ public enum Extract {
         var lastRaw = ""
         var lastDecoded: LastDecodedValue<T>?
         let maxAttempts = max(1, options.maxRetries + 1)
-        let temperature = options.resolvedTemperature(session: session)
+        let settings = options.resolvedGeneration(session: session)
         let schema = T.extractionSchema
         let promptTables = tablesForPrompt(tables, schema: schema)
 
@@ -672,7 +672,7 @@ public enum Extract {
                 raw = try await streamFirstAttempt(
                     system: PromptBuilder.systemInstructions,
                     user: user,
-                    temperature: temperature,
+                    settings: settings,
                     schema: schema,
                     using: session,
                     locale: options.locale,
@@ -683,7 +683,7 @@ public enum Extract {
                 raw = try await session.generate(
                     system: PromptBuilder.systemInstructions,
                     user: user,
-                    temperature: temperature,
+                    settings: settings,
                     schema: schema
                 )
             }
@@ -734,7 +734,7 @@ public enum Extract {
     private static func streamFirstAttempt<T: Extractable>(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema,
         using session: ExtractionSession,
         locale: Locale?,
@@ -745,7 +745,7 @@ public enum Extract {
         let textStream = session.streamGenerate(
             system: system,
             user: user,
-            temperature: temperature,
+            settings: settings,
             schema: schema
         )
         for try await cumulative in textStream {

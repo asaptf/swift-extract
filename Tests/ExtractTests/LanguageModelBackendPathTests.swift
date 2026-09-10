@@ -49,7 +49,7 @@ struct PathRecordingGenerator: ExtractionGenerating {
     func generate(
         system: String,
         user: String,
-        temperature: Double,
+        settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String {
         // Production LanguageModelBackend uses plain String respond only.

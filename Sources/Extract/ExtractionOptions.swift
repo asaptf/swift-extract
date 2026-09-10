@@ -72,6 +72,12 @@ public struct ExtractionOptions: Sendable, Equatable {
     /// Detect scan orientation (0/90 axis, then 180° via character order) when OCR runs.
     /// `/Rotate` is always honoured. Default `true`.
     public var autoOrient: Bool
+    /// Hard cap on how many tokens the model may produce for one request.
+    ///
+    /// Nothing downstream can stop a model that will not stop: a repair-prone page can
+    /// generate until the request times out, and on an unattended machine that is a queue
+    /// wedged behind one document. `nil` leaves the backend's own default in place.
+    public var maximumResponseTokens: Int?
 
     public init(
         maxRetries: Int = 2,
@@ -84,7 +90,8 @@ public struct ExtractionOptions: Sendable, Equatable {
         textLayerPolicy: TextLayerPolicy = .auto,
         textLayerQualityThreshold: Double = 0.85,
         rasterDPI: Double = 300,
-        autoOrient: Bool = true
+        autoOrient: Bool = true,
+        maximumResponseTokens: Int? = nil
     ) {
         self.maxRetries = maxRetries
         self.chunkingStrategy = chunkingStrategy
@@ -97,11 +104,20 @@ public struct ExtractionOptions: Sendable, Equatable {
         self.textLayerQualityThreshold = textLayerQualityThreshold
         self.rasterDPI = rasterDPI
         self.autoOrient = autoOrient
+        self.maximumResponseTokens = maximumResponseTokens
     }
 
     /// Resolve sampling temperature: explicit options override, else session.
     public func resolvedTemperature(session: ExtractionSession) -> Double {
         temperature ?? session.temperature
+    }
+
+    /// Sampling knobs resolved once, so every generation path sends the same thing.
+    public func resolvedGeneration(session: ExtractionSession) -> GenerationSettings {
+        GenerationSettings(
+            temperature: resolvedTemperature(session: session),
+            maximumResponseTokens: maximumResponseTokens
+        )
     }
 }
 

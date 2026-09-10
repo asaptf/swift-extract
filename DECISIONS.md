@@ -190,6 +190,23 @@ That mapping now exists (`SchemaBridge.toDynamicGenerationSchema`), and it has b
 tried end to end. It did not land — see *Guided (constrained) JSON generation* under
 measured negatives for what blocks it and what a repeat attempt should know.
 
+## Response length is the caller's to bound
+
+`GenerationOptions.maximumResponseTokens` existed upstream from the start; this library simply
+never passed it. That was fine while extraction was something a person watched, and stopped
+being fine when a caller ran it unattended: the only remaining bound on a looping generation
+was the HTTP request timeout, which turns one bad page into a stalled queue rather than a
+failed document.
+
+The knob is on `ExtractionOptions`, not on `ExtractionSession`, for the same reason
+`temperature` can be on either: a cap belongs to *this extraction* — a header-only pass and a
+twelve-column line-item page want different numbers — while the session carries the default.
+`nil` means "leave the backend alone", so no existing behaviour changes.
+
+Introducing `GenerationSettings` rather than a fifth parameter is a deliberate cost paid once.
+The seam is `package`-visible, so no external code breaks, and the next knob will not force
+another edit across six conformances.
+
 ## Measured negatives (things we tried and did not ship)
 
 Recording these so they are not retried blind.
