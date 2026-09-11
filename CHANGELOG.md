@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-09-11
+
+A page can now say what alphabet it is printed in.
+
 ### Added
 
 - **`ExtractionOptions.recognitionLanguages` and `usesLanguageCorrection`.** Vision recognises
