@@ -18,6 +18,13 @@ struct ExtractedDocument: Sendable, Equatable {
     var sourceDescription: String
     /// True when a PDF used OCR because the text layer was missing or below the quality gate.
     var usedOCRFallback: Bool
+    /// Clockwise degrees each page was turned by before it was read, keyed by page index.
+    ///
+    /// Boxes in ``Block/boundingBox`` are in the turned frame — the one the text reads
+    /// upright in — not the frame the page is stored in. A caller that renders the page
+    /// for a person to look at has to turn it the same way, or every box it draws lands
+    /// somewhere the value is not. Pages that were not turned are absent.
+    var pageRotations: [Int: Int]
 
     var isEmpty: Bool {
         fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -120,10 +127,14 @@ struct ExtractedDocument: Sendable, Equatable {
         return abs(a.midY - b.midY) <= tol
     }
 
-    init(blocks: [Block], sourceDescription: String, usedOCRFallback: Bool = false) {
+    init(
+        blocks: [Block], sourceDescription: String, usedOCRFallback: Bool = false,
+        pageRotations: [Int: Int] = [:]
+    ) {
         self.blocks = blocks
         self.sourceDescription = sourceDescription
         self.usedOCRFallback = usedOCRFallback
+        self.pageRotations = pageRotations
     }
 
     init(text: String, sourceDescription: String = "text", usedOCRFallback: Bool = false) {
@@ -135,6 +146,7 @@ struct ExtractedDocument: Sendable, Equatable {
         }
         self.sourceDescription = sourceDescription
         self.usedOCRFallback = usedOCRFallback
+        self.pageRotations = [:]
     }
 
     /// Split into character-budget chunks, preferring page boundaries.
@@ -179,7 +191,8 @@ struct ExtractedDocument: Sendable, Equatable {
                 ExtractedDocument(
                     blocks: currentBlocks,
                     sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)",
-                    usedOCRFallback: usedOCRFallback
+                    usedOCRFallback: usedOCRFallback,
+                    pageRotations: pageRotations
                 )
             )
             currentBlocks = []
@@ -194,7 +207,8 @@ struct ExtractedDocument: Sendable, Equatable {
                         ExtractedDocument(
                             blocks: [Block(text: slice, pageIndex: item.page, boundingBox: nil)],
                             sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)",
-                            usedOCRFallback: usedOCRFallback
+                            usedOCRFallback: usedOCRFallback,
+                            pageRotations: pageRotations
                         )
                     )
                 }

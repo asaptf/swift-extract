@@ -48,6 +48,34 @@ struct SidewaysPageTests {
         #expect(decision.isAmbiguous, "clean print gives no direction; the probe must admit it")
     }
 
+    /// The turn is not only an internal step. Boxes come back in the turned frame, so an
+    /// application that shows the page to a person has to turn it the same way — and it
+    /// cannot, unless ingest says by how much. It went unsaid, and every box drawn over a
+    /// sideways page in review landed somewhere the value was not.
+    @Test("inspect reports the turn each page was read at")
+    func inspectReportsThePageRotation() async throws {
+        let url = try makeSidewaysPDF(clockwise: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var options = ExtractionOptions()
+        options.textLayerPolicy = .never
+        let inspection = try await Extract.inspect(.fileURL(url), options: options)
+        let rotation = try #require(inspection.pageRotations[0], "a turned page must say so")
+        #expect(rotation % 180 == 90, "a sideways page is turned onto its axis: \(rotation)")
+        #expect(inspection.pageRotations.count == 1)
+    }
+
+    /// A page that was read as it was stored must not claim a turn; an application that
+    /// rotated by a phantom 0-that-is-really-360 would break the pages that were fine.
+    @Test("a page read as it stands reports no turn")
+    func uprightPageReportsNoRotation() async throws {
+        let url = try makeUprightPDF()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var options = ExtractionOptions()
+        options.textLayerPolicy = .never
+        let inspection = try await Extract.inspect(.fileURL(url), options: options)
+        #expect(inspection.pageRotations[0] == nil, "got \(inspection.pageRotations)")
+    }
+
     /// An upright page, rasterised with scan-like grain and then turned a quarter turn —
     /// which is what a sheet fed sideways into a scanner actually is: an image, not text.
     /// The grain matters. On clean vector text Vision reads an upside-down page far worse

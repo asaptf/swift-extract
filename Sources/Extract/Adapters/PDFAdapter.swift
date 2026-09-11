@@ -124,7 +124,8 @@ enum PDFAdapter {
         return ExtractedDocument(
             blocks: blocks,
             sourceDescription: sourceDescription,
-            usedOCRFallback: usedOCRFallback
+            usedOCRFallback: usedOCRFallback,
+            pageRotations: rotations.filter { $0.value % 360 != 0 }
         )
     }
 

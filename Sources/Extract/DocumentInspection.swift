@@ -53,6 +53,13 @@ public struct DocumentInspection: Sendable, Equatable {
     public let positionedBlocks: [PositionedBlock]
     /// Tables from ``TableDetector`` under the requested mode.
     public let tables: [ExtractedTable]
+    /// Clockwise degrees each page was turned by before it was read, keyed by page index.
+    ///
+    /// The boxes in ``positionedBlocks`` are in the turned frame — the one the text reads
+    /// upright in — not the frame the page is stored in. An application that renders a page
+    /// for a person to look at must turn it the same way; otherwise every box it draws over
+    /// that page lands somewhere the value is not. Pages that were not turned are absent.
+    public let pageRotations: [Int: Int]
 
     public init(
         sourceDescription: String,
@@ -60,7 +67,8 @@ public struct DocumentInspection: Sendable, Equatable {
         fullText: String,
         usedOCRFallback: Bool,
         positionedBlocks: [PositionedBlock],
-        tables: [ExtractedTable]
+        tables: [ExtractedTable],
+        pageRotations: [Int: Int] = [:]
     ) {
         self.sourceDescription = sourceDescription
         self.characterCount = characterCount
@@ -68,6 +76,7 @@ public struct DocumentInspection: Sendable, Equatable {
         self.usedOCRFallback = usedOCRFallback
         self.positionedBlocks = positionedBlocks
         self.tables = tables
+        self.pageRotations = pageRotations
     }
 }
 
@@ -103,7 +112,8 @@ extension Extract {
             fullText: text,
             usedOCRFallback: document.usedOCRFallback,
             positionedBlocks: positionedBlocks,
-            tables: tables
+            tables: tables,
+            pageRotations: document.pageRotations
         )
     }
 
