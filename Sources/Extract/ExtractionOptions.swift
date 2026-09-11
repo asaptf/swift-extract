@@ -72,6 +72,18 @@ public struct ExtractionOptions: Sendable, Equatable {
     /// Detect scan orientation (0/90 axis, then 180° via character order) when OCR runs.
     /// `/Rotate` is always honoured. Default `true`.
     public var autoOrient: Bool
+    /// Scripts the pages may be printed in, as Vision language codes — `["ar-SA", "en-US"]`
+    /// for an Arabic invoice with Latin part numbers. Empty leaves the engine's own default,
+    /// which on Vision is **English only**.
+    ///
+    /// This is not a nicety. Vision does not refuse a script it was not asked for, it
+    /// approximates it: `الكمية 12 الوزن 1,285` came back as `1,285 ja|| 12 tall` — plausible,
+    /// wrong, and carrying no signal that anything was missed.
+    public var recognitionLanguages: [String]
+    /// Vision's language correction, which fits a word to the recognition languages. Worth
+    /// having on a single-script page and worth turning off on a mixed one, where correcting
+    /// one script mangles the other. Default `true`, the engine's own default.
+    public var usesLanguageCorrection: Bool
     /// Hard cap on how many tokens the model may produce for one request.
     ///
     /// Nothing downstream can stop a model that will not stop: a repair-prone page can
@@ -91,6 +103,8 @@ public struct ExtractionOptions: Sendable, Equatable {
         textLayerQualityThreshold: Double = 0.85,
         rasterDPI: Double = 300,
         autoOrient: Bool = true,
+        recognitionLanguages: [String] = [],
+        usesLanguageCorrection: Bool = true,
         maximumResponseTokens: Int? = nil
     ) {
         self.maxRetries = maxRetries
@@ -104,6 +118,8 @@ public struct ExtractionOptions: Sendable, Equatable {
         self.textLayerQualityThreshold = textLayerQualityThreshold
         self.rasterDPI = rasterDPI
         self.autoOrient = autoOrient
+        self.recognitionLanguages = recognitionLanguages
+        self.usesLanguageCorrection = usesLanguageCorrection
         self.maximumResponseTokens = maximumResponseTokens
     }
 

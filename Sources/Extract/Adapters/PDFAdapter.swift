@@ -70,7 +70,9 @@ enum PDFAdapter {
             for (index, ocrThisPage) in wantsOCR where ocrThisPage {
                 guard let page = document.page(at: index) else { continue }
                 decisions[index] = OCRAdapter.orientation(
-                    page: page, ocr: engines.ocr, renderer: engines.renderer)
+                    page: page, ocr: engines.ocr, renderer: engines.renderer,
+                    languages: options.recognitionLanguages,
+                    correctsLanguage: options.usesLanguageCorrection)
             }
             rotations = OrientationDetector.resolve(decisions).mapValues(\.rotation)
         }

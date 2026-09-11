@@ -28,6 +28,24 @@ public struct RecognizedLine: Sendable, Equatable {
 /// Pluggable OCR engine. Default is ``VisionOCR``; Linux can inject Tesseract/RapidOCR.
 public protocol OCRRecognizing: Sendable {
     func recognize(image: CGImage) throws -> [RecognizedLine]
+
+    /// Reads a page that may be printed in the given scripts.
+    ///
+    /// The default implementation ignores both arguments and reads the way the engine always
+    /// does, so an engine written before this existed keeps working — but an engine that
+    /// cannot honour the request will read a page in the wrong script the way Vision does:
+    /// approximately, and without saying so.
+    func recognize(
+        image: CGImage, languages: [String], correctsLanguage: Bool
+    ) throws -> [RecognizedLine]
+}
+
+extension OCRRecognizing {
+    public func recognize(
+        image: CGImage, languages: [String], correctsLanguage: Bool
+    ) throws -> [RecognizedLine] {
+        try recognize(image: image)
+    }
 }
 
 /// Vision `VNRecognizeTextRequest` (`.accurate`) with per-character boxes when available.
@@ -35,9 +53,20 @@ public struct VisionOCR: OCRRecognizing {
     public init() {}
 
     public func recognize(image: CGImage) throws -> [RecognizedLine] {
+        try recognize(image: image, languages: [], correctsLanguage: true)
+    }
+
+    public func recognize(
+        image: CGImage, languages: [String], correctsLanguage: Bool
+    ) throws -> [RecognizedLine] {
         let request = VNRecognizeTextRequest()
+        // `.accurate` is not only about quality: the fast path supports six European
+        // languages and nothing else, so Arabic exists only on this one.
         request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
+        request.usesLanguageCorrection = correctsLanguage
+        if !languages.isEmpty {
+            request.recognitionLanguages = languages
+        }
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
             try handler.perform([request])

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ExtractionOptions.recognitionLanguages` and `usesLanguageCorrection`.** Vision recognises
+  English unless it is told otherwise, and it does not refuse a script it was not asked for —
+  it approximates it. Measured: the Arabic line `الكمية 12 الوزن 1,285` came back as
+  `1,285 ja|| 12 tall`, plausible and wrong, with nothing to say a script had been missed;
+  with `["ar-SA", "en-US"]` both that line and the Latin one came back exactly. The scripts
+  reach every path that reads pixels — PDF pages, standalone images, and the orientation probe,
+  which would otherwise score four turns of the same garbage. Empty keeps the engine's own
+  default, so nothing changes for a caller that says nothing. Note that Arabic exists only at
+  the `.accurate` recognition level, which is the one this library uses.
+
+  `OCRRecognizing` gains `recognize(image:languages:correctsLanguage:)` with a default
+  implementation that forwards to the old method, so an engine written before this keeps
+  working.
+
 ## [0.8.3] — 2026-09-11
 
 A page fed sideways is now turned the way that actually reads.

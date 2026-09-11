@@ -10,9 +10,14 @@ enum OCRAdapter {
     static func recognize(
         cgImage: CGImage,
         pageIndex: Int = 0,
+        options: ExtractionOptions = .init(),
         ocr: OCRRecognizing = VisionOCR()
     ) throws -> [ExtractedDocument.Block] {
-        try blocks(from: ocr.recognize(image: cgImage), pageIndex: pageIndex)
+        let lines = try ocr.recognize(
+            image: cgImage,
+            languages: options.recognitionLanguages,
+            correctsLanguage: options.usesLanguageCorrection)
+        return try blocks(from: lines, pageIndex: pageIndex)
     }
 
     /// - Parameter rotation: the turn already decided for this page — by
@@ -30,7 +35,10 @@ enum OCRAdapter {
         if let rotation {
             extraRotation = options.autoOrient ? rotation : 0
         } else if options.autoOrient {
-            extraRotation = detectOrientation(page: page, ocr: ocr, renderer: renderer)
+            extraRotation = detectOrientation(
+                page: page, ocr: ocr, renderer: renderer,
+                languages: options.recognitionLanguages,
+                correctsLanguage: options.usesLanguageCorrection)
         } else {
             extraRotation = 0
         }
@@ -38,7 +46,11 @@ enum OCRAdapter {
         else {
             return []
         }
-        return try blocks(from: ocr.recognize(image: image), pageIndex: pageIndex)
+        let lines = try ocr.recognize(
+            image: image,
+            languages: options.recognitionLanguages,
+            correctsLanguage: options.usesLanguageCorrection)
+        return try blocks(from: lines, pageIndex: pageIndex)
     }
 
     /// Renders and reads **every** quarter turn at the probe DPI, then takes the one that
@@ -48,22 +60,32 @@ enum OCRAdapter {
     static func detectOrientation(
         page: PDFPage,
         ocr: OCRRecognizing,
-        renderer: PDFRendering
+        renderer: PDFRendering,
+        languages: [String] = [],
+        correctsLanguage: Bool = true
     ) -> Int {
-        orientation(page: page, ocr: ocr, renderer: renderer).rotation
+        orientation(
+            page: page, ocr: ocr, renderer: renderer, languages: languages,
+            correctsLanguage: correctsLanguage
+        ).rotation
     }
 
     static func orientation(
         page: PDFPage,
         ocr: OCRRecognizing,
-        renderer: PDFRendering
+        renderer: PDFRendering,
+        languages: [String] = [],
+        correctsLanguage: Bool = true
     ) -> OrientationDecision {
         let probeDPI = PDFKitRenderer.minimumDPI
         var scores: [Int: Double] = [:]
         for rotation in [0, 90, 180, 270] {
             guard let image = renderer.render(page: page, dpi: probeDPI, extraRotation: rotation)
             else { continue }
-            scores[rotation] = OrientationDetector.axisScore((try? ocr.recognize(image: image)) ?? [])
+            let lines =
+                (try? ocr.recognize(
+                    image: image, languages: languages, correctsLanguage: correctsLanguage)) ?? []
+            scores[rotation] = OrientationDetector.axisScore(lines)
         }
         return OrientationDetector.choose(scores: scores)
     }

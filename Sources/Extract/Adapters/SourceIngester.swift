@@ -26,7 +26,7 @@ enum SourceIngester {
             case .pdf(let url):
                 return try PDFAdapter.ingest(url: url, options: options, engines: engines)
             case .image(let cgImage):
-                let blocks = try OCRAdapter.recognize(cgImage: cgImage, ocr: engines.ocr)
+                let blocks = try OCRAdapter.recognize(cgImage: cgImage, options: options, ocr: engines.ocr)
                 return ExtractedDocument(blocks: blocks, sourceDescription: "image")
             case .fileURL(let url):
                 return try ingestFile(url: url, options: options, engines: engines)
@@ -55,7 +55,7 @@ enum SourceIngester {
                 guard let cgImage = CGImageLoader.cgImage(from: data) else {
                     throw ExtractionError.unreadableSource(underlying: nil)
                 }
-                let blocks = try OCRAdapter.recognize(cgImage: cgImage, ocr: engines.ocr)
+                let blocks = try OCRAdapter.recognize(cgImage: cgImage, options: options, ocr: engines.ocr)
                 return ExtractedDocument(blocks: blocks, sourceDescription: url.lastPathComponent)
             }
             if type.conforms(to: .text) || type.conforms(to: .plainText) || type.conforms(to: .utf8PlainText) {
@@ -73,7 +73,7 @@ enum SourceIngester {
             guard let cgImage = CGImageLoader.cgImage(from: data) else {
                 throw ExtractionError.unreadableSource(underlying: nil)
             }
-            let blocks = try OCRAdapter.recognize(cgImage: cgImage, ocr: engines.ocr)
+            let blocks = try OCRAdapter.recognize(cgImage: cgImage, options: options, ocr: engines.ocr)
             return ExtractedDocument(blocks: blocks, sourceDescription: url.lastPathComponent)
         case "txt", "md", "csv", "json", "html", "xml":
             let text = try String(contentsOf: url, encoding: .utf8)
