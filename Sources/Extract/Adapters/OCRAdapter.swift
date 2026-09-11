@@ -35,21 +35,31 @@ enum OCRAdapter {
         return try blocks(from: ocr.recognize(image: image), pageIndex: pageIndex)
     }
 
+    /// Renders and reads **every** quarter turn at the probe DPI, then takes the one that
+    /// reads best. Four cheap probes instead of two, which is what it costs to stop guessing:
+    /// a page can fall either way, the two ends of an axis are the same text upside-down, and
+    /// no indirect signal separates them (see ``OrientationDetector``).
     static func detectOrientation(
         page: PDFPage,
         ocr: OCRRecognizing,
         renderer: PDFRendering
     ) -> Int {
+        orientation(page: page, ocr: ocr, renderer: renderer).rotation
+    }
+
+    static func orientation(
+        page: PDFPage,
+        ocr: OCRRecognizing,
+        renderer: PDFRendering
+    ) -> OrientationDecision {
         let probeDPI = PDFKitRenderer.minimumDPI
-        guard
-            let upright = renderer.render(page: page, dpi: probeDPI, extraRotation: 0),
-            let rotated = renderer.render(page: page, dpi: probeDPI, extraRotation: 90)
-        else {
-            return 0
+        var scores: [Int: Double] = [:]
+        for rotation in [0, 90, 180, 270] {
+            guard let image = renderer.render(page: page, dpi: probeDPI, extraRotation: rotation)
+            else { continue }
+            scores[rotation] = OrientationDetector.axisScore((try? ocr.recognize(image: image)) ?? [])
         }
-        let lines0 = (try? ocr.recognize(image: upright)) ?? []
-        let lines90 = (try? ocr.recognize(image: rotated)) ?? []
-        return OrientationDetector.choose(upright: lines0, rotated90: lines90)
+        return OrientationDetector.choose(scores: scores)
     }
 
     static func blocks(from lines: [RecognizedLine], pageIndex: Int?) -> [ExtractedDocument.Block] {

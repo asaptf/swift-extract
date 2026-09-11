@@ -438,3 +438,37 @@ The existing `invariant=` key is a three-way, not a second switch:
 An A/B of `invariant=true` vs `invariant=report` measures the gate against a
 scored extract on the same documents. `true`/`false` labels are unchanged so
 historical reports stay comparable.
+
+## Orientation is measured, never inferred
+
+A scan fed sideways is a page with `/Rotate = 0` whose content lies on its side, and it has
+to be turned before OCR order means anything. Until 0.8.3 the detector rendered two
+candidates — upright and one quarter turn — scored the axis from line geometry, and then
+picked between 90° and 270° from the x-order of recognised characters.
+
+Three indirect signals were measured on a six-page scanned invoice, comparing the two ends of
+the winning axis: character x-order, mean recognition confidence, and how strongly line edges
+align. **None of them separated upright from upside-down.** Vision reads dense small print
+almost as well either way (0.979 against 0.986 mean confidence), character order pointed at
+the wrong end on all three sideways pages, and edge alignment picked the wrong end on two of
+them — the strongest column on that invoice is right-aligned, so "text is left-aligned" is not
+a property of documents in general.
+
+The signal that did work is the obvious one: **render the turn and read it.** The upright turn
+scored 8.8× to 12.4× the upside-down one on every sideways page. So every quarter turn is
+rendered and read at the probe DPI, and the best-reading one wins. Four cheap probes per page
+replace two probes and a guess, measured at 2.1 s per page against roughly three minutes of
+model time for the same page.
+
+Two rules keep it honest:
+
+- A turn must read **1.5× better** than leaving the page alone. A nearly blank page — a
+  footer, a faded stamp — scored 234 upright and 297 upside-down; that is noise, and turning
+  a page that already reads would have been wrong.
+- `OrientationDecision` carries the gain, so a caller can tell a decisive turn from a close
+  call rather than being handed a bare angle.
+
+Why this matters more than it looks: a wrongly turned page is not garbled, it is *readable
+in the wrong order*. OCR returns the footer first and every row is stitched to the wrong
+cells — 16 of 86 line items lost and 8 invented on the document above, 60% cell accuracy
+against ground truth where the upright pages scored 97%. Silent, plausible, wrong.

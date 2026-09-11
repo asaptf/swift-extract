@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A page lying on its side was turned the wrong way.** The detector rendered only the page
+  upright and one quarter turn, then decided between 90° and 270° from the x-order of
+  recognised characters. Measured on a six-page scanned invoice: that signal carries nothing —
+  Vision reads dense small print almost as well upside-down as upright (mean confidence 0.979
+  against 0.986), and the character order pointed the wrong way on every sideways page. The
+  cost was not a garbled page but a page read **from its footer upwards**: rows stitched to the
+  wrong cells, 16 of 86 line items lost and 8 invented, and 60% cell accuracy against ground
+  truth. Every quarter turn is now rendered and read, and the one that reads best wins — on
+  that document the upright turn scored 8.8× to 12.4× the alternative. A turn has to read
+  decisively better (1.5×) than leaving the page alone, so a nearly blank page that scored 234
+  upright against 297 upside-down is left where it is. With this, the same document reads at
+  **95.8%** and its line items sum exactly to the printed invoice total.
+
+  Cost: four probe renders at 72 DPI per page instead of two — measured at 2.1 s per page
+  against roughly three minutes of model time for the same page.
+
 ## [0.8.2] — 2026-09-10
 
 A caller can finally bound how long a model may talk.
