@@ -47,6 +47,47 @@ struct OrientationDetectorTests {
         #expect(OrientationDetector.choose(scores: [0: 200.0, 180: 400.0]).rotation == 180)
     }
 
+    /// Clean print reads the same upside-down: measured on a synthetic page of invoice rows,
+    /// 90° scored 1711 and 270° scored 1728 — a 1% difference, which is no evidence at all.
+    /// The page still has to be turned onto the right axis, but the direction is a coin toss
+    /// and has to say so.
+    @Test("a direction the probe cannot tell apart is marked ambiguous")
+    func indistinguishableDirectionIsMarked() {
+        let decision = OrientationDetector.choose(scores: [0: 170.0, 90: 1711.0, 180: 169.0, 270: 1728.0])
+        #expect(decision.rotation == 270)
+        #expect(decision.isAmbiguous, "a 1% difference is not a direction")
+        let real = OrientationDetector.choose(scores: [0: 97.0, 90: 327.0, 180: 122.0, 270: 1206.0])
+        #expect(!real.isAmbiguous, "3.7x is a direction")
+    }
+
+    /// A stack of sheets goes through a scanner the same way round, so a page the probe could
+    /// not settle takes its direction from the pages that were sure.
+    @Test("an undecidable page follows the pages on its axis that were decisive")
+    func ambiguousPageFollowsItsPeers() {
+        let decisions = [
+            0: OrientationDecision(rotation: 0, gain: 1, margin: 4),
+            1: OrientationDecision(rotation: 270, gain: 11, margin: 3.9),
+            2: OrientationDecision(rotation: 90, gain: 9, margin: 1.01),
+        ]
+        let resolved = OrientationDetector.resolve(decisions)
+        #expect(resolved[2]?.rotation == 270, "the coin-toss page follows its sideways peer")
+        #expect(resolved[1]?.rotation == 270)
+        #expect(resolved[0]?.rotation == 0, "an upright page is not dragged onto another axis")
+        #expect(resolved[2]?.isAmbiguous == true, "following a peer is not the same as knowing")
+    }
+
+    @Test("a page with no confident peer keeps its own reading rather than inventing agreement")
+    func loneAmbiguousPageKeepsItsBest() {
+        let alone = [0: OrientationDecision(rotation: 90, gain: 9, margin: 1.01)]
+        #expect(OrientationDetector.resolve(alone)[0]?.rotation == 90)
+        // An upright page says nothing about which way a sideways one fell.
+        let mixed = [
+            0: OrientationDecision(rotation: 0, gain: 1, margin: 5),
+            1: OrientationDecision(rotation: 90, gain: 9, margin: 1.01),
+        ]
+        #expect(OrientationDetector.resolve(mixed)[1]?.rotation == 90)
+    }
+
     @Test("nothing recognised anywhere leaves the page as it is")
     func emptyStaysUpright() {
         #expect(OrientationDetector.choose(scores: [:]).rotation == 0)

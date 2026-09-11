@@ -15,15 +15,21 @@ enum OCRAdapter {
         try blocks(from: ocr.recognize(image: cgImage), pageIndex: pageIndex)
     }
 
+    /// - Parameter rotation: the turn already decided for this page — by
+    ///   ``OrientationDetector/resolve(_:)`` across the whole document, which knows things one
+    ///   page cannot. `nil` decides it from this page alone.
     static func ocrPDFPage(
         _ page: PDFPage,
         pageIndex: Int,
         options: ExtractionOptions,
         ocr: OCRRecognizing,
-        renderer: PDFRendering
+        renderer: PDFRendering,
+        rotation: Int? = nil
     ) throws -> [ExtractedDocument.Block] {
         let extraRotation: Int
-        if options.autoOrient {
+        if let rotation {
+            extraRotation = options.autoOrient ? rotation : 0
+        } else if options.autoOrient {
             extraRotation = detectOrientation(page: page, ocr: ocr, renderer: renderer)
         } else {
             extraRotation = 0

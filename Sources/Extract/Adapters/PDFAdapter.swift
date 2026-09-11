@@ -52,14 +52,33 @@ enum PDFAdapter {
         var blocks: [ExtractedDocument.Block] = []
         var usedOCRFallback = false
 
+        // Which way each scanned page fell is decided across the whole document before any of
+        // it is read: a sheet whose direction its own probe cannot settle takes it from the
+        // pages that were sure, because a stack goes through a scanner the same way round.
+        var wantsOCR: [Int: Bool] = [:]
         for index in 0..<pageCount {
             guard let page = document.page(at: index) else { continue }
-            let raw = page.string ?? ""
-            let useOCR = TextLayerQuality.shouldOCR(
-                text: raw,
+            wantsOCR[index] = TextLayerQuality.shouldOCR(
+                text: page.string ?? "",
                 policy: options.textLayerPolicy,
                 threshold: options.textLayerQualityThreshold
             )
+        }
+        var rotations: [Int: Int] = [:]
+        if options.autoOrient {
+            var decisions: [Int: OrientationDecision] = [:]
+            for (index, ocrThisPage) in wantsOCR where ocrThisPage {
+                guard let page = document.page(at: index) else { continue }
+                decisions[index] = OCRAdapter.orientation(
+                    page: page, ocr: engines.ocr, renderer: engines.renderer)
+            }
+            rotations = OrientationDetector.resolve(decisions).mapValues(\.rotation)
+        }
+
+        for index in 0..<pageCount {
+            guard let page = document.page(at: index) else { continue }
+            let raw = page.string ?? ""
+            let useOCR = wantsOCR[index] ?? false
 
             if useOCR {
                 let ocrBlocks = try OCRAdapter.ocrPDFPage(
@@ -67,7 +86,8 @@ enum PDFAdapter {
                     pageIndex: index,
                     options: options,
                     ocr: engines.ocr,
-                    renderer: engines.renderer
+                    renderer: engines.renderer,
+                    rotation: rotations[index]
                 )
                 if !ocrBlocks.isEmpty {
                     blocks.append(contentsOf: ocrBlocks)

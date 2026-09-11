@@ -460,13 +460,23 @@ rendered and read at the probe DPI, and the best-reading one wins. Four cheap pr
 replace two probes and a guess, measured at 2.1 s per page against roughly three minutes of
 model time for the same page.
 
-Two rules keep it honest:
+Clean print is where this gets uncomfortable. On a synthetic page of invoice rows the two
+directions scored 1711 and 1728 — the same text, read either way round, no signal at all. So
+the decision carries its margin, an indistinguishable direction is **marked ambiguous**, and
+the document settles it: pages the probe could not settle take their direction from pages that
+were decisive **on the same axis**, because a stack of sheets goes through a scanner the same
+way round. A page with no confident peer keeps its own best reading and stays marked. Guessing
+quietly is what the old detector did; guessing out loud is the most that can honestly be done.
+
+Three rules keep it honest:
 
 - A turn must read **1.5× better** than leaving the page alone. A nearly blank page — a
   footer, a faded stamp — scored 234 upright and 297 upside-down; that is noise, and turning
   a page that already reads would have been wrong.
-- `OrientationDecision` carries the gain, so a caller can tell a decisive turn from a close
-  call rather than being handed a bare angle.
+- `OrientationDecision` carries the gain and the margin, so a caller can tell a decisive turn
+  from a close call rather than being handed a bare angle.
+- Cross-page resolution only ever moves a page along the axis it is already on. That page one
+  is upright says nothing about which way page three fell.
 
 Why this matters more than it looks: a wrongly turned page is not garbled, it is *readable
 in the wrong order*. OCR returns the footer first and every row is stitched to the wrong

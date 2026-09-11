@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-09-11
+
+A page fed sideways is now turned the way that actually reads.
+
 ### Fixed
 
 - **A page lying on its side was turned the wrong way.** The detector rendered only the page
@@ -21,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decisively better (1.5×) than leaving the page alone, so a nearly blank page that scored 234
   upright against 297 upside-down is left where it is. With this, the same document reads at
   **95.8%** and its line items sum exactly to the printed invoice total.
+
+  Clean print is the awkward case: on a synthetic page of invoice rows the two directions
+  scored 1711 and 1728 — a 1% difference, which is no evidence. `OrientationDecision` now
+  carries that margin, so a direction the probe cannot tell apart is **marked ambiguous**
+  instead of being presented as a finding, and the PDF ingest settles such a page from the
+  other pages of the same document that were decisive **on the same axis** — a stack goes
+  through a scanner the same way round. A page with no confident peer keeps its own best
+  reading and stays marked, because inventing agreement would hide the one case a caller
+  needs to see.
 
   Cost: four probe renders at 72 DPI per page instead of two — measured at 2.1 s per page
   against roughly three minutes of model time for the same page.
