@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-12
+
+Saying nothing about a page's script now means find out, not assume English.
+
+### Changed
+
+- **`ExtractionOptions.recognitionLanguages` empty means detect.** It used to mean whatever
+  Vision defaults to, which is English only — so an Arabic invoice came back as confident
+  Latin nonsense with nothing to say a script had been missed. Measured on a synthetic
+  Arabic invoice, clean print and a 300-dpi scan alike: read as English, 0 Arabic characters
+  and 63.3% of cells right; with the script found, 195 Arabic characters and 100%. Vision's
+  confidence is no guide either — the wrong reading scored 0.817 and the right one 0.517, so
+  a low-confidence rule would flag the good run and pass the garbage.
+
+  **State the scripts when you know them.** Detection weighs every script it supports, so on
+  dense small print a smudge can become a character from a script the page does not contain:
+  on one scanned invoice it read the article number `644610` as `544610` and produced
+  fragments of CJK. Naming a script is measurably better than detecting it, and detecting it
+  is far better than assuming. A caller that already passes `recognitionLanguages` is
+  unaffected.
+
+  This is a behaviour change for any caller that passed nothing and relied on English: pass
+  `["en-US"]` to keep exactly what you had.
+
 ## [0.8.5] — 2026-09-12
 
 Ingest now says how far it turned each page before reading it.

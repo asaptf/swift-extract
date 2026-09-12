@@ -73,12 +73,18 @@ public struct ExtractionOptions: Sendable, Equatable {
     /// `/Rotate` is always honoured. Default `true`.
     public var autoOrient: Bool
     /// Scripts the pages may be printed in, as Vision language codes — `["ar-SA", "en-US"]`
-    /// for an Arabic invoice with Latin part numbers. Empty leaves the engine's own default,
-    /// which on Vision is **English only**.
+    /// for an Arabic invoice with Latin part numbers.
     ///
-    /// This is not a nicety. Vision does not refuse a script it was not asked for, it
-    /// approximates it: `الكمية 12 الوزن 1,285` came back as `1,285 ja|| 12 tall` — plausible,
-    /// wrong, and carrying no signal that anything was missed.
+    /// Empty means **detect the script**, not "English". Vision does not refuse a script it
+    /// was not asked for, it approximates it: `الكمية 12 الوزن 1,285` came back as
+    /// `1,285 ja|| 12 tall` — plausible, wrong, and carrying no signal that anything was
+    /// missed. Detection reads that page properly.
+    ///
+    /// Say the scripts when you know them. Detection weighs every script it supports, so on
+    /// dense small print a smudge can become a character from a script the page does not
+    /// contain: on one scanned invoice it read the article number `644610` as `544610` and
+    /// produced fragments of CJK. Naming the script is measurably better than detecting it
+    /// — and both are better than assuming.
     public var recognitionLanguages: [String]
     /// Vision's language correction, which fits a word to the recognition languages. Worth
     /// having on a single-script page and worth turning off on a mixed one, where correcting

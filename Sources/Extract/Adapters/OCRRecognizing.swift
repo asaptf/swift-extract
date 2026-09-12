@@ -64,7 +64,19 @@ public struct VisionOCR: OCRRecognizing {
         // languages and nothing else, so Arabic exists only on this one.
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = correctsLanguage
-        if !languages.isEmpty {
+        if languages.isEmpty {
+            // Saying nothing used to mean English, silently, and an Arabic page came back
+            // as confident Latin nonsense with no signal that a script had been missed.
+            // Saying nothing now means look: Vision's own detection reads that page
+            // correctly — measured, 195 Arabic characters against none.
+            //
+            // It is not free, which is why it is the fallback and not the rule. A detector
+            // weighs every script it supports, so on dense small print a smudge can become
+            // a character from a script the page does not contain: on one scanned invoice
+            // it read the article number 644610 as 544610 and produced fragments of CJK.
+            // A caller that knows the script should say so and get exactly that script.
+            request.automaticallyDetectsLanguage = true
+        } else {
             request.recognitionLanguages = languages
         }
         let handler = VNImageRequestHandler(cgImage: image, options: [:])

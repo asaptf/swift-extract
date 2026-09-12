@@ -8,10 +8,14 @@ import Vision
 
 @testable import Extract
 
-/// Vision recognises only English unless it is told otherwise, and it says nothing when it
-/// meets a script it was not asked for: the Arabic line `الكمية 12 الوزن 1,285` came back as
-/// `1,285 ja|| 12 tall` — plausible, wrong, and unflagged. A document type therefore has to be
-/// able to state what its pages are printed in.
+/// Vision says nothing when it meets a script it was not asked for: the Arabic line
+/// `الكمية 12 الوزن 1,285` came back as `1,285 ja|| 12 tall` — plausible, wrong, and
+/// unflagged. So a document has to be able to state what its pages are printed in, and
+/// stating nothing has to mean "find out" rather than "assume English".
+///
+/// Both, because neither alone is right: detection reads an Arabic page properly, and on
+/// dense Latin small print it reads the article number 644610 as 544610. Naming the script
+/// is better than detecting it; detecting it is far better than assuming.
 @Suite("Recognition languages")
 struct RecognitionLanguageTests {
     static let arabic = "فاتورة تجارية رقم 1493952"
@@ -43,7 +47,19 @@ struct RecognitionLanguageTests {
         #expect(ocr.correction == false)
     }
 
-    @Test("a caller that states nothing keeps the engine's own default")
+    /// Silence used to mean English, and an Arabic page came back as confident Latin
+    /// nonsense. It means "find out" now: Vision's own detection reads the page properly,
+    /// measured at 195 Arabic characters against none.
+    @Test("a caller that states nothing gets the script detected, not assumed")
+    func silenceMeansDetect() throws {
+        let image = try #require(mixedScriptImage())
+        let lines = try VisionOCR().recognize(image: image, languages: [], correctsLanguage: false)
+        let text = lines.map(\.text).joined(separator: " ")
+        #expect(text.contains(Self.arabic), "nothing was stated, so the script had to be found: \(text)")
+        #expect(text.contains(Self.latin), "finding the script must not cost the Latin line: \(text)")
+    }
+
+    @Test("the option a caller states nothing in stays empty on its way to the engine")
     func defaultStaysEngineDefault() throws {
         let url = try blankPDF()
         defer { try? FileManager.default.removeItem(at: url) }
