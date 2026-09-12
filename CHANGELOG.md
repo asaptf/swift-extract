@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] — 2026-09-12
+
+Ingest now says how far it turned each page before reading it.
+
+### Added
+
+- **`DocumentInspection.pageRotations`.** Boxes come back in the frame the text reads upright
+  in, not the frame the page is stored in — a page fed sideways into a scanner is turned
+  before it is read. Ingest knew the turn and kept it, so an application rendering the page
+  for a person to look at had no way to turn it the same way: every box it drew over such a
+  page landed somewhere the value was not. Measured on a six-page scanned invoice, three of
+  whose pages are on their side: all sixty-three boxes on one of them fell in the margins and
+  over unrelated text; with the turn applied to the render, all sixty-three land on their
+  values.
+
+  Keyed by page index, in clockwise degrees. A page that was read as it stands is **absent**
+  rather than zero, so a caller cannot rotate by a phantom turn.
+
 ## [0.8.4] — 2026-09-11
 
 A page can now say what alphabet it is printed in.
