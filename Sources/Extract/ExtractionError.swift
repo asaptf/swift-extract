@@ -24,6 +24,9 @@ public enum ExtractionError: Error, Sendable, LocalizedError {
     /// spent on hidden reasoning is the usual reason there is nothing to read.
     case emptyModelResponse(cap: Int?)
 
+    /// A page was to be read as a picture by a backend that cannot look at one.
+    case cannotReadImages
+
     case mergeFailed(String)
     /// Internal / unexpected condition.
     case internalError(String)
@@ -48,6 +51,11 @@ public enum ExtractionError: Error, Sendable, LocalizedError {
                 "The model returned nothing.\(limit) A reasoning model can spend its whole "
                 + "response budget on hidden thinking and leave no answer; raise the cap, or "
                 + "use a model that answers directly."
+        case .cannotReadImages:
+            return
+                "This model cannot read a page image. Reading the page as a picture needs a "
+                + "vision model; the alternative is to read its text, which is what the "
+                + "document type asked not to rely on."
         case .mergeFailed(let message):
             return "Failed to merge chunked extraction results: \(message)"
         case .internalError(let message):

@@ -13,6 +13,12 @@ import UniformTypeIdentifiers
 /// Input adapters for extraction.
 public enum ExtractionSource: Sendable {
     case text(String)
+    /// One page, given as both its text and its picture.
+    ///
+    /// The text is what grounding and provenance are computed from — a box on the page is what
+    /// lets an operator see where a value came from — while the picture is what the model
+    /// reads. A vision model given the page does not inherit the mistakes OCR already made.
+    case page(text: String, images: [PageImage])
     case pdf(URL)
     case image(CGImage)
     /// Sniffs the file type via UTType and routes to the appropriate adapter.

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A page can now be read as a picture.** `ExtractionSource.page(text:images:)` hands the model
+  the page raster while grounding and provenance keep working off the text, and `PageImage`
+  carries the bytes. Why: OCR is where the stubborn errors live — a tariff `64039993900` read as
+  `54039993900`, a part number `S1PL ESD` glued into `SIPLESD` — and a model only copies what
+  OCR handed it, which is why two models three sizes apart made exactly the same mistakes
+  (97.29% and 97.38% on the same document). A 3 GB vision model reading the page image got both
+  right, in twenty seconds a page.
+
+  `ExtractionGenerating` gains `readsImages` and an images-aware `generate`. An engine that
+  cannot see is **refused** the page rather than handed one it would ignore: falling back to the
+  text a caller asked not to rely on is the kind of wrong that looks right.
+
 - **`ExtractionError.emptyModelResponse(cap:)` — a model that answers nothing now says so.**
   Measured: a reasoning model (Qwen3.6-27B) spent its whole response cap on hidden thinking and
   returned an empty `content` with `finish_reason: "length"`. The engine passed that empty

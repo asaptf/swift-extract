@@ -23,6 +23,10 @@ enum SourceIngester {
             switch source {
             case .text(let string):
                 return TextAdapter.ingest(string)
+            case .page(let text, let images):
+                var document = TextAdapter.ingest(text)
+                document.pageImages = images
+                return document
             case .pdf(let url):
                 return try PDFAdapter.ingest(url: url, options: options, engines: engines)
             case .image(let cgImage):

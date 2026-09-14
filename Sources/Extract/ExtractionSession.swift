@@ -49,6 +49,31 @@ public struct ExtractionSession: Sendable {
         return raw
     }
 
+    /// Generate with the pages attached as pictures.
+    ///
+    /// Refuses when the backend cannot see: handing a page to an engine that ignores it would
+    /// silently fall back to reading text the caller asked not to rely on.
+    func generate(
+        system: String,
+        user: String,
+        images: [PageImage],
+        settings: GenerationSettings,
+        schema: ExtractionSchema?
+    ) async throws -> String {
+        guard !images.isEmpty else {
+            return try await generate(system: system, user: user, settings: settings, schema: schema)
+        }
+        guard backend.readsImages else {
+            throw ExtractionError.cannotReadImages
+        }
+        let raw = try await backend.generate(
+            system: system, user: user, images: images, settings: settings, schema: schema)
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ExtractionError.emptyModelResponse(cap: settings.maximumResponseTokens)
+        }
+        return raw
+    }
+
     /// Stream cumulative model text. Each element is the full text so far (not a delta).
     func streamGenerate(
         system: String,
@@ -95,6 +120,23 @@ package protocol ExtractionGenerating: Sendable {
         schema: ExtractionSchema?
     ) async throws -> String
 
+    /// Whether this engine can look at a page rather than read its text.
+    ///
+    /// Default `false`. An engine that cannot see is **refused** the page instead of being
+    /// handed one it would ignore: extraction that quietly fell back to the text it was told
+    /// not to trust is the kind of wrong that looks right.
+    var readsImages: Bool { get }
+
+    /// Generate with page images attached. The default ignores them, which is why
+    /// ``readsImages`` exists to stop that default being reached with a page in hand.
+    func generate(
+        system: String,
+        user: String,
+        images: [PageImage],
+        settings: GenerationSettings,
+        schema: ExtractionSchema?
+    ) async throws -> String
+
     /// Stream cumulative response text. Default implementation calls ``generate``
     /// once and yields the full string — existing mock conformances keep working.
     func streamGenerate(
@@ -106,6 +148,18 @@ package protocol ExtractionGenerating: Sendable {
 }
 
 extension ExtractionGenerating {
+    public var readsImages: Bool { false }
+
+    public func generate(
+        system: String,
+        user: String,
+        images: [PageImage],
+        settings: GenerationSettings,
+        schema: ExtractionSchema?
+    ) async throws -> String {
+        try await generate(system: system, user: user, settings: settings, schema: schema)
+    }
+
     /// Default: one-shot generate, yield once. Safe for mocks and backends without
     /// true token streaming.
     package func streamGenerate(
@@ -166,6 +220,48 @@ private struct LanguageModelBackend: ExtractionGenerating {
         )
         let response = try await session.respond(to: user, options: options)
         return response.content
+    }
+
+    /// An OpenAI-compatible endpoint may or may not be serving a model that can see; only the
+    /// provider knows, and it answers with an error. What must not happen is the page being
+    /// dropped here in silence, so this says yes and lets the model speak for itself.
+    var readsImages: Bool { true }
+
+    func generate(
+        system: String,
+        user: String,
+        images: [PageImage],
+        settings: GenerationSettings,
+        schema: ExtractionSchema?
+    ) async throws -> String {
+        guard !images.isEmpty else {
+            return try await generate(system: system, user: user, settings: settings, schema: schema)
+        }
+        _ = schema
+        // The pages ride in the transcript, which is what the provider serialises into
+        // `input_image` parts; the question itself stays in the prompt so it is not sent twice.
+        let pages = Transcript.Entry.prompt(
+            Transcript.Prompt(
+                segments: images.map { image in
+                    .image(
+                        Transcript.ImageSegment(
+                            id: "page-\(image.pageIndex)",
+                            source: .data(image.data, mimeType: image.mediaType)))
+                },
+                options: GenerationOptions(),
+                responseFormat: nil
+            )
+        )
+        let transcript = Transcript(entries: [
+            .instructions(Transcript.Instructions(segments: [.text(.init(content: system))], toolDefinitions: [])),
+            pages,
+        ])
+        let session = LanguageModelSession(model: model, transcript: transcript)
+        let options = GenerationOptions(
+            temperature: settings.temperature,
+            maximumResponseTokens: settings.maximumResponseTokens
+        )
+        return try await session.respond(to: user, options: options).content
     }
 
     func streamGenerate(

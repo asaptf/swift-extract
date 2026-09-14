@@ -25,6 +25,12 @@ struct ExtractedDocument: Sendable, Equatable {
     /// for a person to look at has to turn it the same way, or every box it draws lands
     /// somewhere the value is not. Pages that were not turned are absent.
     var pageRotations: [Int: Int]
+    /// Pages to hand the model as pictures rather than as text.
+    ///
+    /// Empty unless the caller asked for it. When present the model is shown the page, which
+    /// is the only way past errors that OCR already made: a tariff digit read wrong is read
+    /// wrong by every model downstream, however large.
+    var pageImages: [PageImage] = []
 
     var isEmpty: Bool {
         fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -129,12 +135,13 @@ struct ExtractedDocument: Sendable, Equatable {
 
     init(
         blocks: [Block], sourceDescription: String, usedOCRFallback: Bool = false,
-        pageRotations: [Int: Int] = [:]
+        pageRotations: [Int: Int] = [:], pageImages: [PageImage] = []
     ) {
         self.blocks = blocks
         self.sourceDescription = sourceDescription
         self.usedOCRFallback = usedOCRFallback
         self.pageRotations = pageRotations
+        self.pageImages = pageImages
     }
 
     init(text: String, sourceDescription: String = "text", usedOCRFallback: Bool = false) {

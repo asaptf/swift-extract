@@ -393,6 +393,7 @@ public enum Extract {
                 raw = try await session.generate(
                     system: PromptBuilder.systemInstructions,
                     user: user,
+                    images: document.pageImages,
                     settings: settings,
                     schema: schema
                 )
@@ -479,6 +480,7 @@ public enum Extract {
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
                 user: user,
+                images: document.pageImages,
                 settings: settings,
                 schema: schema
             )
@@ -542,6 +544,7 @@ public enum Extract {
             let raw = try await session.generate(
                 system: PromptBuilder.systemInstructions,
                 user: user,
+                images: document.pageImages,
                 settings: settings,
                 schema: schema
             )
@@ -683,6 +686,7 @@ public enum Extract {
                 raw = try await session.generate(
                     system: PromptBuilder.systemInstructions,
                     user: user,
+                    images: document.pageImages,
                     settings: settings,
                     schema: schema
                 )
