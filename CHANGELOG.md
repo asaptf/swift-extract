@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] — 2026-09-14
+
+The model can look at the page now, not only at what OCR made of it.
+
 ### Added
 
 - **A page can now be read as a picture.** `ExtractionSource.page(text:images:)` hands the model
