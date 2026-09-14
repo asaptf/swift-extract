@@ -20,6 +20,10 @@ public enum ExtractionError: Error, Sendable, LocalizedError {
     /// ``Extract/from`` always throws this case when invariants fail.
     case validationFailed(attempts: Int, lastError: Error, rawOutput: String)
     /// Chunk merge could not produce a valid combined object.
+    /// The model returned no text at all. `cap` is the response limit in force, because a cap
+    /// spent on hidden reasoning is the usual reason there is nothing to read.
+    case emptyModelResponse(cap: Int?)
+
     case mergeFailed(String)
     /// Internal / unexpected condition.
     case internalError(String)
@@ -38,6 +42,12 @@ public enum ExtractionError: Error, Sendable, LocalizedError {
         case .validationFailed(let attempts, let lastError, _):
             return
                 "Extraction failed validation after \(attempts) attempt(s): \(lastError.localizedDescription)"
+        case .emptyModelResponse(let cap):
+            let limit = cap.map { " The response cap in force was \($0) tokens." } ?? ""
+            return
+                "The model returned nothing.\(limit) A reasoning model can spend its whole "
+                + "response budget on hidden thinking and leave no answer; raise the cap, or "
+                + "use a model that answers directly."
         case .mergeFailed(let message):
             return "Failed to merge chunked extraction results: \(message)"
         case .internalError(let message):

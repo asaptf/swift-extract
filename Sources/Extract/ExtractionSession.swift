@@ -32,12 +32,21 @@ public struct ExtractionSession: Sendable {
         settings: GenerationSettings,
         schema: ExtractionSchema?
     ) async throws -> String {
-        try await backend.generate(
+        let raw = try await backend.generate(
             system: system,
             user: user,
             settings: settings,
             schema: schema
         )
+        // A model that answered nothing is not a model that answered badly. Passing the empty
+        // string on makes the decoder complain that the data is not in the right format, which
+        // sends the reader looking at the schema instead of at the two things that actually
+        // cause this: a response cap consumed before any answer was written — a reasoning model
+        // spends it on hidden thinking — or a backend that dropped the reply.
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ExtractionError.emptyModelResponse(cap: settings.maximumResponseTokens)
+        }
+        return raw
     }
 
     /// Stream cumulative model text. Each element is the full text so far (not a delta).

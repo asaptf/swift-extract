@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ExtractionError.emptyModelResponse(cap:)` — a model that answers nothing now says so.**
+  Measured: a reasoning model (Qwen3.6-27B) spent its whole response cap on hidden thinking and
+  returned an empty `content` with `finish_reason: "length"`. The engine passed that empty
+  string to the decoder, which reported that the data was not in the correct format, retried
+  twice more, and abandoned a six-page document — fifty-five minutes to produce an error
+  pointing at the schema instead of at the cap. The message now names the cap in force and the
+  two things that cause this.
+
 ## [0.9.0] — 2026-09-12
 
 Saying nothing about a page's script now means find out, not assume English.
