@@ -55,6 +55,59 @@ struct FieldProvenanceTests {
         #expect(merchant?.provenance?.boundingBox == box)
     }
 
+    @Test("a disagreed OCR block becomes FieldSignal.agreement")
+    func disagreedBlockAgreementOnSignal() {
+        let box = CGRect(x: 0.10, y: 0.20, width: 0.40, height: 0.04)
+        var glued = ExtractedDocument.Block(text: "SIPLESD", pageIndex: 0, boundingBox: box)
+        glued.agreement = OCRAgreement(matchingPasses: 1, observingPasses: 2)
+        var other = ExtractedDocument.Block(
+            text: "Total 12.50", pageIndex: 0,
+            boundingBox: CGRect(x: 0.10, y: 0.50, width: 0.30, height: 0.04))
+        other.agreement = .unanimous(passes: 2)
+        let value = ProvenanceProbe(
+            merchant: "SIPLESD",
+            total: Decimal(string: "12.5")!,
+            note: nil,
+            items: []
+        )
+        let signals = FieldGrounding.compute(
+            value: value,
+            sourceText: "SIPLESD\nTotal 12.50",
+            attempts: 1,
+            chunksUsed: 1,
+            blocks: [glued, other],
+            tables: []
+        )
+        let merchant = signals.fields.first { $0.path == "merchant" }
+        #expect(merchant?.grounding == .verbatim)
+        #expect(merchant?.agreement == OCRAgreement(matchingPasses: 1, observingPasses: 2))
+        #expect(merchant?.agreement?.isUnanimous == false)
+        let total = signals.fields.first { $0.path == "total" }
+        #expect(total?.agreement == .unanimous(passes: 2))
+    }
+
+    @Test("overlapping fragments take the weakest agreement")
+    func overlappingFragmentsTakeWeakestAgreement() {
+        let box = CGRect(x: 0.10, y: 0.20, width: 0.40, height: 0.04)
+        var agreed = ExtractedDocument.Block(text: "S1PL ESD", pageIndex: 0, boundingBox: box)
+        agreed.agreement = .unanimous(passes: 2)
+        var glued = ExtractedDocument.Block(text: "SIPLESD", pageIndex: 0, boundingBox: box)
+        glued.agreement = OCRAgreement(matchingPasses: 1, observingPasses: 2)
+        let value = ProvenanceProbe(
+            merchant: "SIPLESD", total: 1, note: nil, items: [])
+        let signals = FieldGrounding.compute(
+            value: value,
+            sourceText: "S1PL ESD\nSIPLESD",
+            attempts: 1,
+            chunksUsed: 1,
+            blocks: [agreed, glued],
+            tables: []
+        )
+        let merchant = signals.fields.first { $0.path == "merchant" }
+        #expect(merchant?.grounding == .verbatim)
+        #expect(merchant?.agreement == OCRAgreement(matchingPasses: 1, observingPasses: 2))
+    }
+
     @Test("table-cell match prefers the cell rect over enclosing blocks")
     func tableCellPreferredOverBlock() {
         // A wide block covers the whole line; the cell is a tight sub-rect.
