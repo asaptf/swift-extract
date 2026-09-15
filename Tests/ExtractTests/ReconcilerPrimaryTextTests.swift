@@ -45,16 +45,18 @@ struct ReconcilerPrimaryTextTests {
         #expect(reconciled.first?.alternatives.isEmpty == true)
     }
 
-    /// A line only a later pass saw is not added to the page: that is how the text doubled. It is
-    /// recorded against the nearest line the caller's own pass did read, so it is not lost either.
-    @Test("a line only a later pass saw stays off the page and is kept as evidence")
-    func secondaryOnlyLineIsEvidenceNotText() {
+    /// A reading that sits on top of a line the caller's pass already read is another reading of
+    /// it, and stays off the page: both as text doubled the page and cost thirteen points. A
+    /// line with nothing under it is a gap, and gaps are what a second pass is for — see
+    /// ``ReconcilerGapTests``.
+    @Test("a second reading of a line the caller already has stays evidence, not text")
+    func secondReadingOfTheSameLineIsEvidence() throws {
         let reconciled = OCRReconciler.reconcile([
             [block("43 4051428075268 CN 1,285", y: 0.5)],
-            [block("43 4051428075268 CN 1,285", y: 0.501), block("1,655 3 Pair 53,00", y: 0.53)],
+            [block("43 4051428075268 CN 1,285", y: 0.501), block("43 4051428075268 CN 1.285", y: 0.5005)],
         ])
-        #expect(reconciled.count == 1, "the page keeps the lines the first pass read")
-        #expect(reconciled.first?.alternatives.contains("1,655 3 Pair 53,00") == true)
+        #expect(reconciled.count == 1, "the page keeps one line where the page has one line")
+        #expect(reconciled.first?.alternatives.contains("43 4051428075268 CN 1.285") == true)
     }
 
     @Test("one pass is exactly what it was before any of this existed")
@@ -71,5 +73,56 @@ struct ReconcilerPrimaryTextTests {
         let reconciled = OCRReconciler.reconcile([[block("Total USD 11.771,00", y: 0.2)], []])
         #expect(reconciled.count == 1)
         #expect(reconciled.first?.agreement == OCRAgreement(matchingPasses: 1, observingPasses: 1))
+    }
+}
+
+/// A gap is not a disagreement.
+///
+/// macOS 27's text recogniser drops barcodes this scan used to read: one pass finds 75 of the
+/// 86 printed, another finds 73 — and their union is 83, because they miss *different* ones.
+/// Those eight are not another reading of a line the caller's pass already has; they are lines
+/// it has nothing at all for. Keeping them off the page to avoid doubling it would throw away
+/// the only thing a second pass is good for.
+@Suite("Gaps a later pass fills")
+struct ReconcilerGapTests {
+    private func block(_ text: String, y: CGFloat) -> ExtractedDocument.Block {
+        ExtractedDocument.Block(
+            text: text, pageIndex: 0,
+            boundingBox: CGRect(x: 0.1, y: y, width: 0.6, height: 0.02))
+    }
+
+    @Test("a line the caller's pass did not read at all is added to the page")
+    func gapIsFilled() {
+        let reconciled = OCRReconciler.reconcile([
+            [block("43 CN 1,285 1,655", y: 0.30)],
+            [block("43 4051428075268 CN 1,285 1,655", y: 0.302), block("44 4051428124003 CN", y: 0.40)],
+        ])
+        let texts = reconciled.map(\.text)
+        #expect(
+            texts.contains("44 4051428124003 CN"),
+            "a barcode only the second pass read must reach the page: \(texts)")
+        #expect(reconciled.count == 2, "the disputed line stays one line; the missing line is added")
+    }
+
+    @Test("the line the passes merely read differently is still one line")
+    func disagreementIsStillOneLine() {
+        let reconciled = OCRReconciler.reconcile([
+            [block("ICONIC BLACK LOW S1PL ESD", y: 0.30)],
+            [block("ICONIC BLACK LOW SIPLESD", y: 0.301)],
+        ])
+        #expect(reconciled.count == 1)
+        #expect(reconciled.first?.text == "ICONIC BLACK LOW S1PL ESD")
+        #expect(reconciled.first?.alternatives == ["ICONIC BLACK LOW SIPLESD"])
+    }
+
+    @Test("a line added from a later pass says it came from one")
+    func filledGapIsMarked() {
+        let reconciled = OCRReconciler.reconcile([
+            [block("first", y: 0.1)],
+            [block("first", y: 0.101), block("only the second pass saw this", y: 0.5)],
+        ])
+        let added = reconciled.first { $0.text == "only the second pass saw this" }
+        #expect(added?.agreement == OCRAgreement(matchingPasses: 1, observingPasses: 2))
+        #expect(added?.agreement.isUnanimous == false, "one pass out of two is not agreement")
     }
 }

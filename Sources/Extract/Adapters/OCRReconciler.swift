@@ -103,9 +103,15 @@ enum OCRReconciler {
         return attachOrphans(result, clusters: clusters, observingCount: observingCount)
     }
 
-    /// Clusters that contain no line from the first pass. Their readings become alternatives of
-    /// the nearest kept line; with nothing near, they are dropped rather than printed, and the
-    /// agreement of the line they attach to says the passes did not see the same page.
+    /// Clusters that contain no line from the caller's own pass.
+    ///
+    /// Two kinds, and they are not the same thing. A cluster that sits **on top of** a line the
+    /// caller did read is another reading of it: it stays an alternative, because putting it in
+    /// the page doubles the text and costs more than it buys. A cluster with nothing under it is
+    /// a **gap** — a line the caller's pass missed entirely — and it is added, because filling
+    /// gaps is the whole reason to read a page twice. Measured on macOS 27, whose recogniser
+    /// drops barcodes this scan used to read: one pass finds 75 of 86, another finds 73, and
+    /// their union is 83 because they miss different ones.
     private static func attachOrphans(
         _ kept: [ExtractedDocument.Block],
         clusters: [[PassLine]],
@@ -114,15 +120,33 @@ enum OCRReconciler {
         var blocks = kept
         for cluster in clusters where !cluster.contains(where: { $0.passIndex == 0 }) {
             guard let orphan = cluster.first, !orphan.text.isEmpty else { continue }
-            guard blocks.contains(where: { $0.text == orphan.text }) == false else { continue }
-            guard let nearest = nearestIndex(to: orphan, in: blocks) else { continue }
-            if blocks[nearest].alternatives.contains(orphan.text) { continue }
-            blocks[nearest].alternatives.append(orphan.text)
-            blocks[nearest].agreement = OCRAgreement(
-                matchingPasses: min(blocks[nearest].agreement.matchingPasses, 1),
-                observingPasses: observingCount)
+            guard !blocks.contains(where: { $0.text == orphan.text }) else { continue }
+            if let overlapping = overlappingIndex(of: orphan, in: blocks) {
+                if blocks[overlapping].alternatives.contains(orphan.text) { continue }
+                blocks[overlapping].alternatives.append(orphan.text)
+                blocks[overlapping].agreement = OCRAgreement(
+                    matchingPasses: min(blocks[overlapping].agreement.matchingPasses, 1),
+                    observingPasses: observingCount)
+                continue
+            }
+            var filled = orphan.block
+            filled.text = orphan.text
+            filled.agreement = OCRAgreement(matchingPasses: 1, observingPasses: observingCount)
+            blocks.append(filled)
         }
         return blocks
+    }
+
+    /// The kept line this reading sits on, when there is one.
+    private static func overlappingIndex(of line: PassLine, in blocks: [ExtractedDocument.Block]) -> Int? {
+        guard let box = line.box else { return nil }
+        for (index, block) in blocks.enumerated() {
+            guard block.pageIndex == line.block.pageIndex, let other = block.boundingBox else {
+                continue
+            }
+            if pairScore(other, box) != nil { return index }
+        }
+        return nil
     }
 
     private static func nearestIndex(to line: PassLine, in blocks: [ExtractedDocument.Block]) -> Int? {
