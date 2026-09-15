@@ -83,12 +83,11 @@ enum PDFAdapter {
             let useOCR = wantsOCR[index] ?? false
 
             if useOCR {
-                let ocrBlocks = try OCRAdapter.ocrPDFPage(
-                    page,
+                let ocrBlocks = try ocrPasses(
+                    page: page,
                     pageIndex: index,
                     options: options,
-                    ocr: engines.ocr,
-                    renderer: engines.renderer,
+                    engines: engines,
                     rotation: rotations[index]
                 )
                 if !ocrBlocks.isEmpty {
@@ -127,6 +126,35 @@ enum PDFAdapter {
             usedOCRFallback: usedOCRFallback,
             pageRotations: rotations.filter { $0.value % 360 != 0 }
         )
+    }
+
+    /// Run every resolved OCR pass over `page` and reconcile the lines by geometry.
+    private static func ocrPasses(
+        page: PDFPage,
+        pageIndex: Int,
+        options: ExtractionOptions,
+        engines: IngestContext,
+        rotation: Int?
+    ) throws -> [ExtractedDocument.Block] {
+        let passes = options.resolvedOCRPasses()
+        var passBlocks: [[ExtractedDocument.Block]] = []
+        passBlocks.reserveCapacity(passes.count)
+        for pass in passes {
+            var passOptions = options
+            passOptions.rasterDPI = pass.rasterDPI
+            passOptions.recognitionLanguages = pass.recognitionLanguages
+            passOptions.usesLanguageCorrection = pass.usesLanguageCorrection
+            let blocks = try OCRAdapter.ocrPDFPage(
+                page,
+                pageIndex: pageIndex,
+                options: passOptions,
+                ocr: engines.ocr,
+                renderer: engines.renderer,
+                rotation: rotation
+            )
+            passBlocks.append(blocks)
+        }
+        return OCRReconciler.reconcile(passBlocks)
     }
 
     /// Extract per-word blocks with normalised top-left bounding boxes from a PDF text layer.

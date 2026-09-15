@@ -90,6 +90,18 @@ public struct ExtractionOptions: Sendable, Equatable {
     /// having on a single-script page and worth turning off on a mixed one, where correcting
     /// one script mangles the other. Default `true`, the engine's own default.
     public var usesLanguageCorrection: Bool
+    /// Extra OCR passes over each rasterised page.
+    ///
+    /// Empty (the default) keeps today's single pass from `rasterDPI` /
+    /// `recognitionLanguages` / `usesLanguageCorrection`, so every existing caller is
+    /// unchanged. Two passes with the same settings are dropped: they cannot disagree.
+    ///
+    /// Measured on a six-page scanned invoice: 300 DPI with language correction glued
+    /// `S1PL ESD` into `SIPLESD` and read tariff `64039993900` as `54039993900`; the same
+    /// DPI with correction off got the part number and still missed the tariff; 400 DPI
+    /// got the tariff and dropped a weight token. No single setting is best, and the
+    /// failures do not overlap — which is why a second pass is a signal, not a vote.
+    public var additionalOCRPasses: [OCRPass]
     /// Hard cap on how many tokens the model may produce for one request.
     ///
     /// Nothing downstream can stop a model that will not stop: a repair-prone page can
@@ -111,6 +123,7 @@ public struct ExtractionOptions: Sendable, Equatable {
         autoOrient: Bool = true,
         recognitionLanguages: [String] = [],
         usesLanguageCorrection: Bool = true,
+        additionalOCRPasses: [OCRPass] = [],
         maximumResponseTokens: Int? = nil
     ) {
         self.maxRetries = maxRetries
@@ -126,7 +139,33 @@ public struct ExtractionOptions: Sendable, Equatable {
         self.autoOrient = autoOrient
         self.recognitionLanguages = recognitionLanguages
         self.usesLanguageCorrection = usesLanguageCorrection
+        self.additionalOCRPasses = additionalOCRPasses
         self.maximumResponseTokens = maximumResponseTokens
+    }
+
+    /// The primary pass plus any extra settings the caller asked for, duplicates removed.
+    ///
+    /// Order is preserved so the first pass is always today's `rasterDPI` /
+    /// `recognitionLanguages` / `usesLanguageCorrection`.
+    public func resolvedOCRPasses() -> [OCRPass] {
+        var passes = [
+            OCRPass(
+                rasterDPI: rasterDPI,
+                recognitionLanguages: recognitionLanguages,
+                usesLanguageCorrection: usesLanguageCorrection
+            )
+        ]
+        for extra in additionalOCRPasses {
+            let pass = OCRPass(
+                rasterDPI: extra.rasterDPI,
+                recognitionLanguages: extra.recognitionLanguages,
+                usesLanguageCorrection: extra.usesLanguageCorrection
+            )
+            if !passes.contains(pass) {
+                passes.append(pass)
+            }
+        }
+        return passes
     }
 
     /// Resolve sampling temperature: explicit options override, else session.

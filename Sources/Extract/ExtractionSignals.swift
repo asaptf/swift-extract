@@ -109,11 +109,20 @@ public struct FieldSignal: Sendable, Equatable {
     /// Always `nil` for ``Grounding/reformatted`` and ``Grounding/absent``. Also `nil`
     /// when the source has no boxes or the match could not be tied to a rectangle.
     public let provenance: FieldProvenance?
+    /// Agreement of the OCR block this leaf was located in, when the source was
+    /// rasterised more than once. Nil when there was no geometry to score.
+    public let agreement: OCRAgreement?
 
-    public init(path: String, grounding: Grounding, provenance: FieldProvenance? = nil) {
+    public init(
+        path: String,
+        grounding: Grounding,
+        provenance: FieldProvenance? = nil,
+        agreement: OCRAgreement? = nil
+    ) {
         self.path = path
         self.grounding = grounding
         self.provenance = provenance
+        self.agreement = agreement
     }
 }
 
@@ -207,6 +216,7 @@ enum FieldGrounding {
         let box: CGRect
         /// True when this fragment is a reconstructed table cell (preferred over blocks).
         let isTableCell: Bool
+        let agreement: OCRAgreement?
     }
 
     /// Precomputed source views shared across every leaf of one ``compute`` call.
@@ -247,7 +257,8 @@ enum FieldGrounding {
                             text: text,
                             pageIndex: table.pageIndex,
                             box: box,
-                            isTableCell: true
+                            isTableCell: true,
+                            agreement: nil
                         )
                     )
                 }
@@ -263,7 +274,8 @@ enum FieldGrounding {
                         text: text,
                         pageIndex: page,
                         box: box,
-                        isTableCell: false
+                        isTableCell: false,
+                        agreement: block.agreement
                     )
                 )
             }
@@ -281,6 +293,30 @@ enum FieldGrounding {
     private struct LeafOutcome {
         let grounding: Grounding
         let provenance: FieldProvenance?
+    }
+
+    private static func signal(path: String, outcome: LeafOutcome, source: SourceIndex) -> FieldSignal {
+        FieldSignal(
+            path: path,
+            grounding: outcome.grounding,
+            provenance: outcome.provenance,
+            agreement: agreement(for: outcome.provenance, source: source)
+        )
+    }
+
+    /// Agreement of the OCR fragments whose boxes sit on this provenance.
+    ///
+    /// A leaf located on a disagreed line inherits that disagreement; a union of
+    /// several fragments takes the weakest score among them. Fragments without a
+    /// score (table cells, a text layer) contribute nothing.
+    private static func agreement(for provenance: FieldProvenance?, source: SourceIndex) -> OCRAgreement? {
+        guard let provenance else { return nil }
+        let overlapping = source.fragments.compactMap { fragment -> OCRAgreement? in
+            guard fragment.pageIndex == provenance.pageIndex else { return nil }
+            guard fragment.box.intersects(provenance.boundingBox) else { return nil }
+            return fragment.agreement
+        }
+        return OCRAgreement.weakest(overlapping)
     }
 
     /// Compute per-leaf grounding of `value` against `sourceText`.
@@ -401,7 +437,8 @@ enum FieldGrounding {
                 // an explicit row so callers can distinguish considered-null from
                 // a missing signal.
                 guard let childJSON = object[key], !(childJSON is NSNull) else {
-                    fields.append(FieldSignal(path: childPath, grounding: .reformatted, provenance: nil))
+                    fields.append(
+                        FieldSignal(path: childPath, grounding: .reformatted, provenance: nil, agreement: nil))
                     seen.insert(key)
                     continue
                 }
@@ -412,7 +449,8 @@ enum FieldGrounding {
                 guard let childSchema = properties[key] else { continue }
                 let childPath = path.isEmpty ? key : "\(path).\(key)"
                 if childJSON is NSNull {
-                    fields.append(FieldSignal(path: childPath, grounding: .reformatted, provenance: nil))
+                    fields.append(
+                        FieldSignal(path: childPath, grounding: .reformatted, provenance: nil, agreement: nil))
                 } else {
                     walk(json: childJSON, schema: childSchema, path: childPath, source: source, fields: &fields)
                 }
@@ -429,32 +467,26 @@ enum FieldGrounding {
         case .string:
             if schema.format == "date-time" {
                 let outcome = dateGrounding(json: json, source: source)
-                fields.append(
-                    FieldSignal(path: path, grounding: outcome.grounding, provenance: outcome.provenance)
-                )
+                fields.append(signal(path: path, outcome: outcome, source: source))
             } else if let string = json as? String {
                 let outcome = stringGrounding(string, source: source)
-                fields.append(
-                    FieldSignal(path: path, grounding: outcome.grounding, provenance: outcome.provenance)
-                )
+                fields.append(signal(path: path, outcome: outcome, source: source))
             } else {
                 // Encoded non-string for a string schema (unusual) — treat as reformatted.
-                fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil))
+                fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil, agreement: nil))
             }
 
         case .number, .integer:
             let outcome = numberGrounding(json: json, source: source)
-            fields.append(
-                FieldSignal(path: path, grounding: outcome.grounding, provenance: outcome.provenance)
-            )
+            fields.append(signal(path: path, outcome: outcome, source: source))
 
         case .boolean:
             // Booleans are not groundable against free text; report reformatted.
-            fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil))
+            fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil, agreement: nil))
 
         case .null:
             // Explicit null is not groundable; report reformatted.
-            fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil))
+            fields.append(FieldSignal(path: path, grounding: .reformatted, provenance: nil, agreement: nil))
         }
     }
 

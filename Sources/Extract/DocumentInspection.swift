@@ -15,11 +15,20 @@ public struct PositionedBlock: Sendable, Equatable {
     public let pageIndex: Int
     /// Normalised top-left bounding box.
     public let boundingBox: CGRect
+    /// How many OCR passes produced this reading, out of how many actually read
+    /// this region. One pass is `1/1`.
+    public let agreement: OCRAgreement
 
-    public init(text: String, pageIndex: Int, boundingBox: CGRect) {
+    public init(
+        text: String,
+        pageIndex: Int,
+        boundingBox: CGRect,
+        agreement: OCRAgreement = OCRAgreement(matchingPasses: 1, observingPasses: 1)
+    ) {
         self.text = text
         self.pageIndex = pageIndex
         self.boundingBox = boundingBox
+        self.agreement = agreement
     }
 }
 
@@ -104,7 +113,8 @@ extension Extract {
         let text = document.fullText
         let positionedBlocks = document.blocks.compactMap { block -> PositionedBlock? in
             guard let box = block.boundingBox, let page = block.pageIndex else { return nil }
-            return PositionedBlock(text: block.text, pageIndex: page, boundingBox: box)
+            return PositionedBlock(
+                text: block.text, pageIndex: page, boundingBox: box, agreement: block.agreement)
         }
         return DocumentInspection(
             sourceDescription: document.sourceDescription,

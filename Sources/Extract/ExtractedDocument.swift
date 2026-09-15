@@ -12,6 +12,9 @@ struct ExtractedDocument: Sendable, Equatable {
         /// **top-left**, x right / y down, components in `0...1` relative to the page
         /// media box or image size. See ``FieldProvenance``.
         var boundingBox: CGRect?
+        /// How many OCR passes produced this reading, out of how many actually read
+        /// this region. Default is one unanimous pass — today's ingest.
+        var agreement: OCRAgreement = OCRAgreement(matchingPasses: 1, observingPasses: 1)
     }
 
     var blocks: [Block]

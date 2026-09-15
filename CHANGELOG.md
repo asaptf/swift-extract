@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+A wrong cell looks exactly like a right one. Of the 15 wrong cells on the best run of
+a six-page scanned invoice, all 15 were verbatim-grounded, because OCR is what got
+them wrong. Grounding proves fidelity to OCR, not to the page — there was no signal
+that separated a misread from a good reading.
+
+Different OCR settings fail differently on that document. 300 DPI with language
+correction glued `S1PL ESD` into `SIPLESD` and read the tariff `64039993900` as
+`54039993900`; the same DPI with correction off got the part number and still missed
+the tariff; 400 DPI got the tariff and dropped a weight token. No single setting is
+best, and the failures do not overlap.
+
+### Added
+
+- **Several OCR passes over the same page.** `ExtractionOptions.additionalOCRPasses`
+  describes extra ingest settings (DPI, language correction, languages). Empty — the
+  default — is today's single pass, so every existing caller is unchanged. Two passes
+  with the same settings are dropped: they cannot disagree.
+
+  Reconciliation is per line, by geometry. Lines that agree become one block with
+  full agreement. Lines that disagree both survive; silently picking a winner would
+  recreate the problem this exists to solve. A pass that returns nothing for a page
+  is a failed pass, not a vote against it.
+
+  `ExtractedDocument.Block`, `PositionedBlock` and `FieldSignal` carry `OCRAgreement`
+  (how many passes produced this reading, out of how many actually read that part of
+  the page).
+
 ## [0.10.0] — 2026-09-14
 
 The model can look at the page now, not only at what OCR made of it.
