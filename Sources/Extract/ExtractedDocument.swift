@@ -87,12 +87,17 @@ struct ExtractedDocument: Sendable, Equatable {
             return blocks.map(\.text).joined(separator: "\n")
         }
 
+        let typical = typicalHeight(of: blocks)
+        // A total order, so the grouping below is the only thing deciding lines. "On the same
+        // line" is not transitive — a word can share a line with each of two words that do not
+        // share one with each other — and using it as a sort comparator left the order
+        // unspecified, which is how a size ended up on a line of its own.
         let sorted = blocks.sorted { a, b in
             switch (a.boundingBox, b.boundingBox) {
             case (let aBox?, let bBox?):
-                if !sameReadingLine(aBox, bBox) {
-                    return aBox.minY < bBox.minY
-                }
+                let aY = lineAnchor(aBox, typical: typical)
+                let bY = lineAnchor(bBox, typical: typical)
+                if aY != bY { return aY < bY }
                 return aBox.minX < bBox.minX
             case (_?, nil):
                 return true
@@ -104,14 +109,15 @@ struct ExtractedDocument: Sendable, Equatable {
         }
 
         var lines: [String] = []
-        var currentLine: [String] = []
-        var currentLineBox: CGRect?
+        var currentLine: [ExtractedDocument.Block] = []
+        var currentAnchor: CGFloat?
 
         func flushLine() {
             guard !currentLine.isEmpty else { return }
-            lines.append(currentLine.joined(separator: " "))
+            let ordered = currentLine.sorted { ($0.boundingBox?.minX ?? 0) < ($1.boundingBox?.minX ?? 0) }
+            lines.append(ordered.map(\.text).joined(separator: " "))
             currentLine = []
-            currentLineBox = nil
+            currentAnchor = nil
         }
 
         for block in sorted {
@@ -120,27 +126,41 @@ struct ExtractedDocument: Sendable, Equatable {
                 lines.append(block.text)
                 continue
             }
-            if let lineBox = currentLineBox, sameReadingLine(lineBox, box) {
-                currentLine.append(block.text)
-                currentLineBox = lineBox.union(box)
+            let anchor = lineAnchor(box, typical: typical)
+            // Measured against the line's *first* word, never against a box grown to cover
+            // everything admitted so far: a line that had swallowed a token half a row down
+            // was then measured as a line and a half tall and swallowed the row below it too.
+            if let currentAnchor, abs(anchor - currentAnchor) <= max(typical * 0.6, 0.008) {
+                currentLine.append(block)
             } else {
                 flushLine()
-                currentLine = [block.text]
-                currentLineBox = box
+                currentLine = [block]
+                currentAnchor = anchor
             }
         }
         flushLine()
         return lines.joined(separator: "\n")
     }
 
-    private static func sameReadingLine(_ a: CGRect, _ b: CGRect) -> Bool {
-        let overlap = max(0, min(a.maxY, b.maxY) - max(a.minY, b.minY))
-        let minH = min(a.height, b.height)
-        if minH > 0, overlap / minH >= 0.25 {
-            return true
-        }
-        let tol = max(max(a.height, b.height) * 0.6, 0.008)
-        return abs(a.midY - b.midY) <= tol
+    /// Where a block sits vertically, for the purpose of deciding which line it is on.
+    ///
+    /// The middle of its *first line's worth* of box rather than the middle of the box. OCR
+    /// hands back a wrecked barcode three line-heights tall — measured, `1051428063351` came
+    /// back with a height of 0.0262 where its neighbours are 0.0087 — and such a box overlaps
+    /// two or three rows equally well. Its top edge is still where its text starts, so that is
+    /// what places it.
+    static func lineAnchor(_ box: CGRect, typical: CGFloat) -> CGFloat {
+        box.minY + min(box.height, typical) / 2
+    }
+
+    /// A robust idea of how tall one line of this page is: the median block height.
+    ///
+    /// The median rather than the mean, because the outliers are exactly the boxes this has to
+    /// be robust to.
+    static func typicalHeight(of blocks: [Block]) -> CGFloat {
+        let heights = blocks.compactMap { $0.boundingBox?.height }.filter { $0 > 0 }.sorted()
+        guard !heights.isEmpty else { return 0.008 }
+        return heights[heights.count / 2]
     }
 
     init(
