@@ -18,17 +18,27 @@ public struct PositionedBlock: Sendable, Equatable {
     /// How many OCR passes produced this reading, out of how many actually read
     /// this region. One pass is `1/1`.
     public let agreement: OCRAgreement
+    /// What the other passes read at this same place, when they read something else.
+    ///
+    /// These stay off the page — putting both readings in the text doubled it and cost
+    /// thirteen points — but a caller that knows what a field is *supposed* to look like can
+    /// use them. Measured on the customer invoice: the primary pass reads `63314` and
+    /// `AIRTWIST ... FO HRO SRI` where another pass, at the same geometry, reads `633140` and
+    /// `AIRTWIST ... FO HRO SR`. Without this the better reading was taken and thrown away.
+    public let alternatives: [String]
 
     public init(
         text: String,
         pageIndex: Int,
         boundingBox: CGRect,
-        agreement: OCRAgreement = OCRAgreement(matchingPasses: 1, observingPasses: 1)
+        agreement: OCRAgreement = OCRAgreement(matchingPasses: 1, observingPasses: 1),
+        alternatives: [String] = []
     ) {
         self.text = text
         self.pageIndex = pageIndex
         self.boundingBox = boundingBox
         self.agreement = agreement
+        self.alternatives = alternatives
     }
 }
 
@@ -114,7 +124,8 @@ extension Extract {
         let positionedBlocks = document.blocks.compactMap { block -> PositionedBlock? in
             guard let box = block.boundingBox, let page = block.pageIndex else { return nil }
             return PositionedBlock(
-                text: block.text, pageIndex: page, boundingBox: box, agreement: block.agreement)
+                text: block.text, pageIndex: page, boundingBox: box, agreement: block.agreement,
+                alternatives: block.alternatives)
         }
         return DocumentInspection(
             sourceDescription: document.sourceDescription,
