@@ -144,6 +144,7 @@ enum PDFAdapter {
             passOptions.rasterDPI = pass.rasterDPI
             passOptions.recognitionLanguages = pass.recognitionLanguages
             passOptions.usesLanguageCorrection = pass.usesLanguageCorrection
+            passOptions.sharpen = pass.sharpen
             let blocks = try OCRAdapter.ocrPDFPage(
                 page,
                 pageIndex: pageIndex,

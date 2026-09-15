@@ -102,6 +102,9 @@ public struct ExtractionOptions: Sendable, Equatable {
     /// got the tariff and dropped a weight token. No single setting is best, and the
     /// failures do not overlap — which is why a second pass is a signal, not a vote.
     public var additionalOCRPasses: [OCRPass]
+    /// Sharpening applied to a rendered page before it is read. `nil` (the default) renders
+    /// as before. See ``UnsharpMask`` for what it is worth and where it stops helping.
+    public var sharpen: UnsharpMask?
     /// Hard cap on how many tokens the model may produce for one request.
     ///
     /// Nothing downstream can stop a model that will not stop: a repair-prone page can
@@ -124,6 +127,7 @@ public struct ExtractionOptions: Sendable, Equatable {
         recognitionLanguages: [String] = [],
         usesLanguageCorrection: Bool = true,
         additionalOCRPasses: [OCRPass] = [],
+        sharpen: UnsharpMask? = nil,
         maximumResponseTokens: Int? = nil
     ) {
         self.maxRetries = maxRetries
@@ -140,6 +144,7 @@ public struct ExtractionOptions: Sendable, Equatable {
         self.recognitionLanguages = recognitionLanguages
         self.usesLanguageCorrection = usesLanguageCorrection
         self.additionalOCRPasses = additionalOCRPasses
+        self.sharpen = sharpen
         self.maximumResponseTokens = maximumResponseTokens
     }
 
@@ -152,14 +157,16 @@ public struct ExtractionOptions: Sendable, Equatable {
             OCRPass(
                 rasterDPI: rasterDPI,
                 recognitionLanguages: recognitionLanguages,
-                usesLanguageCorrection: usesLanguageCorrection
+                usesLanguageCorrection: usesLanguageCorrection,
+                sharpen: sharpen
             )
         ]
         for extra in additionalOCRPasses {
             let pass = OCRPass(
                 rasterDPI: extra.rasterDPI,
                 recognitionLanguages: extra.recognitionLanguages,
-                usesLanguageCorrection: extra.usesLanguageCorrection
+                usesLanguageCorrection: extra.usesLanguageCorrection,
+                sharpen: extra.sharpen
             )
             if !passes.contains(pass) {
                 passes.append(pass)

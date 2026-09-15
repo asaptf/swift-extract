@@ -55,14 +55,18 @@ public struct OCRPass: Sendable, Equatable {
     public var rasterDPI: Double
     public var recognitionLanguages: [String]
     public var usesLanguageCorrection: Bool
+    /// Sharpening applied to the render before it is read. See ``UnsharpMask``.
+    public var sharpen: UnsharpMask?
 
     public init(
         rasterDPI: Double = 300,
         recognitionLanguages: [String] = [],
-        usesLanguageCorrection: Bool = true
+        usesLanguageCorrection: Bool = true,
+        sharpen: UnsharpMask? = nil
     ) {
         self.rasterDPI = rasterDPI
         self.recognitionLanguages = recognitionLanguages
         self.usesLanguageCorrection = usesLanguageCorrection
+        self.sharpen = sharpen
     }
 }

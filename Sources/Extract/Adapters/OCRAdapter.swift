@@ -14,7 +14,7 @@ enum OCRAdapter {
         ocr: OCRRecognizing = VisionOCR()
     ) throws -> [ExtractedDocument.Block] {
         let lines = try ocr.recognize(
-            image: cgImage,
+            image: PageSharpening.applying(options.sharpen, to: cgImage),
             languages: options.recognitionLanguages,
             correctsLanguage: options.usesLanguageCorrection)
         return try blocks(from: lines, pageIndex: pageIndex)
@@ -47,7 +47,7 @@ enum OCRAdapter {
             return []
         }
         let lines = try ocr.recognize(
-            image: image,
+            image: PageSharpening.applying(options.sharpen, to: image),
             languages: options.recognitionLanguages,
             correctsLanguage: options.usesLanguageCorrection)
         return try blocks(from: lines, pageIndex: pageIndex)

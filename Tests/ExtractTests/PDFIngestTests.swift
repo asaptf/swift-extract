@@ -24,7 +24,7 @@ struct PDFIngestTests {
         #expect(page.rotation == 90)
     }
 
-    @Test("render uses 300 DPI by default and clamps to 400")
+    @Test("render uses 300 DPI by default and clamps to 1200")
     func renderDPI() throws {
         let url = try makePDF(text: "X", size: CGSize(width: 72, height: 144))
         defer { try? FileManager.default.removeItem(at: url) }
@@ -34,9 +34,14 @@ struct PDFIngestTests {
         #expect(at300.width == 300)
         #expect(at300.height == 600)
 
-        let clamped = try #require(PDFKitRenderer.render(page: page, dpi: 800))
-        #expect(clamped.width == 400)
-        #expect(clamped.height == 800)
+        // 600 is a setting worth having: it reads ten more of a scanned invoice's 86
+        // barcodes than 300 does, and it used to be handed back as 400 without a word.
+        let at600 = try #require(PDFKitRenderer.render(page: page, dpi: 600))
+        #expect(at600.width == 600)
+
+        let clamped = try #require(PDFKitRenderer.render(page: page, dpi: 2000))
+        #expect(clamped.width == 1200)
+        #expect(clamped.height == 2400)
 
         #expect(PDFKitRenderer.clampedDPI(12) == 72)
         #expect(PDFKitRenderer.clampedDPI(300) == 300)
