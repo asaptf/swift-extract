@@ -15,6 +15,13 @@ struct ExtractedDocument: Sendable, Equatable {
         /// How many OCR passes produced this reading, out of how many actually read
         /// this region. Default is one unanimous pass — today's ingest.
         var agreement: OCRAgreement = OCRAgreement(matchingPasses: 1, observingPasses: 1)
+        /// What the other passes read here, when they read something else.
+        ///
+        /// Deliberately **not** part of the page text. Keeping both readings as text doubled
+        /// the page — 13 388 characters against 11 769 on the customer invoice, a first line of
+        /// `PIP PIP VISM VISM` — and the model read the doubled page at 84.21% where one pass
+        /// reads 97.38%. A disagreement is a fact about a line, not a second line.
+        var alternatives: [String] = []
     }
 
     var blocks: [Block]

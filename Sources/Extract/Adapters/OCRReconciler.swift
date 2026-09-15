@@ -75,17 +75,69 @@ enum OCRReconciler {
 
         var result: [ExtractedDocument.Block] = []
         for cluster in clusters {
-            let byText = Dictionary(grouping: cluster, by: \.text)
-            for (text, lines) in byText {
-                let representative = lines[0].block
-                var block = representative
-                block.text = text.isEmpty ? representative.text : text
-                block.agreement = OCRAgreement(
-                    matchingPasses: lines.count, observingPasses: observingCount)
-                result.append(block)
+            // A cluster the caller's own pass never saw is not a line of this page; it is
+            // handled below as evidence against the nearest line that pass did read.
+            guard cluster.contains(where: { $0.passIndex == 0 }) else { continue }
+            // The first pass is the one the caller configured; its reading is the page. Other
+            // readings are evidence hung off that line, never text of their own — putting them
+            // in the text is what doubled the page and cost thirteen points of accuracy.
+            let primary = cluster.min { $0.passIndex < $1.passIndex }
+            guard let anchor = primary ?? cluster.first else { continue }
+            let text = anchor.text.isEmpty ? anchor.block.text : anchor.text
+            var block = anchor.block
+            block.text = text
+            let matching = cluster.filter { $0.text == text }.count
+            block.agreement = OCRAgreement(
+                matchingPasses: matching, observingPasses: observingCount)
+            var seen: Set<String> = [text]
+            block.alternatives = cluster.compactMap { line in
+                guard !line.text.isEmpty, !seen.contains(line.text) else { return nil }
+                seen.insert(line.text)
+                return line.text
+            }
+            result.append(block)
+        }
+        // A line only a later pass saw is not added to the page either: it is recorded against
+        // the nearest line the caller's own pass did read, so the disagreement survives without
+        // the model ever being shown text its configured pass did not produce.
+        return attachOrphans(result, clusters: clusters, observingCount: observingCount)
+    }
+
+    /// Clusters that contain no line from the first pass. Their readings become alternatives of
+    /// the nearest kept line; with nothing near, they are dropped rather than printed, and the
+    /// agreement of the line they attach to says the passes did not see the same page.
+    private static func attachOrphans(
+        _ kept: [ExtractedDocument.Block],
+        clusters: [[PassLine]],
+        observingCount: Int
+    ) -> [ExtractedDocument.Block] {
+        var blocks = kept
+        for cluster in clusters where !cluster.contains(where: { $0.passIndex == 0 }) {
+            guard let orphan = cluster.first, !orphan.text.isEmpty else { continue }
+            guard blocks.contains(where: { $0.text == orphan.text }) == false else { continue }
+            guard let nearest = nearestIndex(to: orphan, in: blocks) else { continue }
+            if blocks[nearest].alternatives.contains(orphan.text) { continue }
+            blocks[nearest].alternatives.append(orphan.text)
+            blocks[nearest].agreement = OCRAgreement(
+                matchingPasses: min(blocks[nearest].agreement.matchingPasses, 1),
+                observingPasses: observingCount)
+        }
+        return blocks
+    }
+
+    private static func nearestIndex(to line: PassLine, in blocks: [ExtractedDocument.Block]) -> Int? {
+        guard let box = line.box else { return blocks.isEmpty ? nil : 0 }
+        var best: (index: Int, distance: CGFloat)?
+        for (index, block) in blocks.enumerated() {
+            guard block.pageIndex == line.block.pageIndex, let other = block.boundingBox else {
+                continue
+            }
+            let distance = abs(other.midY - box.midY)
+            if best == nil || distance < best!.distance {
+                best = (index, distance)
             }
         }
-        return result
+        return best?.index
     }
 
     /// IoU when both boxes exist; otherwise only identical-nil pairs, so a line

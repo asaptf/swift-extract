@@ -70,7 +70,7 @@ struct MultiPassOCRTests {
         #expect(document.blocks[0].agreement.isUnanimous)
     }
 
-    @Test("two passes that disagree keep both readings and mark them")
+    @Test("two passes that disagree keep the caller's reading and mark the line")
     func disagreeingPassesKeepBoth() throws {
         let url = try makePDF(text: "")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -86,9 +86,11 @@ struct MultiPassOCRTests {
         var options = ExtractionOptions(textLayerPolicy: .never, autoOrient: false)
         options.additionalOCRPasses = [OCRPass(rasterDPI: 400, usesLanguageCorrection: false)]
         let document = try PDFAdapter.ingest(url: url, options: options, engines: IngestContext(ocr: ocr))
-        let texts = Set(document.blocks.map(\.text))
-        #expect(texts == ["S1PL ESD", "SIPLESD"])
-        #expect(document.blocks.count == 2)
+        // One line of page text — the caller's own pass — with the other reading kept beside
+        // it. Both as text doubled the page and cost the model thirteen points of accuracy.
+        #expect(document.blocks.count == 1)
+        #expect(document.blocks.first?.text == "S1PL ESD")
+        #expect(document.blocks.first?.alternatives == ["SIPLESD"])
         for block in document.blocks {
             #expect(block.agreement == OCRAgreement(matchingPasses: 1, observingPasses: 2))
             #expect(!block.agreement.isUnanimous)
@@ -165,9 +167,8 @@ struct MultiPassOCRTests {
         options.additionalOCRPasses = [OCRPass(rasterDPI: 400, usesLanguageCorrection: false)]
         let inspection = try await Extract.inspect(
             .pdf(url), options: options, ingest: IngestContext(ocr: ocr))
-        let texts = Set(inspection.positionedBlocks.map(\.text))
-        #expect(texts == ["64039993900", "54039993900"])
-        #expect(inspection.positionedBlocks.count == 2)
+        #expect(inspection.positionedBlocks.map(\.text) == ["64039993900"])
+        #expect(inspection.positionedBlocks.count == 1, "a disputed line is one line, not two")
         for block in inspection.positionedBlocks {
             #expect(block.agreement == OCRAgreement(matchingPasses: 1, observingPasses: 2))
         }
