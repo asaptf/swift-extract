@@ -17,7 +17,8 @@ enum OCRAdapter {
             image: PageSharpening.applying(options.sharpen, to: cgImage),
             languages: options.recognitionLanguages,
             correctsLanguage: options.usesLanguageCorrection)
-        return try blocks(from: lines, pageIndex: pageIndex)
+        return try blocks(
+            from: lines, pageIndex: pageIndex, languages: options.recognitionLanguages)
     }
 
     /// - Parameter rotation: the turn already decided for this page — by
@@ -50,7 +51,8 @@ enum OCRAdapter {
             image: PageSharpening.applying(options.sharpen, to: image),
             languages: options.recognitionLanguages,
             correctsLanguage: options.usesLanguageCorrection)
-        return try blocks(from: lines, pageIndex: pageIndex)
+        return try blocks(
+            from: lines, pageIndex: pageIndex, languages: options.recognitionLanguages)
     }
 
     /// Renders and reads **every** quarter turn at the probe DPI, then takes the one that
@@ -90,9 +92,15 @@ enum OCRAdapter {
         return OrientationDetector.choose(scores: scores)
     }
 
-    static func blocks(from lines: [RecognizedLine], pageIndex: Int?) -> [ExtractedDocument.Block] {
-        lines.compactMap { line in
-            let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func blocks(
+        from lines: [RecognizedLine], pageIndex: Int?, languages: [String] = []
+    ) -> [ExtractedDocument.Block] {
+        let latinOnly = LatinLookalikes.onlyLatinRequested(languages)
+        return lines.compactMap { line in
+            var text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if latinOnly {
+                text = LatinLookalikes.normalised(text)
+            }
             guard !text.isEmpty else { return nil }
             return ExtractedDocument.Block(
                 text: text,
