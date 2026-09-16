@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-16
+
+macOS 27's text recogniser reads a scanned barcode worse than its predecessor did, and a
+document type can now do something about it. On a six-page scanned invoice its 86 barcodes
+went from read to wrecked: `4051428062848` came back as `4051428062848ŘšÍ`, the bars under
+the digits read as accented letters, and `4051428063364` as `105142806331`. Reading the same
+page more than once, and letting the caller see where the readings differ, is what recovers
+them.
+
 A wrong cell looks exactly like a right one. Of the 15 wrong cells on the best run of
 a six-page scanned invoice, all 15 were verbatim-grounded, because OCR is what got
 them wrong. Grounding proves fidelity to OCR, not to the page — there was no signal
@@ -33,6 +42,58 @@ best, and the failures do not overlap.
   `ExtractedDocument.Block`, `PositionedBlock` and `FieldSignal` carry `OCRAgreement`
   (how many passes produced this reading, out of how many actually read that part of
   the page).
+
+- **What the other passes read reaches the caller.** `PositionedBlock.alternatives` carries
+  the readings that lost, so a caller that knows what a field is supposed to look like can
+  settle a disagreement its own way. They stay out of `fullText`: putting both readings in the
+  page text doubled it — 13 388 characters against 11 769 — and the model read the doubled
+  page at 84.21% where one pass reads 97.38%. Measured: the sharpened 600 DPI pass, the best
+  single reader of that invoice's barcodes, reads the article number `633140` as `63314` and a
+  description ending `FO HRO SR` as `FO HRO SRI`, while a plain 300 DPI pass reads both
+  correctly at the same geometry.
+
+- **`ExtractionOptions.sharpen` and `OCRPass.sharpen` — an unsharp mask before the read.**
+  `UnsharpMask(radius:intensity:)`, off by default. A scan has soft edges and a barcode's
+  digits are printed small directly under its bars, and macOS 27's recogniser reads that
+  softness as noise: one whole article block came back as nothing but its size numbers, no
+  barcode, country, weights or prices. Of the 86 barcodes a plain 600 DPI render yields 75 and
+  the same render at radius 2.5, intensity 1.5 yields 82, including two rows that had read as
+  blank. It is not free in either direction — radius 4 and above reads *worse* than not
+  sharpening — which is why it is a setting with numbers behind it rather than a default.
+
+### Changed
+
+- **The DPI ceiling is 1200, not 400.** A caller that asked for 600 was quietly handed 400.
+  Of the same 86 barcodes, 300 DPI reads 63, 400 reads 69, 600 reads 73, and 1200 falls back
+  to 68 — finer rendering keeps helping until the scan's own grain starts being read as text.
+  The ceiling is now where the measurements stop helping rather than where they stopped being
+  taken.
+
+- **A line only a later pass read is added to the page when the first pass has nothing there.**
+  A reading that sits on top of a line the primary pass already read is still a second reading
+  of it and stays evidence; a reading with nothing under it is a gap, and gaps are what a
+  second pass is for.
+
+- **A pass restricted to Latin-script languages no longer returns Cyrillic or Greek letters.**
+  The country of origin `KH` came back as `KН` — Latin `K` then U+041D CYRILLIC CAPITAL LETTER
+  EN, drawn identically. It failed the caller's ISO 3166 check, the model dropped the field
+  rather than emit it, and three single-row articles lost their country. Such a pass had no
+  Cyrillic model loaded to read a Cyrillic letter with, so one in its output is a glyph it
+  confused. Only characters drawn the same are mapped, and a pass that asks for Arabic,
+  Russian or Greek — or asks for nothing and lets the recogniser choose — is untouched.
+
+### Fixed
+
+- **One line of a table is one row, whatever shape OCR boxed it.** A garbled barcode came back
+  boxed three line-heights tall — 0.0262 where its neighbours are 0.0087 — and such a box
+  overlaps two rows equally well, so every word of both joined it. One size ended up alone on
+  its own line and the next line carried two rows' worth of values; downstream, that shifted a
+  block's weights, quantities and amounts by one row. Growing the line's box as words were
+  admitted made it worse: a line that had swallowed a token half a row down was then measured
+  as a line and a half tall and swallowed the row below that. A block is now placed by the
+  middle of its first line's worth of box, with the line height taken as the page's median,
+  and each line is measured against its first word. The sort is a total order too — "on the
+  same line" is not transitive, so it could not be the comparator.
 
 ## [0.10.0] — 2026-09-14
 
