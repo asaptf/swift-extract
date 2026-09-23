@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-09-23
+
+A scan can be given a searchable text layer only by a caller that knows which of its pages
+were scanned. This release says so, page by page.
+
+### Added
+
+- **Which pages were OCR'd, page by page.** `DocumentInspection.pageSources` maps a page
+  index to `.textLayer` or `.ocr`. The gate that decides this has always run per page;
+  only its answer was missing. `usedOCRFallback` says that *some* page of the document was
+  OCR'd, and a caller that wants to give a scan a searchable text layer cannot act on that:
+  on the merge an office printer produces — a digital cover sheet bound in front of scanned
+  pages — it would stamp recognised text over the cover's own text and double it.
+
+  Recorded where a page is finished with, not where it is sent. A page routed to OCR that
+  comes back with nothing falls through to its text layer, and says `.textLayer`. A page
+  that yielded no text at all is absent. An image is page zero, read by OCR.
+
+  Additive: the member defaults to empty, `usedOCRFallback` is unchanged, and no existing
+  caller reads differently.
+
 ## [0.11.0] — 2026-09-16
 
 macOS 27's text recogniser reads a scanned barcode worse than its predecessor did, and a
