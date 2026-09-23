@@ -35,6 +35,9 @@ struct ExtractedDocument: Sendable, Equatable {
     /// for a person to look at has to turn it the same way, or every box it draws lands
     /// somewhere the value is not. Pages that were not turned are absent.
     var pageRotations: [Int: Int]
+    /// Where each page's text came from, keyed by page index. Pages that yielded no text
+    /// are absent; see ``PageTextSource``.
+    var pageSources: [Int: PageTextSource]
     /// Pages to hand the model as pictures rather than as text.
     ///
     /// Empty unless the caller asked for it. When present the model is shown the page, which
@@ -165,12 +168,14 @@ struct ExtractedDocument: Sendable, Equatable {
 
     init(
         blocks: [Block], sourceDescription: String, usedOCRFallback: Bool = false,
-        pageRotations: [Int: Int] = [:], pageImages: [PageImage] = []
+        pageRotations: [Int: Int] = [:], pageSources: [Int: PageTextSource] = [:],
+        pageImages: [PageImage] = []
     ) {
         self.blocks = blocks
         self.sourceDescription = sourceDescription
         self.usedOCRFallback = usedOCRFallback
         self.pageRotations = pageRotations
+        self.pageSources = pageSources
         self.pageImages = pageImages
     }
 
@@ -184,6 +189,7 @@ struct ExtractedDocument: Sendable, Equatable {
         self.sourceDescription = sourceDescription
         self.usedOCRFallback = usedOCRFallback
         self.pageRotations = [:]
+        self.pageSources = [:]
     }
 
     /// Split into character-budget chunks, preferring page boundaries.
@@ -229,7 +235,8 @@ struct ExtractedDocument: Sendable, Equatable {
                     blocks: currentBlocks,
                     sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)",
                     usedOCRFallback: usedOCRFallback,
-                    pageRotations: pageRotations
+                    pageRotations: pageRotations,
+                    pageSources: pageSources
                 )
             )
             currentBlocks = []
@@ -245,7 +252,8 @@ struct ExtractedDocument: Sendable, Equatable {
                             blocks: [Block(text: slice, pageIndex: item.page, boundingBox: nil)],
                             sourceDescription: "\(sourceDescription)#chunk\(result.count + 1)",
                             usedOCRFallback: usedOCRFallback,
-                            pageRotations: pageRotations
+                            pageRotations: pageRotations,
+                            pageSources: pageSources
                         )
                     )
                 }

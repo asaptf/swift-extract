@@ -42,6 +42,22 @@ public struct PositionedBlock: Sendable, Equatable {
     }
 }
 
+/// Where one page's text came from.
+///
+/// The choice is made per page and it is already made — ``TextLayerQuality/shouldOCR(text:policy:threshold:)``
+/// decides it for every page of every PDF — but its answer used to stay inside ingest, where
+/// the only thing published was ``DocumentInspection/usedOCRFallback``: one flag saying that
+/// *some* page of the document was OCR'd. A caller that wants to give a scan a text layer
+/// cannot act on one flag. On a merged PDF — a digital cover sheet bound in front of scanned
+/// pages, which is what an office printer produces — it would stamp recognised text over the
+/// cover's real text and double it.
+public enum PageTextSource: String, Sendable, Equatable {
+    /// The page's own text layer, as the PDF stores it.
+    case textLayer
+    /// OCR over a render of the page.
+    case ocr
+}
+
 /// Result of inspecting a document **without** calling a language model.
 ///
 /// Used by the evaluation harness (survey mode, anchors, pairing checks) and any
@@ -79,6 +95,13 @@ public struct DocumentInspection: Sendable, Equatable {
     /// for a person to look at must turn it the same way; otherwise every box it draws over
     /// that page lands somewhere the value is not. Pages that were not turned are absent.
     public let pageRotations: [Int: Int]
+    /// Where each page's text came from, keyed by page index.
+    ///
+    /// A page is here when it yielded text, and its value says what produced that text —
+    /// what actually happened, not what was asked for: a page sent to OCR that came back
+    /// with nothing, and fell through to its own text layer, reads ``PageTextSource/textLayer``.
+    /// A page that yielded no text at all is absent.
+    public let pageSources: [Int: PageTextSource]
 
     public init(
         sourceDescription: String,
@@ -87,7 +110,8 @@ public struct DocumentInspection: Sendable, Equatable {
         usedOCRFallback: Bool,
         positionedBlocks: [PositionedBlock],
         tables: [ExtractedTable],
-        pageRotations: [Int: Int] = [:]
+        pageRotations: [Int: Int] = [:],
+        pageSources: [Int: PageTextSource] = [:]
     ) {
         self.sourceDescription = sourceDescription
         self.characterCount = characterCount
@@ -96,6 +120,7 @@ public struct DocumentInspection: Sendable, Equatable {
         self.positionedBlocks = positionedBlocks
         self.tables = tables
         self.pageRotations = pageRotations
+        self.pageSources = pageSources
     }
 }
 
@@ -134,7 +159,8 @@ extension Extract {
             usedOCRFallback: document.usedOCRFallback,
             positionedBlocks: positionedBlocks,
             tables: tables,
-            pageRotations: document.pageRotations
+            pageRotations: document.pageRotations,
+            pageSources: document.pageSources
         )
     }
 

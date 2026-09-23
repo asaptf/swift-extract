@@ -51,6 +51,10 @@ enum PDFAdapter {
 
         var blocks: [ExtractedDocument.Block] = []
         var usedOCRFallback = false
+        // Recorded where each page is finished with, not where it is sent: a page routed to
+        // OCR that comes back empty is read from its text layer after all, and a caller
+        // stamping a text layer onto a scan has to be told which of those happened.
+        var sources: [Int: PageTextSource] = [:]
 
         // Which way each scanned page fell is decided across the whole document before any of
         // it is read: a sheet whose direction its own probe cannot settle takes it from the
@@ -93,6 +97,7 @@ enum PDFAdapter {
                 if !ocrBlocks.isEmpty {
                     blocks.append(contentsOf: ocrBlocks)
                     usedOCRFallback = true
+                    sources[index] = .ocr
                     continue
                 }
                 if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -118,13 +123,15 @@ enum PDFAdapter {
                     ExtractedDocument.Block(text: trimmed, pageIndex: index, boundingBox: nil)
                 )
             }
+            sources[index] = .textLayer
         }
 
         return ExtractedDocument(
             blocks: blocks,
             sourceDescription: sourceDescription,
             usedOCRFallback: usedOCRFallback,
-            pageRotations: rotations.filter { $0.value % 360 != 0 }
+            pageRotations: rotations.filter { $0.value % 360 != 0 },
+            pageSources: sources
         )
     }
 

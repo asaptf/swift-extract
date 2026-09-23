@@ -31,7 +31,9 @@ enum SourceIngester {
                 return try PDFAdapter.ingest(url: url, options: options, engines: engines)
             case .image(let cgImage):
                 let blocks = try OCRAdapter.recognize(cgImage: cgImage, options: options, ocr: engines.ocr)
-                return ExtractedDocument(blocks: blocks, sourceDescription: "image")
+                return ExtractedDocument(
+                    blocks: blocks, sourceDescription: "image",
+                    pageSources: blocks.isEmpty ? [:] : [0: .ocr])
             case .fileURL(let url):
                 return try ingestFile(url: url, options: options, engines: engines)
             }
@@ -60,7 +62,9 @@ enum SourceIngester {
                     throw ExtractionError.unreadableSource(underlying: nil)
                 }
                 let blocks = try OCRAdapter.recognize(cgImage: cgImage, options: options, ocr: engines.ocr)
-                return ExtractedDocument(blocks: blocks, sourceDescription: url.lastPathComponent)
+                return ExtractedDocument(
+                    blocks: blocks, sourceDescription: url.lastPathComponent,
+                    pageSources: blocks.isEmpty ? [:] : [0: .ocr])
             }
             if type.conforms(to: .text) || type.conforms(to: .plainText) || type.conforms(to: .utf8PlainText) {
                 let text = try String(contentsOf: url, encoding: .utf8)
@@ -78,7 +82,9 @@ enum SourceIngester {
                 throw ExtractionError.unreadableSource(underlying: nil)
             }
             let blocks = try OCRAdapter.recognize(cgImage: cgImage, options: options, ocr: engines.ocr)
-            return ExtractedDocument(blocks: blocks, sourceDescription: url.lastPathComponent)
+            return ExtractedDocument(
+                blocks: blocks, sourceDescription: url.lastPathComponent,
+                pageSources: blocks.isEmpty ? [:] : [0: .ocr])
         case "txt", "md", "csv", "json", "html", "xml":
             let text = try String(contentsOf: url, encoding: .utf8)
             return TextAdapter.ingest(text)
