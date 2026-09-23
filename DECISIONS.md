@@ -482,3 +482,55 @@ Why this matters more than it looks: a wrongly turned page is not garbled, it is
 in the wrong order*. OCR returns the footer first and every row is stitched to the wrong
 cells — 16 of 86 line items lost and 8 invented on the document above, 60% cell accuracy
 against ground truth where the upright pages scored 97%. Silent, plausible, wrong.
+
+### Word order settles what the scores cannot (0.13.0)
+
+A coin toss that is marked is still a coin toss. On clean print the probe marked the page and
+guessed, and the guess was wrong often enough to see: a sheet scanned upside down was reported
+as needing no turn, one scanned at 270° as needing 270°. Vision read those pages anyway — right
+text, right boxes — so nothing looked wrong until a caller laid the text back over the page,
+and every word landed at the mirrored end of its line.
+
+Word order was measured again on 2026-09-23, on macOS 27, and this time it separates the two
+ends of an axis cleanly. This Vision reports a box per **word** for any character range inside
+it, and a space at x = 0. Leave the spaces out, leave out lines lying down the page — their
+words share an x-centre give or take noise — and compare the first word's centre with the
+last's against the direction the script is written in:
+
+| | upright turn | its opposite |
+| --- | --- | --- |
+| clean synthetic print, 36 lines | 36 upright | 36 upside down |
+| customer invoice, 300 DPI, per page | 25–47 upright, 0 upside down | 0 upright, 23–49 upside down |
+| customer invoice, 72 DPI probe, per page | 14–32 upright, 0 upside down | a few short lines misread as upright — 38 characters against 450 on the worst page |
+
+At 300 DPI the scores on that invoice cannot tell direction at all — page two scored 1992
+upright and 2109 upside down — and the order still can. At the probe's 72 DPI the scores
+decide every page, but with less room than the note above suggests on this OS: page six came
+out at 1.41 on one run and 1.19 — ambiguous — on the next, page five at 1.22.
+
+What the old detector did wrong is not known for certain. It averaged the first and last three
+positions of a line, spaces included, and read lines that were never filtered for lying down
+the page. What is known is that the order, read this way, now agrees with the score on every
+page where the score is decisive.
+
+So the lines settle a direction, **only where the scores leave it a coin toss**:
+
+- Each probe is a witness: lines upright at a turn speak for it, lines upside down at its
+  opposite speak for it too. The winner needs three times the characters of the loser and at
+  least three witnesses — one legible line gives two, so a heading or a stamp settles nothing.
+- A settled page is no longer ambiguous and votes in cross-page resolution like any decisive
+  page.
+- A direction the scores settle is never reopened. On the customer invoice the two agree on
+  every page, and extraction accuracy was measured on those turns. Inspected with its document
+  type's settings before and after this change, that invoice keeps the same turns, the same
+  1151 blocks in the same boxes, and text identical to one run of the old engine — Vision's text
+  is not identical run to run: four runs of the old engine gave three versions, a character or
+  two apart. At 600 DPI 244 of its lines read upright, 907 give no order, and none reads
+  upside down.
+- Right-to-left scripts are judged by their own direction: an upright Arabic line has its first
+  word at the right. The direction is the first letter's, the rule Unicode and CoreText use.
+
+The same judgement is published per line as `PositionedBlock.lineOrientation`. A page is turned
+before it is read, so almost every line is `.upright`; a line that is not is one a caller laying
+text back over the page has to lay half a turn round — which is what happens to every line when
+orientation is switched off, and to every line of an image, which is never turned.

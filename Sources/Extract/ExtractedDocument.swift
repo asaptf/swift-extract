@@ -22,6 +22,8 @@ struct ExtractedDocument: Sendable, Equatable {
         /// `PIP PIP VISM VISM` — and the model read the doubled page at 84.21% where one pass
         /// reads 97.38%. A disagreement is a fact about a line, not a second line.
         var alternatives: [String] = []
+        /// Which way up an OCR line stood in the frame ``boundingBox`` is in; see ``LineOrientation``.
+        var lineOrientation: LineOrientation = .unknown
     }
 
     var blocks: [Block]

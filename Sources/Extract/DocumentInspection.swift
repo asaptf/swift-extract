@@ -26,20 +26,46 @@ public struct PositionedBlock: Sendable, Equatable {
     /// `AIRTWIST ... FO HRO SRI` where another pass, at the same geometry, reads `633140` and
     /// `AIRTWIST ... FO HRO SR`. Without this the better reading was taken and thrown away.
     public let alternatives: [String]
+    /// Which way up the line stood in the frame ``boundingBox`` is measured in.
+    ///
+    /// Almost always `.upright`: the page is turned before it is read. A line read upside down
+    /// has the right text and the right box, and its words run the opposite way along that box,
+    /// so a caller that lays the text back over the page — a searchable text layer — has to lay
+    /// such a line turned half a turn inside its box, or every word lands at the mirrored end.
+    public let lineOrientation: LineOrientation
 
     public init(
         text: String,
         pageIndex: Int,
         boundingBox: CGRect,
         agreement: OCRAgreement = OCRAgreement(matchingPasses: 1, observingPasses: 1),
-        alternatives: [String] = []
+        alternatives: [String] = [],
+        lineOrientation: LineOrientation = .unknown
     ) {
         self.text = text
         self.pageIndex = pageIndex
         self.boundingBox = boundingBox
         self.agreement = agreement
         self.alternatives = alternatives
+        self.lineOrientation = lineOrientation
     }
+}
+
+/// Which way up a line of OCR text stood in the frame its box is measured in.
+///
+/// Told from the order of the line's words along its box, against the direction its script is
+/// written in — Vision reads a line upside down as well as the right way up, and the order is
+/// the one thing about the reading that changes.
+public enum LineOrientation: String, Sendable, Equatable {
+    /// The words run along the box the way the script is written: left to right for Latin,
+    /// right to left for Arabic.
+    case upright
+    /// The words run the other way: the line stood half a turn round in this frame.
+    case upsideDown
+    /// Nothing to tell it by — a line of one word, a line lying down the page, an OCR engine that
+    /// gives no per-character positions — or no reading at all: a text layer's words are laid
+    /// as the PDF stores them.
+    case unknown
 }
 
 /// Where one page's text came from.
@@ -150,7 +176,7 @@ extension Extract {
             guard let box = block.boundingBox, let page = block.pageIndex else { return nil }
             return PositionedBlock(
                 text: block.text, pageIndex: page, boundingBox: box, agreement: block.agreement,
-                alternatives: block.alternatives)
+                alternatives: block.alternatives, lineOrientation: block.lineOrientation)
         }
         return DocumentInspection(
             sourceDescription: document.sourceDescription,

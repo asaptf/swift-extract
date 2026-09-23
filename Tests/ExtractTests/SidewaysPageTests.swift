@@ -9,43 +9,87 @@ import Testing
 /// A scan fed sideways into the scanner is a landscape page with `/Rotate = 0` and its
 /// content lying on its side. Vision reads such a page at **both** 90° and 270° — the text
 /// comes back legible either way — so a detector that only renders one of them and guesses
-/// the other from character order is guessing with no signal. Measured on a six-page customer
-/// invoice: the upright turn scored about four times the upside-down one, and the guess went
-/// the wrong way on every sideways page, which put the footer first and cost the whole table.
+/// the other is guessing. Measured on a six-page customer invoice: the upright turn scored
+/// about four times the upside-down one, and the old guess went the wrong way on every
+/// sideways page, which put the footer first and cost the whole table.
+///
+/// On clean print the scores cannot tell the two ends of the axis apart, and the words can:
+/// the upside-down reading has every line running backwards. So on this fixture the direction
+/// is asserted, and the proof it is right is the reading order — the header first.
 @Suite("Sideways pages")
 struct SidewaysPageTests {
     static let header = "HEADER INVOICE NUMBER VR1493952"
     static let footer = "FOOTER LINE"
 
     @Test(
-        "a page whose content lies on its side is put back on its axis and read",
+        "a page whose content lies on its side is turned the right way up and read",
         arguments: [true, false]
     )
-    func sidewaysPageIsTurnedOntoItsAxis(clockwise: Bool) throws {
+    func sidewaysPageIsTurnedUpright(clockwise: Bool) async throws {
         let url = try makeSidewaysPDF(clockwise: clockwise)
         defer { try? FileManager.default.removeItem(at: url) }
         let document = try #require(PDFDocument(url: url))
         let page = try #require(document.page(at: 0))
         #expect(page.rotation == 0, "the fixture carries no /Rotate — the content itself is sideways")
 
-        let decision = OCRAdapter.orientation(page: page, ocr: VisionOCR(), renderer: PDFKitRenderer())
-        #expect(decision.rotation % 180 == 90, "a sideways page has to be turned onto its axis")
+        // On the ingest queue, as ingest reads: Vision called straight from a test parks a
+        // cooperative-pool thread, and enough tests doing that at once wedge the suite.
+        let decision = try await IngestExecutor.run {
+            OCRAdapter.orientation(page: page, ocr: VisionOCR(), renderer: PDFKitRenderer())
+        }
+        // Drawn turned a quarter clockwise, the sheet reads upright turned three quarters more.
+        #expect(decision.rotation == (clockwise ? 270 : 90), "turned \(decision.rotation)")
+        #expect(!decision.isAmbiguous, "every line reads backwards the wrong way up: \(decision)")
 
         var options = ExtractionOptions()
         options.textLayerPolicy = .never
-        let blocks = try OCRAdapter.ocrPDFPage(
-            page, pageIndex: 0, options: options, ocr: VisionOCR(), renderer: PDFKitRenderer(),
-            rotation: decision.rotation)
+        let blocks = try await IngestExecutor.run {
+            try OCRAdapter.ocrPDFPage(
+                page, pageIndex: 0, options: options, ocr: VisionOCR(), renderer: PDFKitRenderer(),
+                rotation: decision.rotation)
+        }
         let texts = blocks.map { $0.text.uppercased() }
-        #expect(texts.contains { $0.contains("HEADER") }, "header not read: \(texts.prefix(3))")
-        #expect(texts.contains { $0.contains("FOOTER") }, "footer not read: \(texts.suffix(3))")
+        #expect(texts.first?.contains("HEADER") == true, "read from the wrong end: \(texts.prefix(3))")
+        #expect(texts.last?.contains("FOOTER") == true, "footer not last: \(texts.suffix(3))")
+    }
 
-        // Deliberately not asserting *which* way round: this fixture is clean print, and clean
-        // print reads the same upside-down — 1711 against 1728 when measured. The probe says so
-        // rather than pretending, and a real document settles such a page from its peers
-        // (`OrientationDetector.resolve`). Asserting a direction here would be asserting a
-        // coin toss and would go green or red with the weather.
-        #expect(decision.isAmbiguous, "clean print gives no direction; the probe must admit it")
+    /// The same clean print scanned upside down. Its two readings score within a percent of each
+    /// other, and it used to be reported as needing no turn at all — read footer first, every
+    /// line's words at the mirrored end of its box.
+    @Test("a clean page scanned upside down is turned the right way up")
+    func upsideDownPageIsTurnedUpright() async throws {
+        let url = try makeTurnedPDF(quarterTurns: 2)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let page = try #require(PDFDocument(url: url)?.page(at: 0))
+        let decision = try await IngestExecutor.run {
+            OCRAdapter.orientation(page: page, ocr: VisionOCR(), renderer: PDFKitRenderer())
+        }
+        #expect(decision.rotation == 180, "\(decision)")
+        #expect(!decision.isAmbiguous)
+
+        var options = ExtractionOptions()
+        options.textLayerPolicy = .never
+        let inspection = try await Extract.inspect(.fileURL(url), tableDetection: .off, options: options)
+        #expect(inspection.pageRotations == [0: 180])
+        let blocks = inspection.positionedBlocks
+        #expect(blocks.first?.text.uppercased().contains("HEADER") == true, "\(blocks.prefix(2).map(\.text))")
+        #expect(!blocks.contains { $0.lineOrientation == .upsideDown }, "read upright, no line runs backwards")
+    }
+
+    /// A caller that turned detection off gets the page as stored, and the lines are the only
+    /// thing left that can say they were read upside down.
+    @Test("with orientation off, an upside-down page's lines say they read upside down")
+    func upsideDownLinesSaySo() async throws {
+        let url = try makeTurnedPDF(quarterTurns: 2)
+        defer { try? FileManager.default.removeItem(at: url) }
+        var options = ExtractionOptions()
+        options.textLayerPolicy = .never
+        options.autoOrient = false
+        let inspection = try await Extract.inspect(.fileURL(url), tableDetection: .off, options: options)
+        #expect(inspection.pageRotations.isEmpty)
+        let orientations = inspection.positionedBlocks.map(\.lineOrientation)
+        #expect(!orientations.contains(.upright), "\(orientations)")
+        #expect(orientations.filter { $0 == .upsideDown }.count >= 30, "\(orientations)")
     }
 
     /// The turn is not only an internal step. Boxes come back in the turned frame, so an
@@ -83,6 +127,11 @@ struct SidewaysPageTests {
     /// dense small print it reads both ways almost equally well, and that is where a
     /// detector that never renders the fourth quarter turn has to guess.
     private func makeSidewaysPDF(clockwise: Bool) throws -> URL {
+        try makeTurnedPDF(quarterTurns: clockwise ? 1 : 3)
+    }
+
+    /// The grainy upright page drawn turned clockwise by `quarterTurns` quarter turns.
+    private func makeTurnedPDF(quarterTurns: Int) throws -> URL {
         let upright = try makeUprightPDF()
         defer { try? FileManager.default.removeItem(at: upright) }
         let document = try #require(PDFDocument(url: upright))
@@ -92,7 +141,10 @@ struct SidewaysPageTests {
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("extract-sideways-\(UUID().uuidString).pdf")
-        var box = CGRect(x: 0, y: 0, width: media.height, height: media.width)
+        let sideways = quarterTurns % 2 == 1
+        var box =
+            sideways
+            ? CGRect(x: 0, y: 0, width: media.height, height: media.width) : CGRect(origin: .zero, size: media.size)
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
             let pdf = CGContext(consumer: consumer, mediaBox: &box, nil)
@@ -103,12 +155,18 @@ struct SidewaysPageTests {
         pdf.setFillColor(CGColor(gray: 1, alpha: 1))
         pdf.fill(box)
         pdf.saveGState()
-        if clockwise {
+        switch quarterTurns % 4 {
+        case 1:
             pdf.translateBy(x: 0, y: media.width)
             pdf.rotate(by: -.pi / 2)
-        } else {
+        case 2:
+            pdf.translateBy(x: media.width, y: media.height)
+            pdf.rotate(by: .pi)
+        case 3:
             pdf.translateBy(x: media.height, y: 0)
             pdf.rotate(by: .pi / 2)
+        default:
+            break
         }
         pdf.draw(scan, in: media)
         pdf.restoreGState()

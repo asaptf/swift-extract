@@ -88,6 +88,89 @@ struct OrientationDetectorTests {
         #expect(OrientationDetector.resolve(mixed)[1]?.rotation == 90)
     }
 
+    // MARK: - Settling a direction from the lines
+
+    /// The failure measured on 2026-09-23: a clean sheet scanned upside down scores within 1%
+    /// either way up and was reported as needing no turn. Vision still read every line of it —
+    /// and read every one with its words running backwards, which the scores never look at.
+    @Test("a direction the scores cannot tell apart is settled by which way the words run")
+    func lineOrderSettlesAnUpsideDownPage() {
+        let readings = [
+            0: lines(8, .backwards, confidence: 1.0),
+            90: lines(8, .sideways, confidence: 1.0),
+            180: lines(8, .forwards, confidence: 0.99),
+            270: lines(8, .sideways, confidence: 1.0),
+        ]
+        #expect(OrientationDetector.choose(scores: readings.mapValues(OrientationDetector.axisScore)).rotation == 0)
+        let decision = OrientationDetector.choose(readings: readings)
+        #expect(decision.rotation == 180)
+        #expect(!decision.isAmbiguous, "a page whose every line runs backwards is not a coin toss")
+    }
+
+    /// The second measured failure: a sheet fed in sideways, whose two readings along the axis
+    /// scored 1711 and 1728. The better-scoring one is the upside-down one.
+    @Test("a sideways page is turned the way its words run forwards")
+    func lineOrderSettlesASidewaysPage() {
+        let readings = [
+            0: lines(8, .sideways, confidence: 1.0),
+            90: lines(8, .forwards, confidence: 0.99),
+            180: lines(8, .sideways, confidence: 1.0),
+            270: lines(8, .backwards, confidence: 1.0),
+        ]
+        let decision = OrientationDetector.choose(readings: readings)
+        #expect(decision.rotation == 90)
+        #expect(!decision.isAmbiguous)
+    }
+
+    /// Every page of the customer's scanned invoice is decided by its scores, and on every one
+    /// the lines agree: the upright turn had no line reading backwards. What the scores settle
+    /// is still not reopened — a page read one way yesterday is read the same way today, and
+    /// extraction accuracy was measured on those turns.
+    @Test("a direction the scores already settle is not reopened")
+    func decisiveScoresAreKept() {
+        let readings = [
+            0: lines(8, .backwards, confidence: 1.0),
+            180: lines(2, .forwards, confidence: 1.0),
+        ]
+        let decision = OrientationDetector.choose(readings: readings)
+        #expect(decision.rotation == 0)
+        #expect(!decision.isAmbiguous)
+    }
+
+    @Test("one line is not enough to settle a page")
+    func thinEvidenceStaysAmbiguous() {
+        let readings = [
+            0: lines(1, .backwards, confidence: 1.0) + lines(7, .undecided, confidence: 1.0),
+            180: lines(8, .undecided, confidence: 0.99),
+        ]
+        let decision = OrientationDetector.choose(readings: readings)
+        #expect(decision.isAmbiguous)
+        #expect(decision.rotation == 0)
+    }
+
+    @Test("lines that contradict each other settle nothing")
+    func contradictoryEvidenceStaysAmbiguous() {
+        let readings = [
+            0: lines(4, .forwards, confidence: 1.0) + lines(4, .backwards, confidence: 1.0),
+            180: lines(4, .forwards, confidence: 0.99) + lines(4, .backwards, confidence: 0.99),
+        ]
+        #expect(OrientationDetector.choose(readings: readings).isAmbiguous)
+    }
+
+    /// A page its own words settled is as good a witness to how the stack went through the
+    /// scanner as a page its scores settled.
+    @Test("a page its words settled is a peer the others can follow")
+    func settledPageVotes() {
+        let settled = OrientationDetector.choose(readings: [
+            0: lines(8, .backwards, confidence: 1.0),
+            180: lines(8, .forwards, confidence: 0.99),
+        ])
+        let unsettled = OrientationDecision(rotation: 0, gain: 1, margin: 1.01)
+        let resolved = OrientationDetector.resolve([0: settled, 1: unsettled])
+        #expect(resolved[0]?.rotation == 180)
+        #expect(resolved[1]?.rotation == 180)
+    }
+
     @Test("nothing recognised anywhere leaves the page as it is")
     func emptyStaysUpright() {
         #expect(OrientationDetector.choose(scores: [:]).rotation == 0)
@@ -130,6 +213,35 @@ struct OrientationDetectorTests {
         pdf.closePDF()
         try (data as Data).write(to: url)
         return url
+    }
+
+    /// `undecided` is a line Vision gave no order for: every word at the same centre.
+    private enum Reading { case forwards, backwards, sideways, undecided }
+
+    /// `count` lines of invoice print as Vision returns them for one probe turn.
+    private func lines(_ count: Int, _ reading: Reading, confidence: Double) -> [RecognizedLine] {
+        (0..<count).map { index in
+            let text = "40 40514280752\(index) CN 1,100 53,00"
+            let wide = CGRect(x: 0.1, y: 0.1 + CGFloat(index) * 0.05, width: 0.6, height: 0.02)
+            switch reading {
+            case .forwards:
+                return RecognizedLine(
+                    text: text, boundingBox: wide, confidence: confidence,
+                    characterXs: wordXs(text, from: 0.12, to: 0.66))
+            case .backwards:
+                return RecognizedLine(
+                    text: text, boundingBox: wide, confidence: confidence,
+                    characterXs: wordXs(text, from: 0.66, to: 0.12))
+            case .undecided:
+                return RecognizedLine(
+                    text: text, boundingBox: wide, confidence: confidence,
+                    characterXs: wordXs(text, from: 0.4, to: 0.4))
+            case .sideways:
+                return RecognizedLine(
+                    text: text, boundingBox: CGRect(x: 0.1 + CGFloat(index) * 0.05, y: 0.1, width: 0.02, height: 0.6),
+                    confidence: confidence * 0.3, characterXs: wordXs(text, from: 0.11, to: 0.11))
+            }
+        }
     }
 
     private func line(
