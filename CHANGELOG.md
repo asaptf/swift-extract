@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-09-23
+
+A page read upside down reads perfectly well: the right words, the right boxes, and every
+line's words running the other way along its box. On clean print that happened whenever the
+orientation probe guessed wrong, and nothing said so until a caller laid the text back over the
+page and every word landed at the mirrored end of its line — about 100 pt off on a Letter page.
+
+### Added
+
+- **Which way up each line was read.** `PositionedBlock.lineOrientation` is `.upright`,
+  `.upsideDown` or `.unknown`, told from the order of the line's words along its box against
+  the direction its script is written in — so an upright Arabic line, whose first word is at
+  the right, is upright. A line of one word, a line lying down the page, and a text layer's
+  words are `.unknown`.
+
+  A page is turned before it is read, so almost every line is `.upright`. The ones that are
+  not are what a caller building a searchable text layer has to lay half a turn round: every
+  line of a page read with `autoOrient` off, and of an image, which is never turned.
+
+  Additive: the member defaults to `.unknown`, and nothing that read the blocks before reads
+  them differently.
+
+### Fixed
+
+- **A clean page scanned upside down or sideways is turned the right way up.** Its two
+  readings along an axis score within 1% of each other, and the probe used to mark the page
+  ambiguous and keep whichever scored higher: a sheet scanned at 180° was read as it stood,
+  one scanned at 270° was turned 270°, and both were read footer first. The order of the
+  words now settles such a page — read the right way up they run as written, read upside down
+  they run backwards — and it counts as decided, so pages whose own probe could not tell
+  follow it.
+
+  Only a direction the scores leave a coin toss is looked at again. Measured on macOS 27 on
+  the six-page scanned invoice, inspected with its document type's settings: the same turns,
+  the same 1151 blocks in the same boxes, and text identical to a run of 0.12.0. On that
+  invoice the word order agrees with the scores on every page, at the probe's 72 DPI and at
+  300 DPI, where the scores themselves can no longer tell the two ends of an axis apart.
+
 ## [0.12.0] — 2026-09-23
 
 A scan can be given a searchable text layer only by a caller that knows which of its pages
