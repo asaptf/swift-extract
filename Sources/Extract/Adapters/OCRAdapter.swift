@@ -4,7 +4,8 @@ import PDFKit
 
 enum OCRAdapter {
     /// - Parameter pageIndex: Defaults to `0` — a standalone image *is* page zero, which is
-    ///   the convention ``FieldProvenance`` documents. It used to default to `nil`, and
+    ///   the convention ``FieldProvenance`` documents; frame `n` of a multi-frame image is
+    ///   page `n`. It used to default to `nil`, and
     ///   because provenance requires both a box and a page, every image source silently had
     ///   no provenance at all despite Vision returning boxes for it.
     static func recognize(

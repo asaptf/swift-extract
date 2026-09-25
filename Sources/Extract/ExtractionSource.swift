@@ -33,7 +33,26 @@ extension ExtractionSource {
 // MARK: - Platform image conveniences
 
 extension ExtractionSource {
+    /// One picture, decoded from the bytes of an image file.
+    ///
+    /// Throws for a file of several frames — a fax, a scanner's multi-page TIFF, an animated
+    /// GIF. A picture is one page, and keeping the first frame would drop the rest without a
+    /// word; ``fileURL(_:)`` reads every frame as a page of its own.
     public static func image(data: Data) throws -> ExtractionSource {
+        let frames = CGImageLoader.frameCount(of: data)
+        guard frames <= 1 else {
+            throw ExtractionError.unreadableSource(
+                underlying: NSError(
+                    domain: "Extract",
+                    code: 4,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "The image has \(frames) frames and a picture is one page; "
+                            + "read the file with ExtractionSource.fileURL, which reads every frame as a page"
+                    ]
+                )
+            )
+        }
         guard let cgImage = CGImageLoader.cgImage(from: data) else {
             throw ExtractionError.unreadableSource(
                 underlying: NSError(
@@ -46,6 +65,7 @@ extension ExtractionSource {
         return .image(cgImage)
     }
 
+    /// One picture, decoded from an image file; see ``image(data:)``.
     public static func image(url: URL) throws -> ExtractionSource {
         let data: Data
         do {
@@ -87,8 +107,16 @@ extension ExtractionSource {
 }
 
 enum CGImageLoader {
+    /// The first frame — the whole of an image of one.
     static func cgImage(from data: Data) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
+    /// How many pictures the file holds: one for almost every image, one per page for a fax or a
+    /// multi-page TIFF, one per frame for an animated GIF. A photo's HDR gain map is not a frame.
+    static func frameCount(of data: Data) -> Int {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return 0 }
+        return CGImageSourceGetCount(source)
     }
 }

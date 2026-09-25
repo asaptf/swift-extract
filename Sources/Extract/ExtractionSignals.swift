@@ -84,7 +84,7 @@ public enum Grounding: String, Sendable, Equatable, CaseIterable {
 /// Prefer table-cell geometry when the value matches a reconstructed cell — cell rects
 /// are tighter than the enclosing text blocks.
 public struct FieldProvenance: Sendable, Equatable {
-    /// Zero-based page index (images are page `0`).
+    /// Zero-based page index (an image is page `0`; frame `n` of a multi-frame image is page `n`).
     public let pageIndex: Int
     /// Normalised top-left bounding box (see type docs).
     public let boundingBox: CGRect

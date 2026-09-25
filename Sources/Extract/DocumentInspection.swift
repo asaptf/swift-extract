@@ -3,15 +3,15 @@ import Foundation
 
 /// A text run from ingestion that carried a position: what was read, and where.
 ///
-/// Same geometry convention as ``FieldProvenance`` — ``pageIndex`` is 0-based (images are
-/// page `0`) and ``boundingBox`` is normalised with a **top-left** origin, x right / y
+/// Same geometry convention as ``FieldProvenance`` — ``pageIndex`` is 0-based (an image is
+/// page `0`, frame `n` of a multi-frame image page `n`) and ``boundingBox`` is normalised with a **top-left** origin, x right / y
 /// down. Both are non-optional here: ``DocumentInspection/positionedBlocks`` contains only
 /// blocks that actually carry a position, which is what makes them useful for checking or
 /// drawing provenance without a model call.
 public struct PositionedBlock: Sendable, Equatable {
     /// Text as the PDF text layer or OCR read it.
     public let text: String
-    /// Zero-based page index; images are page `0`.
+    /// Zero-based page index; an image is page `0`, and frame `n` of a multi-frame image page `n`.
     public let pageIndex: Int
     /// Normalised top-left bounding box.
     public let boundingBox: CGRect

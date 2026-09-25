@@ -255,6 +255,9 @@ let receipt: Receipt = try await Extract.from(
     using: session
 )
 
+// From a fax or a multi-page TIFF: every frame is read as a page
+let scanned: Receipt = try await Extract.from(scanURL, using: session)
+
 // With metadata (attempts, raw model output)
 let result = try await Extract.detailed(from: .pdf(pdfURL), using: session)
 print(result.value.total, result.attempts, result.rawModelOutput)

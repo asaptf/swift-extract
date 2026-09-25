@@ -534,3 +534,23 @@ The same judgement is published per line as `PositionedBlock.lineOrientation`. A
 before it is read, so almost every line is `.upright`; a line that is not is one a caller laying
 text back over the page has to lay half a turn round — which is what happens to every line when
 orientation is switched off, and to every line of an image, which is never turned.
+
+## A file of several pictures is several pages (0.14.0)
+
+A fax, a scanner's multi-page TIFF and an animated GIF hold several pictures, and image ingest
+read the first. The rest were not misread; they were absent — no text, no boxes, no page source,
+and nothing in the result to say so.
+
+- **Every frame is a page**, frame `n` page `n`, read as stored. There is no telling a scanned
+  page from a frame of animation by looking at the file, and a frame read that should not have
+  been is visible in the result where a frame dropped is not. A picture is never turned, so
+  neither is a frame.
+- **What is not a frame.** Measured on macOS 27: a JPEG and a HEIC written with an ISO HDR gain
+  map each report one image to ImageIO; the gain map is auxiliary data. A phone photo stays one
+  page.
+- **A frame that cannot be decoded fails the file.** Skipping it would be the same silent hole,
+  one page wide.
+- **The one-picture conveniences refuse, rather than grow a case.** `ExtractionSource.image(data:)`
+  and `image(url:)` decode to `.image(CGImage)`, one picture. A new `ExtractionSource` case for a
+  frame list would break every exhaustive `switch` over the enum; keeping frame 0 is the defect.
+  So they throw for more than one frame and name `fileURL`, which reads them all.
