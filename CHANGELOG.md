@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-09-27
+
+A fax, a scanner's multi-page TIFF and an animated GIF are several pictures in one file, and an
+image file was read as its first. The pages after it were not misread; they were not there — no
+text, no boxes, no page source, and nothing in the result to say anything was missing.
+
+### Fixed
+
+- **Every frame of an image file is read as a page.** `ExtractionSource.fileURL` over a TIFF,
+  GIF, PNG or HEIC holding several frames reads frame `n` as page `n`: its own OCR, its own
+  blocks and boxes, its own `--- Page n+1 ---` in the text, and `.ocr` in
+  `DocumentInspection.pageSources`. A frame that yields no text is absent from the page
+  sources and the frames after it keep their numbers, as a blank PDF page does. Frames are
+  read as stored and never turned, like any picture. A frame that cannot be decoded fails the
+  file rather than leaving a hole in it.
+
+  An image of one frame reads exactly as before. A photo's HDR gain map is not a frame:
+  measured on macOS 27, a JPEG and a HEIC written with an ISO gain map each report one image.
+
+### Changed
+
+- **`ExtractionSource.image(data:)` and `image(url:)` refuse a file of several frames.** Each
+  decodes to one picture, which is one page, and they kept the first frame without a word. They
+  now throw `unreadableSource`, naming the frame count and `ExtractionSource.fileURL`, which
+  reads every frame. A file of one frame decodes as it did.
+
 ## [0.13.0] — 2026-09-23
 
 A page read upside down reads perfectly well: the right words, the right boxes, and every
