@@ -7,14 +7,13 @@ import Foundation
 /// score is below ``ExtractionOptions/textLayerQualityThreshold`` (default 0.85).
 public enum TextLayerQuality {
     public static func score(_ text: String) -> Double {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = withoutFormatCharacters(text).trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return 0
         }
 
         let scalars = trimmed.unicodeScalars
-        let junkControls = CharacterSet.controlCharacters.subtracting(.whitespacesAndNewlines)
-        let hasReplacement = scalars.contains { $0 == "\u{FFFD}" || junkControls.contains($0) }
+        let hasReplacement = scalars.contains { $0 == "\u{FFFD}" || isStrayControlCode($0) }
 
         let nonSpace = scalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }
         guard !nonSpace.isEmpty else {
@@ -35,6 +34,31 @@ public enum TextLayerQuality {
             score = min(score, 0.3)
         }
         return min(max(score, 0), 1)
+    }
+
+    /// The text without its format characters, general category Cf.
+    ///
+    /// No format character is junk. Each is invisible text the page's author put there: the bidi
+    /// marks and isolates of an Arabic or Hebrew line, the non-joiner Persian spelling needs, a
+    /// soft hyphen, a byte-order mark, a word joiner, an Arabic number sign, the joiner inside
+    /// an emoji. A text layer that lost a glyph's character puts U+FFFD or a control code in its
+    /// place, and those still cap the score. That goes for the deprecated format characters
+    /// (U+206A–U+206F) and the interlinear annotation anchors (U+FFF9–U+FFFB) too: odd in a PDF,
+    /// but they come from whoever made it, not from a misread page.
+    ///
+    /// Dropped before anything is counted, so a page scores as it would without them. Kept, they
+    /// would count as non-letters, and a word with two soft hyphens would stop being a word.
+    private static func withoutFormatCharacters(_ text: String) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter { $0.properties.generalCategory != .format }))
+    }
+
+    /// A C0 or C1 control code other than a tab or a line break: what a font's raw glyph code
+    /// looks like where the text layer lost the character it stood for.
+    ///
+    /// Not `CharacterSet.controlCharacters`, which on Apple platforms holds every format
+    /// character as well, so one right-to-left mark capped a clean Arabic page at 0.3.
+    private static func isStrayControlCode(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.properties.generalCategory == .control && !CharacterSet.whitespacesAndNewlines.contains(scalar)
     }
 
     static func shouldOCR(

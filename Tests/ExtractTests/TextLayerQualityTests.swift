@@ -41,6 +41,55 @@ struct TextLayerQualityTests {
         #expect(TextLayerQuality.score(text) <= 0.3)
     }
 
+    @Test(
+        "a control code a text layer should never hold caps the score",
+        arguments: [0x01, 0x07, 0x1B, 0x7F, 0x9B] as [UInt32]
+    )
+    func controlCodeCapsScore(value: UInt32) throws {
+        let code = Character(try #require(Unicode.Scalar(value)))
+        #expect(TextLayerQuality.score("INVOICE Vendor Acme Supplies Total 1250.00 \(code)") <= 0.3)
+    }
+
+    @Test("a Latin page with a soft hyphen keeps its text layer")
+    func softHyphenKeepsTextLayer() {
+        let text = """
+            INVOICE
+            Vendor: Acme Supplies Co.
+            Total due: 1250.00 USD
+            Payment due within 30 days of the in\u{AD}voice date
+            """
+        #expect(TextLayerQuality.score(text) >= 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: text, policy: .auto, threshold: 0.85) == false)
+    }
+
+    /// Bidi marks, embeddings, overrides and isolates; the joiners; soft hyphen; byte-order mark;
+    /// word joiner.
+    @Test(
+        "a format character is invisible to the score",
+        arguments: [
+            0x200E, 0x200F, 0x061C, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069,
+            0x200C, 0x200D, 0x00AD, 0xFEFF, 0x2060,
+        ] as [UInt32]
+    )
+    func formatCharacterIsInvisible(value: UInt32) throws {
+        let mark = Character(try #require(Unicode.Scalar(value)))
+        let clean = "INVOICE\nVendor: Acme Supplies Co.\nTotal due: 1250.00 USD\nWidget Pro 2 500.00"
+        let marked = """
+            \(mark)INVOICE
+            Vendor: Acme Sup\(mark)plies Co.
+            Total due: \(mark)1250.00 USD\(mark)
+            Widget Pro 2 500.00
+            """
+        #expect(TextLayerQuality.score(marked) == TextLayerQuality.score(clean))
+        #expect(TextLayerQuality.score(marked) >= 0.85)
+    }
+
+    @Test("a format character does not hide a control code")
+    func formatCharacterBesideControlCodeStillCaps() {
+        #expect(TextLayerQuality.score("INVOICE Vendor Acme Supplies Total\u{200F} 1250.00 \u{7}") <= 0.3)
+        #expect(TextLayerQuality.score("INVOICE Vendor Acme Sup\u{AD}plies Total 1250.00 \u{FFFD}") <= 0.3)
+    }
+
     @Test("policy always never OCRs; policy never always OCRs")
     func policies() {
         let clean = "INVOICE Vendor Acme Supplies Co. Total 1250.00 USD"

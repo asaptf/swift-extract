@@ -57,6 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   letter, like Czech `vlk`, still does not count. Nor does a vowel only a compatibility mapping
   reaches: the ligature in `ﬁrst`, fullwidth `ＵＳＤ`, the `º` of `Nº`.
 
+- **A format character no longer caps a page's text-layer score.** `TextLayerQuality.score(_:)`
+  capped a page at 0.3 for any character in `CharacterSet.controlCharacters` other than
+  whitespace, and on Apple platforms that set holds the format characters as well as the
+  control codes. One right-to-left mark on an Arabic invoice, one zero-width non-joiner in a
+  Persian word, one soft hyphen on an English invoice: measured, each clean page scored
+  exactly 0.300, and `TextLayerPolicy.auto` OCR'd it.
+
+  Format characters — bidi marks, embeddings and isolates, the joiners, soft hyphens,
+  byte-order marks, word joiners — are now dropped before anything is counted, so a page
+  scores as it would without them. U+FFFD and the C0 and C1 control codes cap the score as
+  before, and a page without a format character scores exactly what it did.
+
 ## [0.14.0] — 2026-09-27
 
 A fax, a scanner's multi-page TIFF and an animated GIF are several pictures in one file, and an
