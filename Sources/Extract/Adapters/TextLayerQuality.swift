@@ -26,8 +26,8 @@ public enum TextLayerQuality {
         guard !tokens.isEmpty else {
             return alnumRatio
         }
-        let wellFormed = tokens.filter { isWellFormed(String($0)) }.count
-        let tokenRatio = Double(wellFormed) / Double(tokens.count)
+        let wellFormed = tokens.map { wellFormedShare(String($0)) }.reduce(0, +)
+        let tokenRatio = wellFormed / Double(tokens.count)
 
         var score = 0.5 * alnumRatio + 0.5 * tokenRatio
         if hasReplacement {
@@ -76,6 +76,68 @@ public enum TextLayerQuality {
         }
     }
 
+    /// How much of `token` is words: all or none, as ``isWellFormed(_:)`` says, unless it is a
+    /// run of Chinese, Japanese or Korean text.
+    ///
+    /// Chinese and Japanese put no spaces between words, so a text layer gives a line of theirs
+    /// back as one token, `开票日期：2026年09月21日`, and one colon or figure in it failed the
+    /// whole line. Such a token is broken where a script with spaces would have put them, and
+    /// counts for the share of its pieces that are words. A token that counts already, or that
+    /// holds no CJK letter, is judged as it always was, so no page scores lower.
+    static func wellFormedShare(_ token: String) -> Double {
+        if isWellFormed(token) {
+            return 1
+        }
+        guard token.contains(where: isCJKLetter) else {
+            return 0
+        }
+        // A piece of nothing but punctuation stood between two words; it is not a word that failed.
+        let pieces = pieces(of: token).filter { !$0.allSatisfy(\.isPunctuation) }
+        let words = pieces.filter { isCJKWord($0) || isWellFormed(String($0)) }
+        return Double(words.count) / Double(pieces.count)
+    }
+
+    /// `token` broken wherever a CJK letter meets punctuation, a currency sign, or a figure, Latin
+    /// letter or sign of ASCII or its full-width forms.
+    ///
+    /// That is all real CJK text sets against its letters: the colon after a label, the yen or won
+    /// sign before an amount, the figures of a date, a code, a unit, a bank's Latin name. A letter
+    /// of any other script there is what a broken font map writes, not a language, so it leaves the
+    /// piece whole, and a piece of mixed scripts is no word.
+    private static func pieces(of token: String) -> [Substring] {
+        var pieces: [Substring] = []
+        var start = token.startIndex
+        for (index, next) in zip(token.indices, token.indices.dropFirst())
+        where isCJKLetter(token[index]) != isCJKLetter(token[next]) {
+            let other = isCJKLetter(token[index]) ? token[next] : token[index]
+            if other.isPunctuation || other.isCurrencySymbol
+                || other.unicodeScalars.allSatisfy(asciiOrFullWidth.contains)
+            {
+                pieces.append(token[start..<next])
+                start = next
+            }
+        }
+        pieces.append(token[start...])
+        return pieces
+    }
+
+    private static let asciiOrFullWidth = CharacterSet(charactersIn: "\u{21}"..."\u{7E}")
+        .union(CharacterSet(charactersIn: "\u{FF01}"..."\u{FF5E}"))
+
+    /// A run of CJK letters in one writing system, down to a single one: a Chinese character is a
+    /// word or the root of one, and a hangul block a whole syllable, not a letter of an alphabet.
+    private static func isCJKWord(_ piece: Substring) -> Bool {
+        piece.allSatisfy(isCJKLetter) && isOneWritingSystem(Set(piece.unicodeScalars.compactMap(script(of:))))
+    }
+
+    /// A Han, kana, bopomofo or hangul letter.
+    private static func isCJKLetter(_ character: Character) -> Bool {
+        guard character.isLetter, let script = character.unicodeScalars.first.flatMap(script(of:)) else {
+            return false
+        }
+        return [.han, .hiragana, .katakana, .bopomofo, .hangul].contains(script)
+    }
+
     static func isWellFormed(_ token: String) -> Bool {
         let trimmed = token.trimmingCharacters(in: .punctuationCharacters)
         if trimmed.isEmpty {
@@ -104,9 +166,10 @@ public enum TextLayerQuality {
     }
 
     /// Any script's decimal digits, with the separators an amount or a date is written with —
-    /// the Arabic decimal and thousands separators among them, so `۱٬۲۵۰٬۰۰۰` is a number.
+    /// the Arabic decimal and thousands separators among them, so `۱٬۲۵۰٬۰۰۰` is a number, and the
+    /// full-width ones Chinese and Japanese type beside full-width digits, so `１，２５０` is too.
     private static func looksLikeNumber(_ token: String) -> Bool {
-        let separators = CharacterSet(charactersIn: ".,-+/%\u{066B}\u{066C}")
+        let separators = CharacterSet(charactersIn: ".,-+/%\u{066B}\u{066C}．，－＋／％")
         let allowed = token.unicodeScalars.allSatisfy {
             $0.properties.numericType == .decimal || separators.contains($0)
         }

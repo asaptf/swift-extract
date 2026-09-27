@@ -393,7 +393,7 @@ struct TextLayerQualityTests {
     @Test(
         "a word that mixes scripts is malformed",
         arguments: [
-            "فاتTورة", "\u{0410}cme", "Счёtт", "ΤΙΜΟLΟΓΙΟ", "发票No", "مرحباשלום", "Привет世界", "カ한",
+            "فاتTورة", "\u{0410}cme", "Счёtт", "ΤΙΜΟLΟΓΙΟ", "发Ж票", "مرحباשלום", "Привет世界", "カ한",
         ])
     func mixedScriptIsMalformed(token: String) {
         #expect(!TextLayerQuality.isWellFormed(token))
@@ -401,7 +401,7 @@ struct TextLayerQualityTests {
 
     @Test("a page of mixed-script junk scores below the default threshold")
     func mixedScriptPageIsLow() {
-        let text = String(repeating: "فاتTورة \u{0410}cme Счёtт ΤΙΜΟLΟΓΙΟ 发票No Привет世界\n", count: 10)
+        let text = String(repeating: "فاتTورة \u{0410}cme Счёtт ΤΙΜΟLΟΓΙΟ 发Ж票 Привет世界\n", count: 10)
         #expect(TextLayerQuality.score(text) < 0.85)
         #expect(TextLayerQuality.shouldOCR(text: text, policy: .auto, threshold: 0.85))
     }
@@ -417,5 +417,194 @@ struct TextLayerQualityTests {
         #expect(TextLayerQuality.score("فاتورة ضريبية رقم الفاتورة 1493952 \u{FFFD}") <= 0.3)
         #expect(TextLayerQuality.score("Поставщик ООО Ромашка Итого 1250,00 \u{FFFD}") <= 0.3)
         #expect(TextLayerQuality.score("增值税专用发票 发票号码 1493952 \u{FFFD}") <= 0.3)
+    }
+
+    // MARK: - Chinese, Japanese and Korean, written without spaces
+
+    /// Chinese and Japanese put no spaces between words, so a text layer gives a line of theirs
+    /// back as one run, broken only between the page's cells: `开票日期：2026年09月21日` is one
+    /// token, and one colon or figure in it failed the whole line. Measured on 2026-09-27 with
+    /// 0.15.0's scorer, these pages scored 0.78, 0.85, 0.81, 0.69 and 0.80.
+    @Test(
+        "a CJK page as its text layer runs it together scores above the default threshold",
+        arguments: [
+            Page(
+                script: "Chinese",
+                text: """
+                    增值税专用发票
+                    发票代码：3100212130 发票号码：14939520
+                    开票日期：2026年09月21日
+                    购买方名称：上海晨光贸易有限公司
+                    纳税人识别号：91310000MA1FL0XK2P
+                    地址、电话：上海市浦东新区世纪大道100号 021-12345678
+                    货物或应税劳务、服务名称 规格型号 单位 数量 单价 金额
+                    *咖啡*咖啡豆 1kg 袋 12 104.17 1250.00
+                    价税合计（大写）壹仟肆佰壹拾贰元伍角整 （小写）¥1412.50
+                    销售方名称：北京咖啡进出口有限公司
+                    收款人：王芳 复核：李强 开票人：张伟
+                    """),
+            Page(
+                script: "Traditional Chinese",
+                text: """
+                    統一發票（三聯式）
+                    發票號碼：AB-12345678
+                    中華民國115年9月21日
+                    買受人：晨光貿易股份有限公司
+                    統一編號：12345678
+                    品名 數量 單價 金額
+                    咖啡豆（一公斤） 12 1,250 15,000
+                    銷售額合計 15,000
+                    營業稅 750
+                    總計 15,750
+                    總計新臺幣（中文大寫）壹萬伍仟柒佰伍拾元整
+                    """),
+            Page(
+                script: "Japanese",
+                text: """
+                    請求書
+                    株式会社サンプル御中
+                    請求日：2026年9月27日 請求番号：INV-2026-0042
+                    下記の通りご請求申し上げます。
+                    品名 数量 単価 金額
+                    コーヒー豆（200g） 12 1,250 15,000
+                    配送料 1 500 500
+                    小計 15,500
+                    消費税（10%） 1,550
+                    合計金額 ¥17,050
+                    お支払い期限：2026年10月31日
+                    振込先：三菱UFJ銀行 渋谷支店 普通 1234567
+                    株式会社アクメ 〒150-0002 東京都渋谷区渋谷2丁目1番1号
+                    """),
+            Page(
+                script: "Japanese, in full-width figures",
+                text: """
+                    請求書
+                    株式会社サンプル　御中
+                    請求日：２０２６年９月２７日
+                    請求番号：ＩＮＶ－２０２６－００４２
+                    品名　数量　単価　金額
+                    コーヒー豆（２００ｇ）　１２　１，２５０　１５，０００
+                    小計　１５，５００
+                    消費税（１０％）　１，５５０
+                    合計金額　￥１７，０５０
+                    お支払い期限：２０２６年１０月３１日
+                    """),
+            Page(
+                script: "Korean",
+                text: """
+                    세금계산서
+                    등록번호: 123-45-67890
+                    상호: 주식회사 한빛상사 대표자: 김민준
+                    작성일자: 2026년 9월 21일
+                    품목 수량 단가 공급가액 세액
+                    원두커피(1kg) 12 104,170 1,250,000 125,000
+                    합계금액: 1,375,000원
+                    위 금액을 영수(청구)함
+                    """),
+        ])
+    func unspacedCJKPageIsHigh(page: Page) {
+        #expect(TextLayerQuality.score(page.text) >= 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: page.text, policy: .auto, threshold: 0.85) == false)
+    }
+
+    /// A paragraph of Chinese is a handful of tokens, each a sentence or more; measured on
+    /// 2026-09-27 with 0.15.0's scorer, this one scored 0.63.
+    @Test("Chinese prose scores above the default threshold")
+    func chineseProseIsHigh() {
+        let text = """
+            根据双方签订的采购合同，买方应于收到发票后三十日内支付全部货款。如逾期付款，卖方有权按照
+            每日万分之五的标准收取违约金。货物运抵买方指定仓库后，买方应在三个工作日内完成验收；如有
+            质量问题，应以书面形式通知卖方。
+            """
+        #expect(TextLayerQuality.score(text) >= 0.85)
+    }
+
+    /// A heading spaced out a character at a time, and a text layer that set every glyph apart.
+    /// Measured on 2026-09-27 with 0.15.0's scorer, they scored 0.66 and 0.51.
+    @Test(
+        "a CJK page with a space between its characters scores above the default threshold",
+        arguments: [
+            Page(
+                script: "letter-spaced heading",
+                text: """
+                    御　見　積　書
+                    株式会社サンプル　御中
+                    件名：オフィス用品一式
+                    見積金額　￥１５，０００
+                    有効期限：発行日より３０日
+                    """),
+            Page(
+                script: "every glyph apart",
+                text: """
+                    增 值 税 专 用 发 票
+                    发 票 号 码 ： 14939520
+                    开 票 日 期 ： 2026 年 09 月 21 日
+                    购 买 方 名 称 ： 上 海 晨 光 贸 易 有 限 公 司
+                    价 税 合 计 ¥1412.50
+                    """),
+        ])
+    func spacedCJKPageIsHigh(page: Page) {
+        #expect(TextLayerQuality.score(page.text) >= 0.85)
+    }
+
+    /// Broken where a script with spaces would have put them, each piece judged as a token of its
+    /// own would be. A code, a unit or an amount after a currency sign fails as it does standing
+    /// alone in a Latin page, and takes only its own share with it.
+    @Test(
+        "a run of CJK text counts for the share of it that is words",
+        arguments: [
+            ("开票日期：2026年09月21日", 1.0),
+            ("地址、电话：上海市浦东新区世纪大道100号", 1.0),
+            ("振込先：三菱UFJ銀行", 1.0),  // a Latin name set against kanji, as CJK text writes one
+            ("发票No", 1.0),
+            ("영수(청구)함", 1.0),
+            ("1,375,000원", 1.0),
+            ("請求番号：INV-2026-0042", 0.5),
+            ("원두커피(1kg)", 0.5),
+            ("（小写）¥1412.50", 0.5),
+            ("合計金額￥１７，０５０", 0.5),  // a currency sign is where an amount starts
+            ("합계금액₩1,250", 0.5),
+        ])
+    func cjkRunCountsItsWords(token: String, share: Double) {
+        #expect(TextLayerQuality.wellFormedShare(token) == share)
+    }
+
+    /// A Chinese character is a word or the root of one, and a hangul block a whole syllable, not a
+    /// letter of an alphabet.
+    @Test("one CJK character is a word", arguments: ["袋", "年", "위", "및", "請"])
+    func oneCJKCharacterIsAWord(token: String) {
+        #expect(TextLayerQuality.wellFormedShare(token) == 1)
+    }
+
+    /// Real CJK text sets only punctuation, figures and Latin letters against its own. A broken font
+    /// map sends glyphs anywhere, and a Cyrillic, Greek or Latin Extended letter inside a run of
+    /// Han is its mark: such a run is not broken there, and no piece of it counts.
+    @Test(
+        "a letter of another script set against CJK letters keeps them junk",
+        arguments: ["发Ж票", "请求ΣΔ书", "丁ƂЖ万", "Привет世界", "ÇĐ丁ÂƂ", "カ한"])
+    func cjkAgainstAnotherScriptIsJunk(token: String) {
+        #expect(TextLayerQuality.wellFormedShare(token) == 0)
+    }
+
+    @Test("a page of CJK set against other scripts' letters scores below the default threshold")
+    func cjkAgainstAnotherScriptPageIsLow() {
+        let text = String(repeating: "发Ж票 请求ΣΔ书 丁ƂЖ万 カ한 Привет世界 ÇĐ丁ÂƂ\n", count: 10)
+        #expect(TextLayerQuality.score(text) < 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: text, policy: .auto, threshold: 0.85))
+    }
+
+    @Test(
+        "a figure in full-width digits is a number, full-width separators and all",
+        arguments: ["１，２５０", "１５，０００．００", "２０２６／０９／２７", "１２．５％"])
+    func fullWidthFigureIsWellFormed(token: String) {
+        #expect(TextLayerQuality.isWellFormed(token))
+    }
+
+    /// Nothing in a token without a CJK letter is broken up or judged any differently.
+    @Test(
+        "a token without a CJK letter counts all or nothing, as it did",
+        arguments: ["INVOICE", "Vendor:", "1250.00", "Количество", "xx", "INV-2026-0042", "$1,250", "〒150-0002"])
+    func tokenWithoutCJKIsAllOrNothing(token: String) {
+        #expect(TextLayerQuality.wellFormedShare(token) == (TextLayerQuality.isWellFormed(token) ? 1 : 0))
     }
 }

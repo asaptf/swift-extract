@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A good text layer in Chinese, Japanese or Korean is kept.** Chinese and Japanese put no
+  spaces between words, so a text layer gives a line of theirs back as one run, broken only
+  between the page's cells, and the score took each run for one word. One colon or figure failed
+  the whole line: `开票日期：2026年09月21日` counted as garbled, so did Korean `2026년`, and one
+  character, such as `袋` or `위`, was too short to count at all. Under `TextLayerPolicy.auto` a
+  well-read page failed and was OCR'd: measured on 2026-09-27, synthetic invoice pages as a text
+  layer gives them back scored 0.78 in Chinese, 0.81 in Japanese, 0.80 in Korean and 0.69 in
+  Japanese typed in full-width figures, a paragraph of Chinese prose 0.63, and a page whose text
+  layer sets every character apart 0.51.
+
+  A token holding a Han, kana or hangul letter that does not count as a word is now broken where
+  a script with spaces would have put them, wherever a CJK letter meets punctuation, a currency
+  sign, or a figure, Latin letter or sign in ASCII or its full-width forms, and it counts for the
+  share of its pieces that are words. CJK letters of one writing system are a word down to a single one. So
+  `开票日期：2026年09月21日` counts in full, and `請求番号：INV-2026-0042` counts half, its code
+  failing as it would standing alone on a Latin page. Full-width figures take their full-width
+  separators, so `１，２５０` is a number. The same pages now score 0.91, 0.90, 0.92, 0.89, 0.96
+  and 0.92.
+
+  A letter of any other script set against CJK letters is not a place to break, since a broken
+  font map writes it and a language does not, so `发Ж票` and `Привет世界` still count for
+  nothing. A token that counted already, or that holds no CJK letter and no full-width separator,
+  is judged exactly as before, so no page scores lower. Checked against 0.15.0's scorer: the
+  fixture invoice's text layer, 400,000 random Latin strings and every file and line of this
+  repository without CJK or full-width text score identically, and 500,000 mixed-script strings
+  never score lower. Garbage from a broken font map that scatters a word's letters over Latin
+  Extended, Greek and Cyrillic scores as it did.
+
+  This changes what `.auto` does with such pages: they used to be OCR'd, and now their text
+  layer is read. Pass `textLayerPolicy: .never` to keep OCRing them. The score cannot tell one
+  Chinese character from another, so a broken font map that lands most of a page's glyphs on Han
+  still looks like Chinese, and with one character now a word it looks more so: in a simulation
+  mapping each glyph of a page to a random code point below U+A000, 8% of the garbled pages pass
+  the threshold, against 1% before.
+
 ## [0.15.0] — 2026-09-27
 
 Under `TextLayerPolicy.auto` a PDF page keeps its own text only if that text scores as clean, and
