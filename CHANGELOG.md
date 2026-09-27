@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-09-27
+
+Under `TextLayerPolicy.auto` a PDF page keeps its own text only if that text scores as clean, and
+a lot of clean text did not: a word counted only if it held one of a few Latin vowels, a number
+only if its digits were ASCII, and one invisible format character capped the page at 0.3. A
+well-read page in Arabic, Persian, Chinese, Czech or Vietnamese — or an English one with a soft
+hyphen — was thrown away for OCR.
+
 ### Fixed
 
 - **A good text layer in a script other than Latin is kept.** The text-layer score counted a
