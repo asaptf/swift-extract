@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A good text layer in a script other than Latin is kept.** The text-layer score counted a
+  word only if it had a Latin vowel, so no Arabic, Cyrillic, Greek, Hebrew or Chinese word ever
+  counted, and under `TextLayerPolicy.auto` such a page always looked worse than OCR and was
+  thrown away for it. The score ran backwards: measured on 2026-09-25, a correctly read Arabic
+  invoice page scored 0.57, and the same page read as English, with every Arabic word dropped
+  and only the Latin codes left, scored 0.68.
+
+  A word in the letters of one script, marks included, now counts the way a Latin word with a
+  vowel does. Kanji and kana count as one script, and so do hanja and hangul, because Japanese
+  and Korean write them into one word. A word that mixes scripts, such as a Latin letter inside
+  an Arabic word or the Cyrillic `А` of `Аcme`, no longer counts. Synthetic invoice pages in
+  Arabic, Hebrew, Cyrillic, Greek, Chinese, Japanese, Korean, Thai and Devanagari scored 0.53 to
+  0.63 and now score 0.89 to 0.98; the Arabic one went from 0.58 to 0.97.
+
+  Latin words are judged exactly as before, by the same vowel rule, numbers and
+  replacement-character cap. Across the 143,076 words in this repository's sources, docs and the
+  fixture invoice's text layer, no word of Latin letters changed its verdict, and no page without
+  another script changed its score.
+
+  This changes what `.auto` does with such pages: they used to be OCR'd, and now their text
+  layer is read. Pass `textLayerPolicy: .never` to keep OCRing them. The score still cannot tell
+  a real page from a broken font map that sends every Latin glyph to one other script. That page
+  now looks like clean Cyrillic or Chinese and is kept.
+
 ## [0.14.0] — 2026-09-27
 
 A fax, a scanner's multi-page TIFF and an animated GIF are several pictures in one file, and an
