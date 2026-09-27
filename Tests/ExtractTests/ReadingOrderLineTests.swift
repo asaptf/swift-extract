@@ -24,7 +24,9 @@ struct ReadingOrderLineTests {
     /// three line-heights tall at `0.0262` where its neighbours are `0.0087`. It overlaps rows
     /// 43 and 44 equally well, so every word of both joined it.
     private func tableBlocks() -> [ExtractedDocument.Block] {
-        func block(_ text: String, x: Double, y: Double, w: Double, h: Double)
+        func block(
+            _ text: String, x: Double, y: Double, w: Double, h: Double
+        )
             -> ExtractedDocument.Block
         {
             ExtractedDocument.Block(

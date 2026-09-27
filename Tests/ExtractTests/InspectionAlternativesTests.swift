@@ -13,7 +13,9 @@ import Testing
 /// reads `633140` and `… FO HRO SR`.
 @Suite("What another pass read reaches the caller")
 struct InspectionAlternativesTests {
-    private func block(_ text: String, y: Double, alternatives: [String] = [])
+    private func block(
+        _ text: String, y: Double, alternatives: [String] = []
+    )
         -> ExtractedDocument.Block
     {
         var block = ExtractedDocument.Block(
