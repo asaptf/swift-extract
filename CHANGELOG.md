@@ -23,15 +23,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Arabic, Hebrew, Cyrillic, Greek, Chinese, Japanese, Korean, Thai and Devanagari scored 0.53 to
   0.63 and now score 0.89 to 0.98; the Arabic one went from 0.58 to 0.97.
 
-  Latin words are judged exactly as before, by the same vowel rule, numbers and
-  replacement-character cap. Across the 143,076 words in this repository's sources, docs and the
-  fixture invoice's text layer, no word of Latin letters changed its verdict, and no page without
-  another script changed its score.
+  Latin words are still judged by the vowel rule, numbers and replacement-character cap; what the
+  vowel rule counts is the next entry. Across the 143,076 words in this repository's sources, docs
+  and the fixture invoice's text layer, telling scripts apart changed no Latin word's verdict, and
+  no page without another script changed its score.
 
   This changes what `.auto` does with such pages: they used to be OCR'd, and now their text
   layer is read. Pass `textLayerPolicy: .never` to keep OCRing them. The score still cannot tell
   a real page from a broken font map that sends every Latin glyph to one other script. That page
   now looks like clean Cyrillic or Chinese and is kept.
+
+- **A Latin word whose vowel carries a mark counts as a word.** The vowel rule knew a, e, i, o, u
+  and y, and of their accented forms only ä ö ü à è é ì ò ù, so a word whose vowels were all
+  others counted as garbled: Spanish `más`, Portuguese `já`, Czech `být`, Romanian `în`, Polish
+  `są`, Hungarian `fő`, Swedish `på`, Danish `før`, Turkish `ılık`, Vietnamese `Được`. Pages in
+  those languages scored lower than their text layer deserved, and under `TextLayerPolicy.auto`
+  the ones that slipped under the threshold were OCR'd: measured on 2026-09-27, a synthetic
+  Vietnamese invoice page scored 0.71 and an Azerbaijani one 0.846.
+
+  A vowel now counts with its marks taken off by canonical decomposition, so á, ợ and ǿ are the
+  a, o and ø under them, and a word counts the same whether its accents are precomposed letters
+  or combining marks, which it did not. The vowels that are letters of their own count too: ı, ə,
+  æ, ø, œ, ɛ, ɔ, ǝ, ɨ, ʉ, ɩ and ʊ, and their capitals, the vowels in CLDR's letter sets that no
+  decomposition reaches. The Vietnamese page now scores 0.97 and the Azerbaijani one 0.92.
+
+  The rule only ever counts more words, so no page scores lower. Across the 145,558 words in this
+  repository's sources, docs and the fixture invoice's text layer, no verdict changed: the 26
+  that hold a Latin letter outside ASCII already counted or fail for another reason. Across 5.3
+  million words of macOS's own interface strings in 23 Latin-script languages, 215,350 went from
+  malformed to well formed and none the other way. No page went down, and 898 of 23,277 rose past
+  0.85, 779 of them Vietnamese; German, Slovenian, Indonesian and Malay did not move. A mark on a
+  consonant does not make it a vowel, so `čšž` is as malformed as `xx`, and a word with no vowel
+  letter, like Czech `vlk`, still does not count. Nor does a vowel only a compatibility mapping
+  reaches: the ligature in `ﬁrst`, fullwidth `ＵＳＤ`, the `º` of `Nº`.
 
 ## [0.14.0] — 2026-09-27
 

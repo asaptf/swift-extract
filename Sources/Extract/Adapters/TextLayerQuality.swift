@@ -87,10 +87,24 @@ public enum TextLayerQuality {
         return token.contains(where: \.isNumber)
     }
 
+    /// Whether any of the letters is a vowel once its marks are taken off.
+    ///
+    /// Canonical decomposition takes each mark off the letter it sits on, so á, ợ and ǿ are the a,
+    /// o and ø beneath them, and a word is judged the same whether its accents are precomposed or
+    /// combining. Every vowel counted before is still one, and a consonant with its marks off is
+    /// still a consonant.
     private static func containsLatinVowel<S: StringProtocol>(_ letters: S) -> Bool {
-        let vowels = CharacterSet(charactersIn: "aeiouAEIOUäöüÄÖÜàèéìòùyY")
-        return letters.unicodeScalars.contains { vowels.contains($0) }
+        letters.decomposedStringWithCanonicalMapping.unicodeScalars.contains { latinVowels.contains($0) }
     }
+
+    /// Past a, e, i, o, u and y, the vowels that are letters of their own, with nothing to
+    /// decompose to: the ones the CLDR letter sets give Turkish and Azerbaijani (ı, ə), the Nordic
+    /// languages and French (æ, ø, œ), and languages of Africa and the Americas (ɛ, ɔ, ǝ, ɨ, ʉ, ɩ,
+    /// ʊ). Letters only IPA uses are left out.
+    private static let latinVowels: CharacterSet = {
+        let vowels = "aeiouy" + "ıəæøœɛɔǝɨʉɩʊ"
+        return CharacterSet(charactersIn: vowels + vowels.uppercased())
+    }()
 
     private enum Script {
         case latin, greek, cyrillic, armenian, georgian, hebrew, arabic, syriac, thaana, ethiopic

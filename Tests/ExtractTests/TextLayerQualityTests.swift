@@ -66,6 +66,76 @@ struct TextLayerQualityTests {
         }
     }
 
+    /// Measured on 2026-09-27, every one of these was malformed: the vowel rule knew a, e, i, o, u
+    /// and y, and of their accented forms only the ones German, French and Italian use.
+    @Test(
+        "a Latin word whose vowel carries a mark, or is a letter of its own, is well formed",
+        arguments: [
+            "más", "já",  // Spanish and Portuguese á
+            "být", "tří",  // Czech ý and í
+            "în",  // Romanian î
+            "są", "fő",  // Polish ą, Hungarian ő
+            "Được",  // Vietnamese: a horn on the u, a horn and a dot on the o
+            "ılık",  // Turkish dotless ı
+            "rød", "bær",  // Danish and Norwegian ø and æ
+            "şəhər",  // Azerbaijani ə
+            "lɛlɔ",  // Lingala open e and open o
+        ])
+    func markedLatinVowelIsWellFormed(token: String) {
+        // Precomposed or spelled with combining marks, it is the same word.
+        #expect(TextLayerQuality.isWellFormed(token.precomposedStringWithCanonicalMapping))
+        #expect(TextLayerQuality.isWellFormed(token.decomposedStringWithCanonicalMapping))
+    }
+
+    /// Taking the marks off to find the vowel under them finds none under a consonant.
+    @Test(
+        "a Latin word without a vowel is malformed, whatever marks its consonants carry",
+        arguments: ["xx", "Mkf", "kg", "čšž", "ŁŹĆ", "ďť", "ñç", "ßł", "đŋ", "þð"])
+    func markedConsonantsAreMalformed(token: String) {
+        #expect(!TextLayerQuality.isWellFormed(token.precomposedStringWithCanonicalMapping))
+        #expect(!TextLayerQuality.isWellFormed(token.decomposedStringWithCanonicalMapping))
+    }
+
+    /// The rule may count more words than it did, never fewer.
+    @Test("every vowel the rule knew before still counts")
+    func earlierVowelsStillCount() {
+        for vowel in "aeiouAEIOUäöüÄÖÜàèéìòùyY" {
+            #expect(TextLayerQuality.isWellFormed("k\(vowel)"), "\(vowel)")
+        }
+    }
+
+    /// Measured on 2026-09-27, before vowels with marks counted: the Vietnamese page scored 0.71,
+    /// and the Azerbaijani one 0.846, just under the threshold.
+    @Test(
+        "a well-read Latin page in a language that marks its vowels scores above the default threshold",
+        arguments: [
+            Page(
+                script: "Vietnamese",
+                text: """
+                    HÓA ĐƠN GIÁ TRỊ GIA TĂNG
+                    Số: 1493952
+                    Ngày 21 tháng 09 năm 2026
+                    Đơn vị bán hàng: Công ty TNHH Thương mại Được Phát
+                    Tên hàng hóa, dịch vụ Số lượng Đơn giá
+                    Cà phê hạt 12 1.250.000
+                    Tổng cộng tiền thanh toán: 15.000.000 đồng
+                    """),
+            Page(
+                script: "Azerbaijani",
+                text: """
+                    HESAB-FAKTURA № 1493952
+                    Satıcı: Acme Təchizat MMC
+                    Tarix: 21.09.2026
+                    Məhsul Miqdar Qiymət
+                    Qəhvə dənələri 12 ədəd
+                    Cəmi ödəniləcək məbləğ: 1.250,00 manat
+                    """),
+        ])
+    func markedLatinPageIsHigh(page: Page) {
+        #expect(TextLayerQuality.score(page.text) >= 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: page.text, policy: .auto, threshold: 0.85) == false)
+    }
+
     // MARK: - Scripts other than Latin
 
     /// A page as its text layer gives it back: one run of text per cell.
