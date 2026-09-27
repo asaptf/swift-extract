@@ -69,6 +69,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scores as it would without them. U+FFFD and the C0 and C1 control codes cap the score as
   before, and a page without a format character scores exactly what it did.
 
+- **A figure in Persian or Arabic-Indic digits counts as a number.** Only ASCII digits made a
+  number, so `۱٬۲۵۰٬۰۰۰` and `٥٠٠٫٠٠` counted as garbled, and a page that is mostly figures
+  fell under the threshold however cleanly it was read: measured, a Persian table of line
+  items scored 0.696 and `TextLayerPolicy.auto` OCR'd it. A number may now be written in any
+  script's decimal digits, with the Arabic decimal and thousands separators beside the ASCII
+  ones, and that page scores 0.956.
+
+  An ASCII figure is tested exactly as before, so no Latin page scores differently: the fixture
+  invoice's text layer and 200 000 random Latin strings score what they did before this entry.
+
 ## [0.14.0] — 2026-09-27
 
 A fax, a scanner's multi-page TIFF and an animated GIF are several pictures in one file, and an

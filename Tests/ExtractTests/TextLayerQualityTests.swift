@@ -299,6 +299,63 @@ struct TextLayerQualityTests {
         #expect(TextLayerQuality.shouldOCR(text: page.text, policy: .auto, threshold: 0.85) == false)
     }
 
+    @Test("a Persian page with zero-width non-joiners and Persian figures keeps its text layer")
+    func persianPageKeepsTextLayer() {
+        let text = """
+            صورت\u{200C}حساب فروش کالا و خدمات
+            شماره: ۱۴۰۵۰۷۱۲
+            تاریخ: ۱۴۰۵/۰۷/۰۵
+            فروشنده: شرکت بازرگانی آلفا
+            خریدار: فروشگاه نور
+            شرح کالا تعداد مبلغ
+            خودکار آبی ۲ ۵۰۰٬۰۰۰
+            جمع کل: ۱٬۲۵۰٬۰۰۰ ریال
+            مبلغ ظرف ۳۰ روز پرداخت می\u{200C}شود
+            """
+        #expect(TextLayerQuality.score(text) >= 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: text, policy: .auto, threshold: 0.85) == false)
+    }
+
+    @Test("an Arabic page with a right-to-left mark and Arabic-Indic figures keeps its text layer")
+    func arabicPageKeepsTextLayer() {
+        let text = """
+            \u{200F}فاتورة ضريبية
+            رقم الفاتورة: ٢٠٢٦٠٩٢٧
+            التاريخ: ٢٠٢٦/٠٩/٢٧
+            المورد: شركة الأمل للتجارة
+            الوصف الكمية المبلغ
+            أقلام حبر ٢ ٥٠٠٫٠٠
+            الإجمالي: ١٬٢٥٠٫٠٠ ريال
+            """
+        #expect(TextLayerQuality.score(text) >= 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: text, policy: .auto, threshold: 0.85) == false)
+    }
+
+    /// Mostly figures, as a table of line items is: with Persian figures counted as junk, this page
+    /// scored 0.696 and was OCR'd.
+    @Test("a Persian table of line items keeps its text layer")
+    func persianLineItemsKeepTextLayer() {
+        let text = """
+            ردیف شرح تعداد فی مبلغ
+            ۱ خودکار ۲ ۲۵۰٬۰۰۰ ۵۰۰٬۰۰۰
+            ۲ دفتر ۵ ۱۲۰٬۰۰۰ ۶۰۰٬۰۰۰
+            ۳ مداد ۱۰ ۱۵٬۰۰۰ ۱۵۰٬۰۰۰
+            جمع ۱٬۲۵۰٬۰۰۰
+            مالیات ۱۱۲٬۵۰۰
+            قابل پرداخت ۱٬۳۶۲٬۵۰۰
+            """
+        #expect(TextLayerQuality.score(text) >= 0.85)
+        #expect(TextLayerQuality.shouldOCR(text: text, policy: .auto, threshold: 0.85) == false)
+    }
+
+    @Test(
+        "a figure in any script's digits is a number, Arabic separators and all",
+        arguments: ["۱٬۲۵۰٬۰۰۰", "٥٠٠٫٠٠", "۱۴۰۵/۰۷/۰۵", "١,٢٥٠.٠٠", "१,२५०.००"]
+    )
+    func nonASCIIFigureIsWellFormed(token: String) {
+        #expect(TextLayerQuality.isWellFormed(token))
+    }
+
     /// The inversion as measured, on the line from the 0.8.4 note: read as English,
     /// `الكمية 12 الوزن 1,285` came back as `1,285 ja|| 12 tall`, and the misreading used to
     /// score higher.

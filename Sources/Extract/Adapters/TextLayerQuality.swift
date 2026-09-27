@@ -103,9 +103,14 @@ public enum TextLayerQuality {
         return !scripts.contains(.latin) && isOneWritingSystem(scripts)
     }
 
+    /// Any script's decimal digits, with the separators an amount or a date is written with —
+    /// the Arabic decimal and thousands separators among them, so `۱٬۲۵۰٬۰۰۰` is a number.
     private static func looksLikeNumber(_ token: String) -> Bool {
-        let allowed = CharacterSet(charactersIn: "0123456789.,-+/%")
-        guard token.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
+        let separators = CharacterSet(charactersIn: ".,-+/%\u{066B}\u{066C}")
+        let allowed = token.unicodeScalars.allSatisfy {
+            $0.properties.numericType == .decimal || separators.contains($0)
+        }
+        guard allowed else {
             return false
         }
         return token.contains(where: \.isNumber)
