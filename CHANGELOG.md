@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-09-27
+
+Under `TextLayerPolicy.auto` a well-read Chinese, Japanese or Korean page was thrown away for
+OCR. The text-layer score took each unspaced run of CJK text for a single word, so one colon or
+figure failed a whole line, and a page of them scored under 0.85.
+
 ### Fixed
 
 - **A good text layer in Chinese, Japanese or Korean is kept.** Chinese and Japanese put no
