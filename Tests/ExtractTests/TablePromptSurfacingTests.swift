@@ -67,9 +67,12 @@ struct TablePromptSurfacingTests {
     }
 
     @Test("tableDetection off yields empty tables and byte-identical prompt")
-    func detectionOffByteIdentical() throws {
+    func detectionOffByteIdentical() async throws {
         let url = repoFixture("invoice.pdf")
-        let document = try PDFAdapter.ingest(url: url)
+        // On the ingest queue, as ingest reads: the fixture's text layer scores under the
+        // threshold, so this is Vision, and Vision called straight from a test parks a
+        // cooperative-pool thread — enough tests doing that at once wedge the suite.
+        let document = try await IngestExecutor.run { try PDFAdapter.ingest(url: url) }
         let auto = TableDetector.detect(documentBlocks: document.blocks, mode: .automatic)
         #expect(!auto.isEmpty, "invoice should detect tables in automatic mode")
 

@@ -271,9 +271,12 @@ struct FieldProvenanceTests {
     // MARK: - Coordinate convention on real fixtures
 
     @Test("PDF text-layer boxes use top-left normalised convention on invoice.pdf")
-    func pdfCoordinateConvention() throws {
+    func pdfCoordinateConvention() async throws {
         let url = repoFixture("invoice.pdf")
-        let document = try PDFAdapter.ingest(url: url)
+        // On the ingest queue, as ingest reads: the fixture's text layer scores under the
+        // threshold, so this is Vision, and Vision called straight from a test parks a
+        // cooperative-pool thread — enough tests doing that at once wedge the suite.
+        let document = try await IngestExecutor.run { try PDFAdapter.ingest(url: url) }
         let boxed = document.blocks.filter { $0.boundingBox != nil }
         #expect(boxed.count >= 10)
 
@@ -307,7 +310,7 @@ struct FieldProvenanceTests {
     }
 
     @Test("Vision OCR boxes use the same top-left normalised convention on receipt.png")
-    func ocrCoordinateConvention() throws {
+    func ocrCoordinateConvention() async throws {
         let url = repoFixture("receipt.png")
         let data = try Data(contentsOf: url)
         guard let image = CGImageLoader.cgImage(from: data) else {
@@ -316,7 +319,7 @@ struct FieldProvenanceTests {
         }
         let blocks: [ExtractedDocument.Block]
         do {
-            blocks = try OCRAdapter.recognize(cgImage: image, pageIndex: 0)
+            blocks = try await IngestExecutor.run { try OCRAdapter.recognize(cgImage: image, pageIndex: 0) }
         } catch {
             print("SKIP ocrCoordinateConvention: Vision failed \(error)")
             return
@@ -361,9 +364,9 @@ struct FieldProvenanceTests {
     }
 
     @Test("invoice.pdf grounding attaches provenance for a known vendor token")
-    func invoicePDFProvenanceEndToEnd() throws {
+    func invoicePDFProvenanceEndToEnd() async throws {
         let url = repoFixture("invoice.pdf")
-        let document = try PDFAdapter.ingest(url: url)
+        let document = try await IngestExecutor.run { try PDFAdapter.ingest(url: url) }
         let tables = TableDetector.detect(documentBlocks: document.blocks)
         let value = ProvenanceProbe(
             merchant: "Acme Supplies Co.",

@@ -22,10 +22,13 @@ struct RecognitionLanguageTests {
     static let latin = "INVOICE VR1493952"
 
     @Test("Arabic is read when the caller asks for it")
-    func arabicIsReadWhenRequested() throws {
+    func arabicIsReadWhenRequested() async throws {
         let image = try #require(mixedScriptImage())
-        let withArabic = try VisionOCR().recognize(
-            image: image, languages: ["ar-SA", "en-US"], correctsLanguage: true)
+        // On the ingest queue, as ingest reads: Vision called straight from a test parks a
+        // cooperative-pool thread, and enough tests doing that at once wedge the suite.
+        let withArabic = try await IngestExecutor.run {
+            try VisionOCR().recognize(image: image, languages: ["ar-SA", "en-US"], correctsLanguage: true)
+        }
         let text = withArabic.map(\.text).joined(separator: " ")
         #expect(text.contains(Self.arabic), "Arabic not read with ar-SA requested: \(text)")
         #expect(text.contains(Self.latin), "asking for Arabic must not cost the Latin line: \(text)")
@@ -51,9 +54,11 @@ struct RecognitionLanguageTests {
     /// nonsense. It means "find out" now: Vision's own detection reads the page properly,
     /// measured at 195 Arabic characters against none.
     @Test("a caller that states nothing gets the script detected, not assumed")
-    func silenceMeansDetect() throws {
+    func silenceMeansDetect() async throws {
         let image = try #require(mixedScriptImage())
-        let lines = try VisionOCR().recognize(image: image, languages: [], correctsLanguage: false)
+        let lines = try await IngestExecutor.run {
+            try VisionOCR().recognize(image: image, languages: [], correctsLanguage: false)
+        }
         let text = lines.map(\.text).joined(separator: " ")
         #expect(text.contains(Self.arabic), "nothing was stated, so the script had to be found: \(text)")
         #expect(text.contains(Self.latin), "finding the script must not cost the Latin line: \(text)")

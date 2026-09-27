@@ -79,9 +79,12 @@ struct TableReconstructionTests {
     // MARK: - Invoice PDF fixture
 
     @Test("invoice.pdf exposes geometry and detects line-item table")
-    func invoicePDFTable() throws {
+    func invoicePDFTable() async throws {
         let url = repoFixture("invoice.pdf")
-        let document = try PDFAdapter.ingest(url: url)
+        // On the ingest queue, as ingest reads: the fixture's text layer scores under the
+        // threshold, so this is Vision, and Vision called straight from a test parks a
+        // cooperative-pool thread — enough tests doing that at once wedge the suite.
+        let document = try await IngestExecutor.run { try PDFAdapter.ingest(url: url) }
 
         let boxed = document.blocks.filter { $0.boundingBox != nil }
         #expect(boxed.count >= 10, "text-layer PDF should emit per-word boxes")
@@ -128,7 +131,7 @@ struct TableReconstructionTests {
     // MARK: - Receipt OCR fixture
 
     @Test("receipt.png OCR reconstructs item/price columns (skip if Vision empty)")
-    func receiptOCRTable() throws {
+    func receiptOCRTable() async throws {
         let url = repoFixture("receipt.png")
         let data = try Data(contentsOf: url)
         guard let image = CGImageLoader.cgImage(from: data) else {
@@ -138,7 +141,7 @@ struct TableReconstructionTests {
 
         let blocks: [ExtractedDocument.Block]
         do {
-            blocks = try OCRAdapter.recognize(cgImage: image, pageIndex: 0)
+            blocks = try await IngestExecutor.run { try OCRAdapter.recognize(cgImage: image, pageIndex: 0) }
         } catch {
             print("SKIP receiptOCRTable: Vision failed \(error)")
             return
@@ -318,9 +321,9 @@ struct TableReconstructionTests {
     }
 
     @Test("invoice.pdf markdown keeps both line items as body rows")
-    func invoicePDFMarkdownNoDataAsHeader() throws {
+    func invoicePDFMarkdownNoDataAsHeader() async throws {
         let url = repoFixture("invoice.pdf")
-        let document = try PDFAdapter.ingest(url: url)
+        let document = try await IngestExecutor.run { try PDFAdapter.ingest(url: url) }
         let tables = TableDetector.detect(documentBlocks: document.blocks)
 
         let lineItems = tables.first { table in

@@ -16,7 +16,7 @@ struct RasterOrientationTests {
     static let probe = "ORIENTATION PROBE"
 
     @Test("rendered page reads back upright: text recognised, and near the top where it was drawn")
-    func renderedPageIsUpright() throws {
+    func renderedPageIsUpright() async throws {
         let url = try makeProbePDF()
         defer { try? FileManager.default.removeItem(at: url) }
         let document = try #require(PDFDocument(url: url))
@@ -24,7 +24,9 @@ struct RasterOrientationTests {
         #expect(page.rotation == 0, "probe fixture must have /Rotate = 0")
 
         let image = try #require(PDFKitRenderer.render(page: page, dpi: 300, extraRotation: 0))
-        let lines = try VisionOCR().recognize(image: image)
+        // On the ingest queue, as ingest reads: Vision called straight from a test parks a
+        // cooperative-pool thread, and enough tests doing that at once wedge the suite.
+        let lines = try await IngestExecutor.run { try VisionOCR().recognize(image: image) }
         let text = lines.map(\.text).joined(separator: " ").uppercased()
 
         #expect(

@@ -15,12 +15,12 @@ import Testing
 struct ProvenanceDebugRenderTests {
 
     @Test("render provenance overlays for invoice.pdf and receipt.png")
-    func renderFixtureOverlays() throws {
+    func renderFixtureOverlays() async throws {
         let outDir = provenanceOutputDirectory()
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
-        try renderInvoicePDF(to: outDir.appendingPathComponent("invoice-pdf-text-layer.png"))
-        try renderReceiptPNG(to: outDir.appendingPathComponent("receipt-vision-ocr.png"))
+        try await renderInvoicePDF(to: outDir.appendingPathComponent("invoice-pdf-text-layer.png"))
+        try await renderReceiptPNG(to: outDir.appendingPathComponent("receipt-vision-ocr.png"))
 
         let invoiceURL = outDir.appendingPathComponent("invoice-pdf-text-layer.png")
         let receiptURL = outDir.appendingPathComponent("receipt-vision-ocr.png")
@@ -34,9 +34,12 @@ struct ProvenanceDebugRenderTests {
 
     // MARK: - Renderers
 
-    private func renderInvoicePDF(to url: URL) throws {
+    // Both read on the ingest queue, as ingest reads: invoice.pdf's text layer scores under the
+    // threshold, so it is OCR'd too, and Vision called straight from a test parks a
+    // cooperative-pool thread — enough tests doing that at once wedge the suite.
+    private func renderInvoicePDF(to url: URL) async throws {
         let pdfURL = repoFixture("invoice.pdf")
-        let document = try PDFAdapter.ingest(url: pdfURL)
+        let document = try await IngestExecutor.run { try PDFAdapter.ingest(url: pdfURL) }
         let tables = TableDetector.detect(documentBlocks: document.blocks)
         let value = ProvenanceProbe(
             merchant: "Acme Supplies Co.",
@@ -67,7 +70,7 @@ struct ProvenanceDebugRenderTests {
         )
     }
 
-    private func renderReceiptPNG(to url: URL) throws {
+    private func renderReceiptPNG(to url: URL) async throws {
         let imageURL = repoFixture("receipt.png")
         let data = try Data(contentsOf: imageURL)
         guard let image = CGImageLoader.cgImage(from: data) else {
@@ -76,7 +79,7 @@ struct ProvenanceDebugRenderTests {
         }
         let blocks: [ExtractedDocument.Block]
         do {
-            blocks = try OCRAdapter.recognize(cgImage: image, pageIndex: 0)
+            blocks = try await IngestExecutor.run { try OCRAdapter.recognize(cgImage: image, pageIndex: 0) }
         } catch {
             print("SKIP renderReceiptPNG: Vision failed \(error)")
             return
