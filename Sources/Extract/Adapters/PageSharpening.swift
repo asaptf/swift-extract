@@ -44,7 +44,7 @@ enum PageSharpening {
             let sharpened = CIImage(cgImage: image).applyingFilter(
                 "CIUnsharpMask",
                 parameters: [kCIInputRadiusKey: mask.radius, kCIInputIntensityKey: mask.intensity])
-            guard let made = context.createCGImage(sharpened, from: sharpened.extent) else {
+            guard let made = context.value.createCGImage(sharpened, from: sharpened.extent) else {
                 return image
             }
             return made
@@ -56,6 +56,14 @@ enum PageSharpening {
     #if canImport(CoreImage)
         /// One context for the process: creating a `CIContext` per page costs more than the
         /// filter it runs, and every page of a document wants the same one.
-        private static let context = CIContext(options: [.useSoftwareRenderer: false])
+        private static let context = SharedContext()
+
+        /// Apple documents `CIContext` as safe to share across threads, but older SDKs
+        /// (including Xcode 16.4's) do not declare it `Sendable`. Keep that guarantee
+        /// local to this immutable holder; each call still creates its own filter.
+        /// https://developer.apple.com/documentation/coreimage/cicontext
+        private struct SharedContext: @unchecked Sendable {
+            let value = CIContext(options: [.useSoftwareRenderer: false])
+        }
     #endif
 }
