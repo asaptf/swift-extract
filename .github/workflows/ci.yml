@@ -23,11 +23,14 @@ jobs:
         run: swift build -v
 
       - name: Test (offline)
+        timeout-minutes: 10
         env:
           OPENAI_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           EXTRACT_USE_MOCK: "1"
-        run: swift test
+        # OCR integration tests share Vision's capacity-limited workers. Run tests
+        # serially on the small CI runner; concurrency tests still spawn their own tasks.
+        run: swift test --no-parallel
 
       - name: CLI extract (mock, twice)
         env:
